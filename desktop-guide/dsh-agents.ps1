@@ -198,6 +198,19 @@ function Save-Agents {
   ($Agents | ConvertTo-Json -Depth 6) | Set-Content -LiteralPath $p -Encoding UTF8
 }
 
+# 给来自 ConvertFrom-Json 的对象补/改字段。
+#
+# 为什么不能直接 `$a.x = ...`：那种对象的属性集是**固定的**，属性不存在时赋值会抛
+#   Exception setting "x": "The property 'x' cannot be found on this object."
+# 实测被这条炸过 —— 走常驻大脑的任务记录里没有 seconds，Update-AgentStatus 一赋值就报错，
+# 用户看到的是气泡上糊一行「派任务失败：Exception setting "seconds"...」。
+# ConvertFrom-Json 出来的对象是可以 Add-Member 的，所以统一走这里；
+# 旧记录还可能缺 via / brainId，-Force 一并兜住。
+function Set-AgentField {
+  param($Agent, [string]$Name, $Value)
+  Add-Member -InputObject $Agent -NotePropertyName $Name -NotePropertyValue $Value -Force
+}
+
 function Update-AgentStatus {
   param([string]$RunDir)
   $agents = @(Get-Agents -RunDir $RunDir)
@@ -208,10 +221,10 @@ function Update-AgentStatus {
     if ($a.PSObject.Properties.Name -contains 'brainId' -and $a.brainId) {
       $r = Get-BrainResult -RunDir $RunDir -Id ([string]$a.brainId)
       if ($r) {
-        $a.status = if ($r.ok) { 'done' } else { 'failed' }
-        $a.exitCode = if ($r.ok) { 0 } else { 1 }
-        $a.endedAt = (Get-Date).ToString('o')
-        $a.seconds = $r.seconds
+        Set-AgentField $a 'status' $(if ($r.ok) { 'done' } else { 'failed' })
+        Set-AgentField $a 'exitCode' $(if ($r.ok) { 0 } else { 1 })
+        Set-AgentField $a 'endedAt' (Get-Date).ToString('o')
+        Set-AgentField $a 'seconds' $r.seconds
         $changed = $true
       }
       continue
@@ -222,8 +235,8 @@ function Update-AgentStatus {
       if ($proc) { $alive = $true }
     }
     if (-not $alive) {
-      $a.status = if ($a.exitCode -ne $null -and [int]$a.exitCode -ne 0) { 'failed' } else { 'done' }
-      $a.endedAt = (Get-Date).ToString('o')
+      Set-AgentField $a 'status' $(if ($a.exitCode -ne $null -and [int]$a.exitCode -ne 0) { 'failed' } else { 'done' })
+      Set-AgentField $a 'endedAt' (Get-Date).ToString('o')
       $changed = $true
     }
   }
@@ -412,6 +425,11 @@ function Start-DshAgent {
         pid = $null; brainId = $brainId; via = 'brain'
         startedAt = (Get-Date).ToString('o'); endedAt = $null; status = 'running'
         exitCode = $null; logFile = $logFile; patch = ''
+        # seconds 必须**一开始就有**这个字段：PSCustomObject 的属性集是固定的，
+        # Update-AgentStatus 里再 `$a.seconds = ...` 就会抛
+        #   Exception setting "seconds": The property 'seconds' cannot be found on this object
+        # （实测被这条炸过：跑完一个任务，报错糊在气泡上）
+        seconds = $null
       }
       $agents = @(Get-Agents -RunDir $RunDir)
       $agents += $rec
