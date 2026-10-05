@@ -2019,6 +2019,7 @@ $script:capPs = $null
 $script:capHandle = $null
 $script:capBusy = $false
 $script:capLastMs = 0
+$script:capLastError = ''
 
 function Reset-CaptureRunspace {
   <# 建一个**常驻** runspace（别每帧重建 —— 那本身要几十毫秒）。
@@ -2058,11 +2059,20 @@ function Complete-BackgroundCapture {
   $script:capHandle = $null
   try {
     $out = $script:capPs.EndInvoke($handle)
+    # runspace 里抛的异常不会冒到这里，会落在它的 Error 流里 —— 必须自己捞，
+    # 否则"抓不到屏"就没有任何信号了（截图环里只剩旧图，它会一直拿旧图判断）。
+    if ($script:capPs.Streams.Error.Count -gt 0) {
+      $script:capLastError = [string]$script:capPs.Streams.Error[0].ToString()
+      $script:capPs.Streams.Error.Clear()
+      return $null
+    }
     if ($out -and $out.Count -gt 0 -and $out[0]) {
       $r = $out[0]
       if ($r.jpeg) { $script:capLastMs = [int]$r.ms; return $r }
     }
-  } catch { }
+    # 跑完了却没有结果 = 也是一次失败（比如返回了空）
+    $script:capLastError = '后台抓屏没有返回图像'
+  } catch { $script:capLastError = $_.Exception.Message }
   return $null
 }
 
@@ -2196,6 +2206,19 @@ function Sample-Once {
     $script:captureFails = 0
     $fp = [string]$capRes.fp
     if ($fp -and $fp -ne $script:lastFp) { $script:lastFp = $fp; $script:stillSince = $now }
+  }
+  # 抓屏失败的兜底（信号没来、但就是抓不到屏时，别一直拿旧图判断）：
+  # 连续 captureFailLimit 次就自己进待机。
+  if ($script:capLastError) {
+    $capErr = $script:capLastError
+    $script:capLastError = ''
+    $script:captureFails++
+    $limit = [int]$(if ($cfg.captureFailLimit) { $cfg.captureFailLimit } else { 3 })
+    if ($script:captureFails -ge $limit) {
+      Enter-Standby -Kind 'capture' -Display "连续 $($script:captureFails) 次抓不到屏幕"
+    } else {
+      Write-Warning "截图失败（第 $($script:captureFails)/$limit 次）：$capErr"
+    }
   }
   # ② 下令抓下一张（也是微秒级；上一张还没抓完就自然跳过这一拍）
   Start-BackgroundCapture
