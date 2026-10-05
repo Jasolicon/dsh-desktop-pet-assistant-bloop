@@ -11,10 +11,44 @@
     "start:no-sandbox": "electron --no-sandbox .",
     "probe": "electron --no-sandbox tools/probe.cjs",
     "test": "node --test",
-    "migrate-config": "node tools/migrate-config.mjs"
+    "migrate-config": "node tools/migrate-config.mjs",
+    "dist": "electron-builder --win nsis",
+    "pack": "electron-builder --win dir"
+  },
+  "build": {
+    "appId": "org.palai.desktop-pet",
+    "productName": "随时指导桌宠",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "src/**/*",
+      "package.json",
+      "!**/*.map"
+    ],
+    "asarUnpack": [
+      "**/*.node"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false,
+      "deleteAppDataOnUninstall": false
+    }
   },
   "devDependencies": {
-    "electron": "^28.3.3"
+    "electron": "^28.3.3",
+    "electron-builder": "^26.15.3"
   },
   "dependencies": {
     "koffi": "^3.3.2"

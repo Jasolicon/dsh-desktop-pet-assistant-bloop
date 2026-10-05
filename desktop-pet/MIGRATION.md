@@ -61,7 +61,7 @@
 | 7 | 选项问答 / 审批应答 | `AskTimer` + `pet-responder/index.js` | 渲染进程按钮 + IPC | 审批能在气泡上点 |
 | 8 | 子 agent 观察 | `Get-ObservedAgents` | `src/agents.mjs` | 后台任务进度显示在当前气泡上 |
 | 9 | 判断记录 / 沉默角标 | `Format-DecisionCard` | 渲染进程卡片 + `logs/utterances.jsonl` | 沉默率与角标跨重启仍准 |
-| 10 | 打包 | — | electron-builder | Windows 出 `.exe`；顺带验证 macOS/Linux |
+| ~~10~~ | ~~打包~~ | — | ✅ electron-builder 已配好 | 便携版已产出；安装器在本机被应用控制策略拦下，见 `DISTRIBUTION.md` §6 |
 
 **顺序上的理由**：2、3 是核心能力（"什么时候该说"），必须在 UI 打磨之前搬完并且
 用真实日志验证一致 —— 否则重写会悄悄改变产品行为，而这是最难发现的一类回归。
@@ -125,6 +125,7 @@
 | **本地闸门** | `src/gate.mjs` | 12 项单测，用例照着 PowerShell 自检 5h 块抄，阈值逐条对齐 |
 | 观察循环（采样→闸门→叫模型→沉默/说话） | `src/monitor.mjs` | **端到端实跑**：放行一次并说出"Codex 窗口被挡住了大半"，随后每轮都被闸门拦下 |
 | 判断日志 / 沉默角标 | `logs/decisions.jsonl` + 渲染进程角标 | 日志按 kind=skip/silent/spoke 记录；角标显示累计"没说"次数 |
+| 打包（electron-builder） | `package.json` 的 `build` 段 + `npm run pack` / `dist` | 便携版产出成功（168 MB）；安装器在本机被策略拦下，见 `DISTRIBUTION.md` §6 |
 
 ### 两处**有意**与 PowerShell 版不同，别当成 bug
 

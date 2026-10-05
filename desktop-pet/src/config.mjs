@@ -10,8 +10,10 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { ROOT } from './paths.mjs';
+import { configPath } from './dirs.mjs';
 
-export const CONFIG_PATH = join(ROOT, 'config.json');
+/** 打包后用 userData 目录（源码目录在 asar 里只读），见 dirs.mjs。 */
+export const CONFIG_PATH = configPath();
 
 /** 只保留重写后真正会用到的键。别的先放着不动，迁移完再删。 */
 export const DEFAULTS = {

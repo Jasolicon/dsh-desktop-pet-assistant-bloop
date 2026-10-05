@@ -14,6 +14,7 @@ import { ROOT, dshPaths, petImage } from './paths.mjs';
 import { loadConfig, saveConfig } from './config.mjs';
 import { askDsh } from './brain.mjs';
 import { createMonitor } from './monitor.mjs';
+import { dataDir } from './dirs.mjs';
 
 let win = null;
 let cfg = loadConfig();
@@ -200,7 +201,8 @@ function registerIpc() {
       { label: '显示/隐藏', click: () => (win.isVisible() ? win.hide() : win.show()) },
       {
         label: '打开配置目录',
-        click: () => shell.openPath(ROOT),
+        // 打包后 ROOT 在 app.asar 里，打开它没意义；打开真正放数据的地方（见 dirs.mjs）
+        click: () => shell.openPath(dataDir()),
       },
       { type: 'separator' },
       { label: '退出', click: () => app.quit() },

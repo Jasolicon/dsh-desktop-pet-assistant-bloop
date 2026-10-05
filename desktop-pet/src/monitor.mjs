@@ -17,10 +17,11 @@ import { powerMonitor } from 'electron';
 import { grabScreen } from './capture.mjs';
 import { worthAutoJudge, GATE_DEFAULTS } from './gate.mjs';
 import { foregroundWindow } from './win.mjs';
-import { ROOT } from './paths.mjs';
+import { logsDir, runDir } from './dirs.mjs';
 
-const LOG_DIR = join(ROOT, 'logs');
-const SHOT_DIR = join(ROOT, 'run', 'shots');
+// 目录在运行时取：打包后源码目录只读，要落到 userData（见 dirs.mjs）
+const logFile = () => join(logsDir(), 'decisions.jsonl');
+const shotDir = () => join(runDir(), 'shots');
 
 /** 留给模型的截图张数上限（和 PowerShell 版的 maxScreenshots 同义）。 */
 const MAX_SHOTS = 6;
@@ -89,8 +90,8 @@ export function createMonitor({ config = {}, onDecision, onState, logger = conso
 
   function record(entry) {
     try {
-      mkdirSync(LOG_DIR, { recursive: true });
-      appendFileSync(join(LOG_DIR, 'decisions.jsonl'), `${JSON.stringify(entry)}\n`, 'utf8');
+      mkdirSync(logsDir(), { recursive: true });
+      appendFileSync(logFile(), `${JSON.stringify(entry)}\n`, 'utf8');
     } catch (err) {
       logger.error('[pet] 写判断日志失败', err.message);
     }
@@ -203,16 +204,16 @@ export function createMonitor({ config = {}, onDecision, onState, logger = conso
    */
   function pushShot(now, jpegBase64) {
     try {
-      mkdirSync(SHOT_DIR, { recursive: true });
+      mkdirSync(shotDir(), { recursive: true });
       const name = `${new Date(now).toISOString().replace(/[:.]/g, '-')}-${st.shots.length}.jpg`;
-      const file = join(SHOT_DIR, name);
+      const file = join(shotDir(), name);
       writeFileSync(file, Buffer.from(jpegBase64, 'base64'));
       st.shots.push({ at: new Date(now).toISOString(), path: file });
       while (st.shots.length > MAX_SHOTS) st.shots.shift();
       // 磁盘上只留最近 24 张，别无限涨
-      const files = readdirSync(SHOT_DIR).filter((f) => f.endsWith('.jpg')).sort();
+      const files = readdirSync(shotDir()).filter((f) => f.endsWith('.jpg')).sort();
       for (const f of files.slice(0, Math.max(0, files.length - 24))) {
-        try { rmSync(join(SHOT_DIR, f)); } catch { /* 别人占着就算了 */ }
+        try { rmSync(join(shotDir(), f)); } catch { /* 别人占着就算了 */ }
       }
     } catch (err) {
       logger.error('[pet] 存截图失败', err.message);

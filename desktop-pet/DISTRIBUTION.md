@@ -72,14 +72,33 @@ SAC 目前只在部分 Windows 11 全新安装上是开着的，属于少数情�
 
 ---
 
-## 6. 打包命令（还没做，是 `MIGRATION.md` 里的第 10 项）
+## 6. 打包（已配好，`npm run dist` / `npm run pack`）
 
 用 `electron-builder` 出 NSIS 安装包：
 
 ```bash
-npm i -D electron-builder
-# package.json 里加 build 配置（appId / nsis / win target），然后：
-npx electron-builder --win nsis      # 产出 dist/desktop-pet Setup x.y.z.exe
+npm run dist     # electron-builder --win nsis  → dist/<产品名> Setup x.y.z.exe
+npm run pack     # 只出便携目录      → dist/win-unpacked/
 ```
 
 注意 Electron 版本钉在 `^28`（33 在这台机器上崩，见 README）。
+
+### 在这台开发机上实测的两件事
+
+1. **便携版能产出**：`npm run pack` 成功，结果是 `dist/win-unpacked/`（约 168 MB 主程序 +
+   完整运行时）。这就是可以直接压缩分发的形态。
+2. **装不到这台机器上**，两个原因层层叠加：
+   - `npm run dist`（NSIS）最后一步会**执行一次刚生成的安装器**来产出卸载程序，
+     而那个 exe 是新的、未签名的 → 被本机的应用程序控制策略拦下（exit 2）。
+   - 直接运行便携版主程序也是一样：**「应用程序控制策略已阻止此文件」**。
+
+   所以在这台机器上**验证不了打包产物**。dev 模式（`npm start`）不受影响，因为那用的是
+   npm 装下来的、原地未改动的 `electron.exe`。
+
+   > 顺带记一笔没查清的：同样是未签名，npm 那份 `electron.exe` 原地能跑，
+   > **复制到别处就被拦**；本地用 csc 编的 WinForms exe 又能跑。规则不是"有没有签名"这么简单，
+   > 具体判据没钉死（试了签名对比、路径对比、复制对比，结论互相矛盾）。
+   > 这不影响开发（dev 模式正常），留作已知问题。
+
+**结论**：要出正式安装包，找一台没开 Smart App Control / 应用控制策略的机器跑 `npm run dist`；
+或者按 §2 的方案先发便携版压缩包。
