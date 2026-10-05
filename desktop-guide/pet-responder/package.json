@@ -1,0 +1,10 @@
+{
+  "name": "dsh-pet-responder",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.js"
+  },
+  "description": "把 DSH 的权限审批与用户提问接到桌面桌宠（file-based answerer）"
+}

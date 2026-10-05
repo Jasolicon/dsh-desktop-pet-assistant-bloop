@@ -1,0 +1,77 @@
+{
+  "_comment": "DSH agent 引擎的配置。models 里每一项都会生成一个 --patch 覆盖 agent-default-model；access 里每一项是一档『对电脑的访问权限』。",
+  "_how": "dsh.cmd 其实是 `set ELECTRON_RUN_AS_NODE=1` 后调用下面的 exe + cli.js。直接调底层可以绕开 cmd 的引号问题，也能用 Start-Process 重定向。",
+  "dsh": "D:\\DeepSeekHarness\\resources\\runtime\\cli\\bin\\dsh.cmd",
+  "dshExe": "D:\\DeepSeekHarness\\DeepSeek Harness.exe",
+  "dshCli": "D:\\DeepSeekHarness\\resources\\app.asar\\dsh\\node_modules\\@deepseek-ai\\dsh-desktop-host\\lib\\cli.js",
+  "profile": "headless",
+  "models": [
+    {
+      "name": "DeepSeek Flash",
+      "provider": "deepseek-account",
+      "model": "deepseek-flash",
+      "effort": "high",
+      "note": "用 DSH 里已登录的账号，不用额外 key"
+    },
+    {
+      "name": "DeepSeek V4 Pro",
+      "provider": "deepseek-account",
+      "model": "deepseek-v4-pro",
+      "effort": "high",
+      "note": "同账号，更强也更贵"
+    }
+  ],
+  "access": [
+    {
+      "name": "只读",
+      "sandbox": "read-only",
+      "approval": "ask",
+      "note": "只看不改"
+    },
+    {
+      "name": "工作区可写",
+      "sandbox": "workspace-write",
+      "approval": "ask",
+      "note": "默认档"
+    },
+    {
+      "name": "完全访问",
+      "sandbox": "danger-full-access",
+      "approval": "never",
+      "note": "不弹审批，风险自负"
+    }
+  ],
+  "maxConcurrent": 3,
+  "keepFinished": 20,
+  "_mainAgent": "桌宠的『常驻主 agent』：它靠 --session-id 续跑同一个会话，所以会记得一整天的观察和自己的判断。和工作 agent 共用同一套模型/权限配置。",
+  "mainAgent": {
+    "model": "DeepSeek Flash",
+    "access": "只读",
+    "effort": "low",
+    "_effortNote": "主 agent 只做『要不要开口』这一个判断，不需要 high 深度推理 —— 实测 high 会多一轮思考，拖慢 3 秒左右。low 足够。",
+    "_disableToolsNote": "主 agent 只用 read_image（实测 174 次调用全是它），却挂着 24 个工具的 schema ≈ 19.7k 字符/轮。这里按行 id 关掉用不到的插件行：省每轮 token 与延迟，也少给观察者走错路的机会。关的是『工具行』，不是服务本身 —— 需要时删掉对应项即可恢复。",
+    "disableTools": [
+      "tool-pwsh",
+      "tool-bash",
+      "tool-fs-search",
+      "tool-todo",
+      "tool-goal",
+      "plan-mode",
+      "tool-jobs",
+      "tool-subagent-control",
+      "tool-subagent-list-agents",
+      "tool-subagent",
+      "tool-subagent-fork",
+      "tool-workflow",
+      "workflow-ptc",
+      "tool-web",
+      "tool-skill",
+      "tool-ralph"
+    ],
+    "note": "主 agent 只观察和判断，不需要写文件，所以给只读"
+  },
+  "_workAgent": "用户主动求助时起的『工作 agent』：它要真的动手改东西，所以权限默认比主 agent 高。",
+  "workAgent": {
+    "access": "完全访问"
+  }
+}

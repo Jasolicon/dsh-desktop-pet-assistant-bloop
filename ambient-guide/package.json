@@ -1,0 +1,34 @@
+{
+  "name": "dsh-ambient-guide",
+  "version": "0.3.1",
+  "private": true,
+  "type": "module",
+  "description": "随时指导引擎（第三阶段）：把会话操作确定性折叠成行为摘要，每轮首个步骤静默注入，并在需要时主动说一句；同时统计模型「决定不说」的沉默率。",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "icon": "./icon.svg",
+  "meta": {
+    "title": "随时指导（操作摘要）",
+    "description": "观察会话操作，随时主动说一句。可视化控制条 + /ambient 命令 + 沉默率统计。"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "icon.svg"
+  ],
+  "license": "MIT",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": []
+    }
+  }
+}

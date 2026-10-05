@@ -1,0 +1,24 @@
+# ⚠️ git 不支持行尾注释：`路径/   # 说明` 会被当成整条字面量，一条规则都不生效（踩过）。
+# 所有说明必须独占一行。
+
+# 运行时依赖 / 大文件（可重建）
+desktop-guide/.tts/
+desktop-guide/.stt/
+desktop-guide/.webui-profile/
+
+# 运行产物（截图、录音、请求应答、临时 payload、以及密钥文件）
+desktop-guide/run/
+desktop-guide/logs/
+*/run/
+*/logs/
+
+# 凭据（双保险：run/ 已整体忽略，这里再挡一次）
+*.key
+**/*.key
+.credentials*
+
+# 系统
+Thumbs.db
+Desktop.ini
+.DS_Store
+*.tmp
