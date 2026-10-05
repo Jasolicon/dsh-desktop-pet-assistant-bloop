@@ -280,7 +280,8 @@ async function dispatchTask(overrideText) {
   toggleBar(false);
   send.disabled = true;
   setState('thinking');
-  showBubble(`收到，去做：${text}`, 0);
+  // 中性一点的说法：打开了「打字也先判意图」时，这一句可能变成一次聊天回复
+  showBubble(`收到：${text}`, 0);
   const started = Date.now();
   const r = await window.pet.task(text);
   send.disabled = false;
@@ -288,6 +289,13 @@ async function dispatchTask(overrideText) {
   if (!r.ok) {
     setState('silent');
     showBubble(`（没做成：${r.why}）`, 10000);
+    return;
+  }
+  // 只是聊天：就地回一句，没有"去做"这回事
+  if (r.kind === 'chat') {
+    setState('speaking');
+    showBubble(r.text || '嗯，我在。', 15000);
+    say(r.text);
     return;
   }
   setState('speaking');

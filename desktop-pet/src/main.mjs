@@ -268,10 +268,28 @@ function registerIpc() {
     monitor?.noteUserAction(cfg.userQuietSeconds || 6);
     busy = true;
     try {
-      log('task:', String(task).slice(0, 80));
-      const r = await ask(String(task));
+      const text = String(task).trim();
+
+      // 可选：打字也先判一次意图（默认关 —— 那个框写着"派活"，用户就是明确要做事）
+      let routed = null;
+      if (cfg.routeTyped) {
+        routed = await route(text, (prompt) => ask(prompt));
+        log('判定（打字）：', routed.kind, JSON.stringify(routed.text).slice(0, 60));
+        if (routed.kind !== 'task') {
+          return {
+            ok: true,
+            kind: 'chat',
+            text: routed.text,
+            seconds: routed.seconds ?? 0,
+          };
+        }
+      }
+
+      const doing = routed?.text || text;
+      log('task:', doing.slice(0, 80));
+      const r = await ask(doing);
       log('task done:', r.ok, r.seconds.toFixed(1) + 's', r.why || '');
-      return r;
+      return { ...r, kind: 'task', routed: routed?.text || null };
     } finally {
       busy = false;
     }

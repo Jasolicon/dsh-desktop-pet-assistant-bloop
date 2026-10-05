@@ -50,6 +50,13 @@ export const DEFAULTS = {
   ttsVoice: '',
   // 行为
   userQuietSeconds: 6,
+  /**
+   * 打字派活要不要也先判一次意图。
+   * 默认 false：那个输入框本来就写着"派活"，用户敲进去就是明确要做事 —— 不判更省一轮。
+   * 打开后打字也走 router.mjs：只是说话就地回一句、不动手（代价是"要做的事"多一轮判定）。
+   * 语音那条路**总是**判（见 main.mjs 的 pet:voice），不受这个开关影响。
+   */
+  routeTyped: false,
   judgeMinSeconds: 60,
   judgeMinFpDelta: 12,
   silentBackoffMax: 4,
