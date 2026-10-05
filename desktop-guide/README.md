@@ -78,7 +78,7 @@
 **直接命令启动**（这台机器上 `start.cmd` 会被应用控制策略按扩展名拦掉，见下）：
 
 ```powershell
-pwsh -NoProfile -ExecutionPolicy Bypass -File "C:\Users\<user>\Documents\deepseek-harness\default-workspace\desktop-guide\DesktopGuide.ps1"
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\DesktopGuide.ps1
 ```
 
 > ⚠️ 实测：在这台机器上启动 `start.cmd` 会被应用控制策略拦下来，报
@@ -248,7 +248,7 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File DesktopGuide.ps1 -SelfTest   # 含
 
 ```powershell
 # 只测识别（默认拿 run\tts\say-*.wav，有原句可对照）
-cd C:\Users\<user>\Documents\deepseek-harness\default-workspace\desktop-guide
+cd <仓库根>\desktop-guide
 pwsh -NoProfile -Command ". .\stt.ps1; [void](Initialize-Stt -Config (Get-Content .\config.json -Raw | ConvertFrom-Json)); Test-Stt -Count 3"
 ```
 
@@ -568,6 +568,32 @@ web UI 里由 `dsh-client-ui-approval` / `dsh-client-ui-user-questions` 当应�
 
 ## 它刻意不做什么
 
+## 账本（充值播报）：自己查、自己记，不依赖别的插件
+
+余额涨了（有人充值）就在气泡里说一声。**这套是桌宠自己的实现**，不需要先装任何别的插件才能用：
+
+| 来源 | 需要什么 | 说明 |
+|---|---|---|
+| **实时查余额** | 一个 DeepSeek API key | `GET https://api.deepseek.com/user/balance` |
+| **本地记账** | 无 | 每次查到的余额记进 `desktop-guide/ledger.json`，于是"今天花了多少"和"是不是充值了"都算得出来 |
+| 都没有 | — | 明说缺什么（"配一个 DeepSeek API key 即可"），不装死 |
+
+key 的查找顺序和项目里 `advisor-minimax` / `advisor-openai` 一致：**环境变量 `DEEPSEEK_API_KEY` → `run\deepseek.key` 文件**。
+
+**充值判据是"余额变大"**（默认 ≥ 0.5 元才播报，`rechargeMinDelta` 可配）——比读任何记账字段都直接。
+启动时先读一次做基线，所以重启不会把历史充值当成刚发生再播一遍。每 20 秒轮询一次（`ledgerWatchSeconds`）。
+
+> **如果你本机已经装了 `dsh-whale-widget`（DSH 里那个鲸鱼挂件）**：它的账本在
+> `~\.dsh\.dshw-usage.json`（余额 / 今日花费 / 近 7 天 / 每轮消耗，字段比我们这套细）。
+> 本项目**不读它**——那是别人的插件，读它等于"不装就用不了"。想让它当数据源的话，
+> 自己写个几行的小脚本把它转成 `ledger.json` 的格式即可。
+>
+> 同理，本项目的**角色图也不再从那个插件的目录里取**了：现在只认
+> `config.json` 的 `petImage`、环境变量 `DG_PET_IMAGE`、或本目录 `assets\pet.png`；
+> 三条都没有就退回代码绘制的圆脸（`-SelfTest` 的预览图里那张）。
+> 想用它的鲸鱼形象自用，把那张 PNG 的路径填进 `config.json` 的 `petImage` 就行 ——
+> 但注意**它的素材授权不允许随本项目分发**（见 `THIRD_PARTY_NOTICES.md`）。
+
 | 不做 | 原因 |
 |---|---|
 | 不监听键盘输入 / 不读剪贴板 / 不记录窗口里的文字 | 侵入性太强，对判断"卡没卡住"帮助也有限 |
@@ -735,7 +761,7 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File advisor-minimax.ps1 -Check   # 先
 被 PowerShell 当成命令去执行（`$env:X = sk-abc` 不加引号就是这个下场，报 `CommandNotFoundException`）：
 
 ```powershell
-$p = "C:\Users\<user>\Documents\deepseek-harness\default-workspace\desktop-guide\run\minimax.key"
+$p = ".\run\minimax.key"      # 在 desktop-guide 目录下跑
 New-Item -ItemType Directory -Force (Split-Path $p) | Out-Null
 Set-Content -LiteralPath $p -Value (Read-Host -MaskInput '粘贴 MiniMax API Key') -NoNewline -Encoding UTF8
 ```

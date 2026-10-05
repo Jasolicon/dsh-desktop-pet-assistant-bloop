@@ -209,18 +209,14 @@ function Get-DgEdgePath {
   return ''
 }
 
-# 桌宠角色图。默认**不再指向别人装的插件目录** —— 那是 dsh-whale-widget 的素材，
-# 它的授权不允许随本项目分发（见 README 的授权提醒）。顺序：
-#   配置 petImage → DG_PET_IMAGE → 本目录 assets\pet.png → 本机已装的鲸鱼挂件（仅自用兜底）
-# 最后一条只在本机自用时命中；对外分发时应当只保留前三条。
+# 桌宠角色图。**只认你自己的素材**（不指向任何别人装的插件目录）：
+#   配置 petImage → DG_PET_IMAGE → 本目录 assets\pet.png → 都没有就退回代码绘制的圆脸。
 function Get-DgPetImage {
   param([string]$Configured = '')
   $hit = Resolve-DgFirst @((Expand-DgTokens $Configured), (Get-DgEnv 'DG_PET_IMAGE'))
   if ($hit) { return $hit }
-  $dshHome = if ((Get-DgEnv 'DSH_HOME')) { (Get-DgEnv 'DSH_HOME') } else { Join-Path $env:USERPROFILE '.dsh' }
   return (Resolve-DgFirst @(
-      (Join-Path $script:DgRoot 'assets\pet.png'),
-      (Join-Path $dshHome 'profiles\desktop\node_modules\dsh-whale-widget\assets\DSniang1.png')
+      (Join-Path $script:DgRoot 'assets\pet.png')
     ))
 }
 

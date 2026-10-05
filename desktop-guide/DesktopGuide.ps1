@@ -414,6 +414,8 @@ namespace DesktopGuide {
     public event EventHandler VoiceRequested;
     /** 要一个文字输入框（打字派活，和语音同一条管线） */
     public event EventHandler TypeRequested;
+    /** 要填 API key（供应商表：DeepSeek / MiniMax / OpenAI） */
+    public event EventHandler ApiKeyRequested;
     /** 右键菜单刚打开 —— 打开菜单本身就是"用户在场"的信号 */
     public event EventHandler MenuOpened;
     /** 待机状态变了（显示器开关 / 锁屏 / 睡眠唤醒）—— 外层据此进入/退出待机 */
@@ -498,6 +500,27 @@ namespace DesktopGuide {
     int optionBtnW = 0;
 
     Font bubbleFont;
+    /**
+     * 气泡**最下方**那行小字：余额 / 上次调用花了多少。
+     * 刻意比正文小一号、颜色更淡 —— 它是"顺便看一眼"的信息，不该抢正文的注意力。
+     */
+    public string Footer = "";
+    /** 从外面设置页脚：变了才重排 + 重画（没变就不做，省一次 Render）。 */
+    public void SetFooter(string text) {
+      text = text ?? "";
+      if (Footer == text) return;
+      Footer = text;
+      FitToBubble();
+      Render();
+    }
+    Font FooterFont() { return new Font(bubbleFont.FontFamily, (float)(bubbleFont.Size * 0.78)); }
+    int FooterH() {
+      if (string.IsNullOrEmpty(Footer)) return 0;
+      using (var f = FooterFont()) {
+        var sz = TextRenderer.MeasureText(Footer, f, new Size(Math.Max(40, Width - 2 * BubblePadX - 20), 400), TextFormatFlags.WordBreak);
+        return sz.Height + S(3);
+      }
+    }
     readonly ToolStripMenuItem autoItem;
     readonly ToolStripMenuItem ttsItem;
     /** 「朗读」子菜单（挂在「设置」下） */
@@ -713,6 +736,7 @@ namespace DesktopGuide {
       settingsMenu.DropDownItems.Add(new ToolStripSeparator());
       settingsMenu.DropDownItems.Add(MakeMenuItem("字体字号…", FontRequested));
       settingsMenu.DropDownItems.Add(MakeMenuItem("改 system prompt…", PromptRequested));
+      settingsMenu.DropDownItems.Add(MakeMenuItem("填 API key…", ApiKeyRequested));
 
       settingsMenu.DropDownItems.Add(new ToolStripSeparator());
       settingsMenu.DropDownItems.Add(MakeMenuItem("主 agent 会话", MainSessionRequested));
@@ -1065,7 +1089,7 @@ namespace DesktopGuide {
       if (!string.IsNullOrEmpty(message)) {
         int textW = Width - 2 * BubblePadX - 20;
         var size = TextRenderer.MeasureText(message, bubbleFont, new Size(textW, 2000), TextFormatFlags.WordBreak);
-        int need = BubbleTop + size.Height + 2 * BubblePadY + OptionExtraH() + Gap + PetH + BottomPad + BtnH + BtnGap + 6;
+        int need = BubbleTop + size.Height + FooterH() + 2 * BubblePadY + OptionExtraH() + Gap + PetH + BottomPad + BtnH + BtnGap + 6;
         target = Math.Max(baseHeight, need);
       }
       // 关键：必须双向调整。只允许变高会导致窗口回不去，气泡在上、宠物在下，中间空一大块（实测踩过）。
@@ -1477,6 +1501,8 @@ namespace DesktopGuide {
       // 高度统一交给 BubbleRect 算：有选项时它会多留一行，把按钮装进气泡里。
       var rect = BubbleRect();
       int textH = rect.Height - 2 * BubblePadY - OptionExtraH();
+      // textH 现在含页脚高度；正文要按"减去页脚"来画，不然页脚会被挤到气泡外面
+      int msgH = Math.Max(1, textH - FooterH());
       var tail = new Point(Math.Max(rect.Left + 26, Math.Min(tailX, rect.Right - 26)), petTop - Gap + 2);
 
       using (var path = new GraphicsPath()) {
@@ -1498,9 +1524,18 @@ namespace DesktopGuide {
 
       TextRenderer.DrawText(
         g, message, bubbleFont,
-        new Rectangle(rect.X + 10, rect.Y + BubblePadY, rect.Width - 20, Math.Max(1, textH)),
+        new Rectangle(rect.X + 10, rect.Y + BubblePadY, rect.Width - 20, msgH),
         Color.FromArgb(31, 35, 42),
         TextFormatFlags.WordBreak | TextFormatFlags.NoPrefix);
+      // 最下方那行小字：余额 / 上次调用花了多少。比正文小一号、颜色更淡。
+      if (!string.IsNullOrEmpty(Footer)) {
+        using (var ff = FooterFont())
+          TextRenderer.DrawText(
+            g, Footer, ff,
+            new Rectangle(rect.X + 10, rect.Y + BubblePadY + msgH + S(3), rect.Width - 20, Math.Max(1, textH - msgH)),
+            Color.FromArgb(140, 148, 162),
+            TextFormatFlags.WordBreak | TextFormatFlags.NoPrefix);
+      }
     }
 
     /// 有选项时气泡要多留的高度（几行按钮 + 行间距）；没有选项就是 0。
@@ -1519,7 +1554,7 @@ namespace DesktopGuide {
         textH = measured.Height;
       }
       if (textH <= 0) textH = bubbleFont.Height;
-      return new Rectangle(BubblePadX, BubbleTop, Width - 2 * BubblePadX, textH + 2 * BubblePadY + OptionExtraH());
+      return new Rectangle(BubblePadX, BubbleTop, Width - 2 * BubblePadX, textH + FooterH() + 2 * BubblePadY + OptionExtraH());
     }
 
     /// 选项按钮宽度：按文字自适应，短词（"好"/"不用"）就不会被撑成一条大胶囊。
@@ -1667,8 +1702,12 @@ $defaults = [ordered]@{
   # 学习出来的采样率会被夹在这个区间里（防止学出 0.05 秒把机器烧了）
   minSampleSeconds      = 0.3
   maxSampleSeconds      = 60
+  # 定时播报余额（分钟；0 = 不播）。余额/上次调用/今天的数字另外**一直**显示在气泡最下方那行小字里。
+  balanceBroadcastMinutes = 30
   # 两次采样之间画面指纹跳变超过这个值就算"漏掉了东西"（指纹总差上限 960）
   jumpDeltaThreshold    = 200
+  # 语音录音（run\mic\mic-*.wav）最多留几个；每句 200–300KB，不删会一直涨
+  micKeepFiles          = 20
   # 常驻大脑：一个进程持有 DSH 运行时，派任务时不再每轮起新进程（见 brain-sdk.ps1）
   brainTransport        = $true
   brainEffort           = 'low'
@@ -1720,6 +1759,8 @@ $logPath = Join-Path $logDir ("observe-{0}.jsonl" -f (Get-Date -Format 'yyyyMMdd
 . (Join-Path $PSScriptRoot 'md-plain.ps1')
 # 朗读（TTS）：只读「结论句」，双击桌宠可打断。所有状态都在 tts.ps1 里。
 . (Join-Path $PSScriptRoot 'tts.ps1')
+# 账本（充值播报）：自己查余额、自己记账，不依赖任何别的插件。见 ledger.ps1 头部。
+. (Join-Path $PSScriptRoot 'ledger.ps1')
 
 # ---------------------------------------------------------------------------
 # 采集
@@ -1805,10 +1846,37 @@ function Test-SilentText {
   return $false
 }
 
+# 判断记录按**周**切分：`logs\utterances-2026W41.jsonl`（ISO 周，避免跨年那周算错）。
+# 为什么不删旧的：按项目总纲，「什么时候该沉默」的标注数据**就是护城河**，
+# 它不是运行日志，是资产。所以只切分、不清理（一周几十 KB，留着不心疼）。
+# 按周而不是按月：切分粒度小一点，翻最近几周的"它判过什么"更快，单文件也不会长到几 MB。
+# 也顺带认老的 utterances.jsonl（迁移前写在一个文件里的那份）。
+function Get-UtteranceLogs {
+  param([int]$Newest = 0)
+  $all = @()
+  $legacy = Join-Path $logDir 'utterances.jsonl'
+  if (Test-Path -LiteralPath $legacy) { $all += $legacy }
+  $all += @(Get-ChildItem -LiteralPath $logDir -Filter 'utterances-*.jsonl' -File -ErrorAction SilentlyContinue |
+      Sort-Object Name | Select-Object -ExpandProperty FullName)
+  if ($all.Count -eq 0) { return @() }
+  if ($Newest -gt 0) { $all = @($all | Select-Object -Last $Newest) }
+  return $all
+}
+
+function Get-UtteranceLogPath {
+  $d = Get-Date
+  # ISOWeek 而不是 "第几周" 的简单算法：跨年那周（12/29 属于次年第 1 周）只有它算得对
+  return (Join-Path $logDir ("utterances-{0}W{1:D2}.jsonl" -f `
+        [System.Globalization.ISOWeek]::GetYear($d), [System.Globalization.ISOWeek]::GetWeekOfYear($d)))
+}
+
 function Load-History {
-  $p = Join-Path $logDir 'utterances.jsonl'
-  if (-not (Test-Path $p)) { return }
-  foreach ($line in (Get-Content -LiteralPath $p -Encoding UTF8 | Select-Object -Last 30)) {
+  $files = @(Get-UtteranceLogs -Newest 2)
+  if ($files.Count -eq 0) { return }
+  # 读最近 1–2 个月（够回填卡片和角标；再往前翻没意义）
+  $lines = @()
+  foreach ($f in $files) { $lines += @(Get-Content -LiteralPath $f -Encoding UTF8) }
+  foreach ($line in ($lines | Select-Object -Last 30)) {
     if ([string]::IsNullOrWhiteSpace($line)) { continue }
     try {
       $o = $line | ConvertFrom-Json
@@ -1825,12 +1893,14 @@ function Load-History {
 
 # 沉默总数必须从**整份日志**数，不能用内存里那 30 条 —— 否则角标会封顶在 30。
 function Get-SilentTotalFromLog {
-  $p = Join-Path $logDir 'utterances.jsonl'
-  if (-not (Test-Path $p)) { return 0 }
+  $files = @(Get-UtteranceLogs)
+  if ($files.Count -eq 0) { return 0 }
   $n = 0
-  foreach ($line in (Get-Content -LiteralPath $p -Encoding UTF8)) {
-    if ([string]::IsNullOrWhiteSpace($line)) { continue }
-    try { if (Test-SilentText (($line | ConvertFrom-Json).text)) { $n++ } } catch { }
+  foreach ($f in $files) {
+    foreach ($line in (Get-Content -LiteralPath $f -Encoding UTF8)) {
+      if ([string]::IsNullOrWhiteSpace($line)) { continue }
+      try { if (Test-SilentText (($line | ConvertFrom-Json).text)) { $n++ } } catch { }
+    }
   }
   return $n
 }
@@ -1897,8 +1967,8 @@ function Restore-PetWidthAfterPrompt {
 }
 
 # 有现成角色图就用它。顺序在 paths.ps1 的 Get-DgPetImage 里：
-# config.petImage → DG_PET_IMAGE → 本目录 assets\pet.png → 本机已装的鲸鱼挂件（自用兜底）。
-# 注意最后那条是**别人插件的素材**，授权不允许随本项目分发，对外发布前必须换成自绘的。
+    # config.petImage → DG_PET_IMAGE → 本目录 assets\pet.png。
+    # 三条都没有就退回代码绘制的圆脸（自检预览里那张）。
 function Resolve-PetImage {
   param([string]$Configured)
   return (Get-DgPetImage -Configured $Configured)
@@ -1983,9 +2053,79 @@ function Add-TimelineEntry {
   while ($script:timeline.Count -gt [int]$cfg.timelineSize) { $script:timeline.RemoveAt(0) }
 }
 
+# ===========================================================================
+    # 账本（充值播报）：自己查余额 + 自己记账，**不依赖任何别的软件**
+#
+    # 桌宠这边要的是**播报**：余额涨了（有人充值）就在气泡里说一声，想看明细再点菜单。
+    # 余额从 DeepSeek 公开接口自己查（要一个 API key，和 advisor-minimax/openai 同一套约定），
+    # 每次看到余额就记一笔到我们自己的 ledger.json —— 于是"今天花了多少/是不是充值了"都算得出来。
+# ===========================================================================
+$script:ledgerStatePath = Join-Path $runDir 'ledger.json'
+$script:ledgerLastBalance = $null
+$script:lastBalanceAnnounceAt = Get-Date   # 定时播报余额的计时起点（启动时不立刻播一次）
+
+function Load-LedgerState {
+  if (Test-Path -LiteralPath $script:ledgerStatePath) {
+    try { return (Get-Content -LiteralPath $script:ledgerStatePath -Raw -Encoding UTF8 | ConvertFrom-Json) } catch { }
+  }
+  return $null
+}
+
+function Save-LedgerState {
+  param([double]$Balance)
+  try {
+    ([pscustomobject]@{ lastBalance = $Balance; at = (Get-Date).ToString('o') } |
+      ConvertTo-Json -Compress) | Set-Content -LiteralPath $script:ledgerStatePath -Encoding UTF8
+  } catch { }
+}
+
+function Show-LedgerCard {
+  Set-PetWidth 460
+  $l = Get-LedgerSnapshot
+  $pet.ShowMessage((Format-LedgerCard -Ledger $l), 0)
+}
+
+function Update-Ledger {
+  <#
+    读一眼账本；余额**变大**就是充值 → 播报。
+    阈值 rechargeMinDelta（默认 0.5 元）是为了避开余额观测的抖动，也避免几分钱的修正被当成充值。
+    进程内第一次读到只做基线，不播报（否则每次重启都会"播报"一次历史充值）。
+  #>
+  param([switch]$Quiet)
+  $l = Get-LedgerSnapshot
+  if (-not $l -or $l.Source -eq 'none') {
+    # 没有任何余额来源：只在第一次明说一遍，别每次轮询都念叨
+    if (-not $script:ledgerWarned) {
+      $script:ledgerWarned = $true
+      Write-Host "[账本] $($l.Reason)"
+    }
+    return
+  }
+  # 记进**我们自己的**账本（不依赖任何插件）
+  if ($l.Source -eq 'api') { try { Add-LedgerObservation -Balance $l.Balance -Currency $l.Currency } catch { } }
+  $st = Load-LedgerState
+  $prev = if ($script:ledgerLastBalance -ne $null) { [double]$script:ledgerLastBalance }
+          elseif ($st -and ($st.PSObject.Properties.Name -contains 'lastBalance')) { [double]$st.lastBalance }
+          else { $null }
+  $script:ledgerLastBalance = $l.Balance
+  Save-LedgerState -Balance $l.Balance
+  if ($null -eq $prev) { return }
+
+  $delta = $l.Balance - $prev
+  $thr = [double]$(if ($cfg.rechargeMinDelta) { $cfg.rechargeMinDelta } else { 0.5 })
+  if ($delta -ge $thr) {
+    $msg = "充值到账 $(Format-Money $delta $l.Currency)，余额 $(Format-Money $l.Balance $l.Currency)"
+    Add-Interaction 'recharge' ("+" + [math]::Round($delta, 2))
+    if (-not $Quiet) {
+      try { $pet.ShowMessage($msg, 20) } catch { }
+      try { [void](Speak-Text $msg) } catch { }
+    }
+  }
+}
+
+#
 # ---------------------------------------------------------------------------
 # 待机（黑屏 / 锁屏 / 睡眠）
-#
 # 为什么要有这一段：屏幕关着时 GDI 抓屏会失败（"句柄无效"），而**失败只是症状** ——
 # 之前桌宠会每 2 秒刷一条警告，还照样去问模型，模型拿到的是一张黑图或干脆没图，
 # 判断自然全是垃圾。系统其实给了正式信号（都在窗口消息里）：
@@ -2627,7 +2767,8 @@ function Complete-AdvisorIfDone {
   if ([string]::IsNullOrWhiteSpace($shownText)) { $shownText = $text }
   if ($watch) { try { [void](Set-WatchFromAgent -Target $watch -Quiet) } catch { } }
 
-  Add-Content -LiteralPath (Join-Path $logDir 'utterances.jsonl') -Encoding UTF8 -Value (([pscustomobject]@{
+  # 按月写进 utterances-YYYYMM.jsonl（每月自动换个文件，不需要重命名/轮转）
+  Add-Content -LiteralPath (Get-UtteranceLogPath) -Encoding UTF8 -Value (([pscustomobject]@{
         at     = (Get-Date).ToString('o')
         auto   = $script:autoAsk
         trigger = $(if ($script:suppressShow) { 'warmup' } elseif ($script:autoAsk) { 'auto' } else { 'manual' })
@@ -2687,6 +2828,29 @@ function Load-PetState {
 }
 
 # ---------------------------------------------------------------------------
+# 气泡页脚 / 定时播报余额 / 每次调用花了多少（定义在自检之前：自检里也要能调）
+$script:lastCallCost = $null      # 上一次我们自己的调用花了多少（余额差）
+
+function Get-BubbleFooter {
+  <# 气泡最下方那行小字：余额 · 上次调用 · 今天。没有余额来源就返回空串（不占高度）。 #>
+  $bits = @()
+  try {
+    $l = Get-LedgerSnapshot
+    if ($l -and $l.Source -ne 'none') {
+      $bits += "余额 $(Format-Money $l.Balance $l.Currency)"
+      if ($script:lastCallCost -ne $null) { $bits += "上次调用 $(Format-Money ([double]$script:lastCallCost) $l.Currency)" }
+      if ($l.TodayUsage -gt 0) { $bits += "今天 $(Format-Money $l.TodayUsage $l.Currency)" }
+    }
+  } catch { }
+  if ($bits.Count -eq 0) { return '' }
+  return ($bits -join ' · ')
+}
+
+function Update-BubbleFooter {
+  <# 把页脚同步到窗口上（没变就不重画，省一次 Render）。 #>
+  try { $pet.SetFooter((Get-BubbleFooter)) } catch { }
+}
+
 # 自检 / 导出（不需要界面）
 # ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
@@ -3014,6 +3178,21 @@ $probe3 = New-Object DesktopGuide.PetForm -ArgumentList @([double]$script:UiScal
   if ($setm) { Write-Output ("  「设置」{0} 项" -f $setm.DropDownItems.Count) }
   Write-Output ("  顶层文字：" + (($cm.Items | ForEach-Object { if ($_.Text) { $_.Text } else { '—' } }) -join ' / '))
   $mprobe.Dispose()
+  Write-Output '=== 5o. 气泡页脚（余额 / 上次调用 / 今天）==='
+  $fprobe = New-Object DesktopGuide.PetForm -ArgumentList @([double]$script:UiScale, [string]$cfg.fontFamily, [double]$cfg.fontSize)
+  $null = $fprobe.Handle
+  if ($img) { $fprobe.SetImage($img) }
+  Set-PetWidthForOptions @('好','不用') | Out-Null
+  $fprobe.Width = [int][math]::Round(360 * $script:UiScale)
+  $script:lastCallCost = 0.0312
+  $fprobe.SetFooter((Get-BubbleFooter))
+  $fprobe.ShowMessage('屏幕上有可证明的错误：第 42 行索引越界（列表长度 41）。', 0)
+  $fprobe.SetFooter((Get-BubbleFooter))
+  $outF = Join-Path $runDir 'pet-preview-footer.png'
+  $fprobe.SavePreview($outF)
+  Write-Output ("  页脚内容：『{0}』" -f (Get-BubbleFooter))
+  Write-Output ("  预览：{0}" -f $outF)
+  $fprobe.Dispose()
   Write-Output '=== 5g. 待机（黑屏/锁屏/睡眠）逻辑 ==='
   $sprobe = New-Object DesktopGuide.PetForm -ArgumentList @([double]$script:UiScale, [string]$cfg.fontFamily, [double]$cfg.fontSize)
   $null = $sprobe.Handle
@@ -3145,6 +3324,15 @@ $probe3 = New-Object DesktopGuide.PetForm -ArgumentList @([double]$script:UiScal
     $tbmp.Save($outTi, [System.Drawing.Imaging.ImageFormat]::Png)
     Write-Output ("  预览：{0}" -f $outTi)
   } finally { $tbmp.Dispose(); $tif.Dispose() }
+  Write-Output '=== 5n. 账本（充值播报的数据源）==='
+  $led = Get-LedgerSnapshot
+  if ($led) {
+    Write-Output ("  账本：$($led.Day) 余额 $(Format-Money $led.Balance $led.Currency)  今天 $(Format-Money $led.TodayUsage $led.Currency)  更新于 $([int]$led.StaleSeconds)s 前")
+    Write-Output ("  充值判据：余额增加 >= $(if ($cfg.rechargeMinDelta) { $cfg.rechargeMinDelta } else { 0.5 }) 就播报（当前基线 $($script:ledgerLastBalance)）")
+    Write-Output ("  卡片预览：`n" + ((Format-LedgerCard -Ledger $led) -split "`n" | ForEach-Object { '    ' + $_ }) -join "`n")
+  } else {
+        Write-Output '  读不到账本（没配 DeepSeek API key，也还没有本地观测记录）'
+  }
   Write-Output '=== 5m. 采样表学习（模型建议 / 画面漏帧）==='
   # 用临时表跑，别动真正的 task-samples.json
   $realPath = $script:taskSamplesPath
@@ -3542,6 +3730,11 @@ function Start-PetTask {
       -UseBrain:$([bool]$cfg.brainTransport)
     Add-Interaction 'task_start' "$($rec.id)|$($Model.name)"
     $script:watchedAgents[$rec.id] = (Get-Date).ToString('o')
+    # 记下调用前的余额：跑完再读一次，差值就是"这次调用花了多少"
+    try {
+      $l0 = Get-LedgerSnapshot
+      $script:callBalanceBefore = if ($l0 -and $l0.Source -ne 'none') { [double]$l0.Balance } else { $null }
+    } catch { $script:callBalanceBefore = $null }
     $pet.ShowMessage("收到，交给 $($rec.id) 去做：`n$(Shorten-Text $Task 42)`n（做完我念给你听）", [int]$cfg.showSeconds)
     $agentTimer.Start()
   } catch {
@@ -3582,6 +3775,19 @@ $agentTimer.Add_Tick({
         # 气泡是纯文本控件：agent 常回 `**29%**` 这种 Markdown，先压平再上屏/朗读
         if ($line) { try { $line = ConvertTo-PlainText $line } catch { } }
         Add-Interaction 'task_done' "$id|$($a.status)"
+        # 这次调用花了多少 = 调用前后余额差（余额是实时查的，所以这个数是真的花的钱）。
+        # 注意：如果这期间用户自己也在用 DSH，那个消耗会一起算进来 —— 所以文案写"这次≈"。
+        if ($script:callBalanceBefore -ne $null) {
+          try {
+            $l1 = Get-LedgerSnapshot
+            if ($l1 -and $l1.Source -ne 'none') {
+              $d = [double]$script:callBalanceBefore - [double]$l1.Balance
+              if ($d -ge 0) { $script:lastCallCost = [math]::Round($d, 4) }
+            }
+          } catch { }
+          $script:callBalanceBefore = $null
+        }
+        try { Update-BubbleFooter } catch { }
         if ($a.status -eq 'done') {
           $pet.ShowMessage($(if ($line) { "$id 做完了：`n$line" } else { "$id 做完了（没看到结论，右键看 Agent 列表）" }), 20)
           if ($line) { try { Speak-Text $line } catch { } }
@@ -3691,6 +3897,92 @@ function Edit-PetFont {
     $pet.ShowMessage("字体已改为 $($cfg.fontFamily) $($cfg.fontSize)pt", [int]$cfg.showSeconds)
   }
   $fd.Dispose()
+}
+
+# 供应商表：key 写到哪里、有什么用。参考那类"路径 + 供应商表"的做法，但只留我们真会读的三个。
+$script:ApiKeyProviders = @(
+  [pscustomobject]@{ Name = 'DeepSeek（余额 / 充值播报）'; File = 'deepseek.key'; Hint = '查余额：api.deepseek.com/user/balance（没填这里时，会自动用 run\openai.key）' }
+  [pscustomobject]@{ Name = 'MiniMax（备用大脑，能看图）'; File = 'minimax.key'; Hint = 'advisor-minimax.ps1 用' }
+  [pscustomobject]@{ Name = 'OpenAI（备用大脑，快）'; File = 'openai.key'; Hint = 'advisor-openai.ps1 用' }
+)
+
+function Read-ApiKeyDialog {
+  <# 选供应商 + 输入 key（密码框遮住，别念在屏幕上）。留空 = 清掉这个供应商的 key。 #>
+  param([int]$Preselect = 0)
+  $f = New-Object System.Windows.Forms.Form
+  $f.Text = '填 API key'
+  $f.Size = New-Object System.Drawing.Size ([int](540 * $script:UiScale)), ([int](250 * $script:UiScale))
+  $f.StartPosition = 'CenterScreen'
+  $f.TopMost = $true
+  $f.Font = New-Object System.Drawing.Font 'Microsoft YaHei UI', (9 * $script:UiScale)
+
+  $lblP = New-Object System.Windows.Forms.Label
+  $lblP.Text = '供应商（写进 run\<名字>.key，只存在本机）：'
+  $lblP.Dock = 'Top'; $lblP.Height = [int](26 * $script:UiScale)
+  $lblP.Padding = New-Object System.Windows.Forms.Padding ([int](10 * $script:UiScale)), ([int](6 * $script:UiScale)), 0, 0
+
+  $cbo = New-Object System.Windows.Forms.ComboBox
+  $cbo.Dock = 'Top'; $cbo.DropDownStyle = 'DropDownList'
+  foreach ($p in $script:ApiKeyProviders) { [void]$cbo.Items.Add($p.Name) }
+  $cbo.SelectedIndex = [math]::Max(0, [math]::Min($Preselect, $script:ApiKeyProviders.Count - 1))
+
+  $lblH = New-Object System.Windows.Forms.Label
+  $lblH.Dock = 'Top'; $lblH.Height = [int](30 * $script:UiScale)
+  $lblH.ForeColor = [System.Drawing.Color]::DimGray
+  $lblH.Padding = New-Object System.Windows.Forms.Padding ([int](10 * $script:UiScale)), ([int](4 * $script:UiScale)), 0, 0
+  $updateHint = {
+    $p = $script:ApiKeyProviders[[math]::Max(0, $cbo.SelectedIndex)]
+    $exists = if (Test-Path -LiteralPath (Join-Path $runDir $p.File)) { '（已有，保存会覆盖）' } else { '（还没填过）' }
+    $lblH.Text = "$($p.Hint)　$exists"
+  }
+  $cbo.Add_SelectedIndexChanged($updateHint)
+
+  $box = New-Object System.Windows.Forms.TextBox
+  $box.Dock = 'Top'
+  $box.UseSystemPasswordChar = $true
+  $box.Font = New-Object System.Drawing.Font 'Consolas', (10 * $script:UiScale)
+
+  $panel = New-Object System.Windows.Forms.Panel
+  $panel.Dock = 'Bottom'; $panel.Height = [int](44 * $script:UiScale)
+  $ok = New-Object System.Windows.Forms.Button
+  $ok.Text = '保存'; $ok.DialogResult = 'OK'; $ok.Dock = 'Right'; $ok.Width = [int](90 * $script:UiScale)
+  $cancel = New-Object System.Windows.Forms.Button
+  $cancel.Text = '取消'; $cancel.DialogResult = 'Cancel'; $cancel.Dock = 'Right'; $cancel.Width = [int](90 * $script:UiScale)
+  $panel.Controls.Add($cancel); $panel.Controls.Add($ok)
+
+  $f.Controls.Add($box); $f.Controls.Add($lblH); $f.Controls.Add($cbo); $f.Controls.Add($lblP); $f.Controls.Add($panel)
+  $f.AcceptButton = $ok; $f.CancelButton = $cancel
+  & $updateHint
+  $res = $f.ShowDialog($pet)
+  $out = [pscustomobject]@{
+    Provider = $script:ApiKeyProviders[[math]::Max(0, $cbo.SelectedIndex)]
+    Key      = $box.Text.Trim()
+    Ok       = ($res -eq 'OK')
+  }
+  $f.Dispose()
+  return $out
+}
+
+function Edit-ApiKey {
+  <# 填 key → 落盘 → 立刻让相关功能用上（DeepSeek 那条会马上刷新账本）。 #>
+  $r = Read-ApiKeyDialog
+  if (-not $r.Ok) { return }
+  $path = Join-Path $runDir $r.Provider.File
+  if ([string]::IsNullOrWhiteSpace($r.Key)) {
+    try { Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue } catch { }
+    Add-Interaction 'apikey' "$($r.Provider.File)|cleared"
+    $pet.ShowMessage("已清掉 $($r.Provider.Name) 的 key。", 6)
+    return
+  }
+  Set-Content -LiteralPath $path -Value $r.Key -Encoding UTF8 -NoNewline
+  Add-Interaction 'apikey' "$($r.Provider.File)|set($($r.Key.Length) 字符)"
+  if ($r.Provider.File -eq 'deepseek.key') {
+    $script:ledgerWarned = $false      # 清掉"没有来源"的告警标记，让它重新读
+    try { Update-Ledger } catch { }
+    $pet.ShowMessage("已保存，重新读了账本：`n$(Format-LedgerCard -Ledger (Get-LedgerSnapshot))", 0)
+  } else {
+    $pet.ShowMessage("已保存 $($r.Provider.Name) 的 key（$($r.Key.Length) 个字符）。", 8)
+  }
 }
 
 function Edit-SystemPrompt {
@@ -4087,6 +4379,11 @@ $pet.Add_LongPressEnded({
 # ---- 打字派活：和长按说话**完全同一条下游** ----
 # 区别只有一个：字是键盘敲的，不是麦克风听来的。识别那边最后一行是 Start-PetTask，
 # 这里是同一句 —— 派给常驻大脑去做，做完报结论。
+$pet.Add_ApiKeyRequested({
+    Note-UserAction 'apikey'
+    try { Edit-ApiKey } catch { $pet.ShowMessage("填 key 失败：$($_.Exception.Message)", 8) }
+  })
+
 $pet.Add_TypeRequested({
     Note-UserAction 'type'
     try {
@@ -4282,6 +4579,33 @@ $focusTimer.Add_Tick({
     } catch { }
   })
 $focusTimer.Start()
+
+# ---- 账本轮询：余额涨了就播报（充值）----
+    # 20 秒一次、一次 HTTP（或读一个本地小 JSON），开销可以忽略。
+$ledgerTimer = New-Object System.Windows.Forms.Timer
+$ledgerTimer.Interval = [int]([double]$(if ($cfg.ledgerWatchSeconds) { $cfg.ledgerWatchSeconds } else { 20 }) * 1000)
+$ledgerTimer.Add_Tick({
+    try {
+      if ($script:standby) { return }   # 待机时不用播报（本来就没人看）
+      Update-Ledger
+      Update-BubbleFooter               # 页脚跟着余额走
+      # ---- 定时播报余额 ----
+      $mins = [double]$(if ($cfg.balanceBroadcastMinutes) { $cfg.balanceBroadcastMinutes } else { 30 })
+      if ($mins -gt 0 -and ((Get-Date) - $script:lastBalanceAnnounceAt).TotalMinutes -ge $mins) {
+        $script:lastBalanceAnnounceAt = Get-Date
+        $l = Get-LedgerSnapshot
+        if ($l -and $l.Source -ne 'none') {
+          $msg = '余额 ' + (Format-Money $l.Balance $l.Currency)
+          if ($l.TodayUsage -gt 0) { $msg += ' · 今天 ' + (Format-Money $l.TodayUsage $l.Currency) }
+          $pet.ShowMessage($msg, 10)
+          try { [void](Speak-Text $msg) } catch { }
+        }
+      }
+    } catch { }
+  })
+# 先读一次做基线：不然启动后第一拍会把"历史上那次充值"当成刚发生
+try { Update-Ledger -Quiet } catch { }
+$ledgerTimer.Start()
 $sampleTimer.Start()
 
 $pollTimer = New-Object System.Windows.Forms.Timer
@@ -4324,3 +4648,7 @@ if ($cfg.chatUi -ne 'bubbles') {
 }
 
 [System.Windows.Forms.Application]::Run($pet)
+// ---------------------------------------------------------------------------
+// 气泡页脚 + 定时播报余额 + 每次调用花了多少
+// ---------------------------------------------------------------------------
+

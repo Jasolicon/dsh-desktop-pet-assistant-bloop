@@ -48,6 +48,7 @@ $script:Stt = [pscustomobject]@{
   Language    = 'auto'
   MaxSeconds  = 20
   MinSeconds  = 0.4
+  KeepFiles   = 20        # run\mic 里最多留几个录音（多了就删最老的）
   DeviceIndex = -1        # -1 = 系统默认输入设备（WAVE_MAPPER）
   SampleRate  = 44100     # 录 16-bit 单声道；识别前统一重采样到 16k
   Engine      = ''
@@ -304,6 +305,7 @@ function Initialize-Stt {
   $script:Stt.Language = [string](Get-SttConfigValue $Config 'sttLanguage' 'auto')
   $script:Stt.MaxSeconds = [double](Get-SttConfigValue $Config 'sttMaxSeconds' 20)
   $script:Stt.MinSeconds = [double](Get-SttConfigValue $Config 'sttMinSeconds' 0.4)
+  $script:Stt.KeepFiles = [int](Get-SttConfigValue $Config 'micKeepFiles' 20)
   $script:Stt.DeviceIndex = [int](Get-SttConfigValue $Config 'sttDevice' -1)
   $script:Stt.SampleRate = [int](Get-SttConfigValue $Config 'sttSampleRate' 44100)
   $script:Stt.Node = Resolve-SttNode ([string](Get-SttConfigValue $Config 'sttNode' ''))
@@ -462,6 +464,15 @@ function Stop-SttRecording {
   if (-not (Test-Path -LiteralPath $OutFile)) { return '' }
   if ((Get-Item -LiteralPath $OutFile).Length -lt 2048) { return '' }   # 44 字节头 + 几十毫秒
   if ($seconds -lt $script:Stt.MinSeconds) { return '' }
+  # 录音落盘后顺手清理：run\mic 只留最近 KeepFiles 个。
+  # 之前这里从来不删 —— 每说一句就多一个 200–300KB 的 wav，是唯一会一直涨的东西。
+  try {
+    $micDir = Split-Path -Parent $OutFile
+    $keep = [int]$(if ($script:Stt.KeepFiles -gt 0) { $script:Stt.KeepFiles } else { 20 })
+    $old = @(Get-ChildItem -LiteralPath $micDir -Filter 'mic-*.wav' -File -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTime -Descending | Select-Object -Skip $keep)
+    foreach ($f in $old) { try { Remove-Item -LiteralPath $f.FullName -Force } catch { } }
+  } catch { }
   return $OutFile
 }
 
