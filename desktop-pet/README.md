@@ -62,17 +62,21 @@ $env:PET_DEBUG_CAPTURE = "$PWD\debug-render.png"
 npm run start:no-sandbox     # 窗口打开 1.5 秒后自动存图并退出
 ```
 
-#### 派活链路：机制是通的，缺的是凭据
+#### 派活链路：已通
 
 ```
-node -e "import('./src/brain.mjs').then(m => m.askDsh('只回复两个字：可用', {}).then(r => console.log(r)))"
-→ { ok: false, why: 'dsh: MISSING_CREDENTIAL: llm-deepseek: no API key …' }
+node -e "import('./src/brain.mjs').then(m => m.askDsh('只回复两个字：可用', {}).then(r => console.log(JSON.stringify(r))))"
+→ {"ok":true,"text":"可用","seconds":4.663}
 ```
 
-DSH 被正确拉起、错误也被正确解析回来了 —— 说明 `paths.mjs` → spawn → 解析事件流这条链是通的。
-报错是 `headless` profile 里没有 key：`desktop-guide` 那边是靠 `agents.json` + `--patch`
-把账号和模型注入进去的（见 `dsh-agents.ps1`），Electron 版还没搬这部分，在 `MIGRATION.md`
-的清单里。临时想跑通，在启动环境里给一个 `DEEPSEEK_API_KEY` 即可。
+用的是**你在 DSH 里已登录的账号**，不是环境变量里的 key —— 靠 `src/agents.mjs`
+生成一份 `--patch` 把 `provider: deepseek-account` 注入进去，等价于 `dsh-agents.ps1` 的
+`Write-AgentPatch`。
+
+patch 的字段名是 desktop-guide 那侧踩出来的、写错不会报错只会静默不生效，
+所以 `test/agents.test.mjs` 把它们锁住了：模型那条 id 必须是 `agent-default-model`；
+权限那条必须是 `permission`（写成 `permission-presets` 会新增一条而不是覆盖，
+权限就从来没生效过）。
 
 ## 交互
 
@@ -120,6 +124,7 @@ DSH 被正确拉起、错误也被正确解析回来了 —— 说明 `paths.mjs
 - 本项目代码：MIT，见根目录 [LICENSE](../LICENSE)
 - 运行时借用的第三方组件与**不可分发的素材**：见 [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md)
 - 参考过 Coopanion（AGPL-3.0）的设计思路，但**没有复制它的代码**
+- **分发方案（不花钱也能发）**：见 [DISTRIBUTION.md](DISTRIBUTION.md)
 
 ## 目录
 

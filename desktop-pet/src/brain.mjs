@@ -8,6 +8,7 @@
  */
 import { spawn } from 'node:child_process';
 import { dshPaths } from './paths.mjs';
+import { preparePatch } from './agents.mjs';
 
 /** 一次任务最长跑多久（毫秒）。超时就收工并如实说明。 */
 const DEFAULT_TIMEOUT_MS = 120_000;
@@ -25,9 +26,15 @@ export function askDsh(task, config = {}, { timeoutMs = DEFAULT_TIMEOUT_MS } = {
     return Promise.resolve(done(false, '', '找不到 DSH：装了非默认位置就设环境变量 DG_DSH_ROOT。'));
   }
 
+  // 模型/权限靠 --patch 注入（见 agents.mjs）：不注入的话 headless profile 会去要
+  // DEEPSEEK_API_KEY，而我们想用的是用户在 DSH 里已登录的账号。
+  const patch = preparePatch(config, { id: 'pet' });
+
   // 和 dsh-agents.ps1 保持同一套参数：直接用 exe + cli.js（绕开 cmd 的引号问题），
   // ELECTRON_RUN_AS_NODE=1 让它按普通 node 跑。
-  const args = ['--expose-internals', p.cli, '--profile', config.profile || 'headless', '--json', task];
+  const args = ['--expose-internals', p.cli, '--profile', patch.profile || config.profile || 'headless'];
+  if (patch.file) args.push('--patch', patch.file);
+  args.push('--json', task);
   return new Promise((resolvePromise) => {
     const child = spawn(p.exe, args, {
       env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },

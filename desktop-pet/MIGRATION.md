@@ -51,7 +51,8 @@
 
 | # | 能力 | 源 | 目标 | 验收 |
 |---|---|---|---|---|
-| 1 | 配置迁移 | `config.json` | `config.mjs` + `tools/migrate-config.mjs` | 旧配置能原样读进来，缺键补默认 |
+| ~~1~~ | ~~账号 / 模型注入~~ | `Write-AgentPatch` | ✅ `src/agents.mjs` | 已完成 |
+| 1 | 配置迁移 | `config.json` | `config.mjs` + `tools/migrate-config.mjs` | 旧配置能原样读进来，缺键补默认（现在只搬了用得上的键） |
 | 2 | **屏幕采样** | `Sample-Once`（DesktopGuide.ps1） | `src/capture.mjs`（`desktopCapturer` 或原生截屏） | 采样率与 `taskRules` 一致；能出 8×8 指纹 |
 | 3 | **本地闸门** | `Test-WorthAutoJudge` | `src/gate.mjs`（纯函数） | 用真实日志回放，判定结果与 PowerShell 版逐条一致 |
 | 4 | **主 agent 常驻** | `dsh-sdk.ps1`（stdio JSON-RPC） | `src/brain.mjs` 换成常驻会话 | 单轮从 8–25 秒降到 1 秒级 |
@@ -102,11 +103,20 @@
    `../packaging-probe/`）。SAC 确实是强制开启状态，但它不是这里的原因。
 2. **`--no-sandbox` 必需**（不加连 `--version` 都不返回）。
 
-### 那签名还要不要做？
+### 那签名还要不要做？**先不做。**
 
-要，但理由变了 —— 不再是"本机起不来"，而是**对外分发时的用户体验**：
-终端用户机器上可能开着 Smart App Control 或类似的完整性策略，未签名的安装包/主程序
-会被拦下，而且提示信息用户看不懂。要发 Release 就得准备代码签名证书，这是要提前算进计划的钱。
+代码签名不是可用的前提，只是"首次打开时会不会被拦一下"。**不签名直接发是开源工具的常态**，
+用户点一次「更多信息 → 仍要运行」就能用。完整的分发方案（含免费/廉价的 OSS 签名渠道、
+以及"什么时候才值得花钱"）写在 [DISTRIBUTION.md](DISTRIBUTION.md)。
 
-顺带说明：这条也说明"把 `.ps1` 包成 exe"那条路并不占便宜 —— 它同样要面对签名，
+顺带说明：这条也说明"把 `.ps1` 包成 exe"那条路并不占便宜 —— 它同样要面对拦截提示，
 却换不来跨平台。
+
+## 6. 已完成的搬家（截至 2026-10-05）
+
+| 能力 | 落点 | 验证 |
+|---|---|---|
+| 路径解析（DSH/node/Edge/角色图） | `src/paths.mjs` | 13 项单测；四个入口全部解出 |
+| 窗口 / 鼠标穿透 / 气泡 / 拖动 / 菜单 | `src/main.mjs` + `renderer/` | 起得来，`capturePage` 有图 |
+| 账号 + 模型注入 | `src/agents.mjs`（等价 `Write-AgentPatch`） | patch 格式与 PowerShell 版逐字对齐，有单测锁字段名 |
+| 派活（一句话 → DSH → 结论） | `src/brain.mjs` | 实测 `{"ok":true,"text":"可用","seconds":4.663}` |
