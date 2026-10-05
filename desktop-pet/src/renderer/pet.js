@@ -16,6 +16,7 @@ const bubble = document.getElementById('bubble');
 const bar = document.getElementById('bar');
 const input = document.getElementById('task');
 const send = document.getElementById('send');
+const badge = document.getElementById('badge');
 
 /** 当前状态 → 光晕颜色由 CSS 管，这里只切 data-state。 */
 function setState(state) {
@@ -28,6 +29,23 @@ function showBubble(text, ms = 12000) {
   clearTimeout(showBubble.timer);
   if (ms > 0) showBubble.timer = setTimeout(() => bubble.classList.add('hidden'), ms);
 }
+
+// ---------------------------------------------------------------------------
+// 观察状态：角标 = 累计"看过了但决定不说"的次数
+// ---------------------------------------------------------------------------
+window.pet.onState((s) => {
+  if (!s) return;
+  const n = s.silentTotal || 0;
+  badge.textContent = n > 99 ? '99+' : String(n);
+  badge.classList.toggle('hidden', n <= 0);
+  badge.title = `看过了但决定不说 ${n} 次 · 本地闸门省下 ${s.skipped || 0} 次模型调用`;
+});
+
+// 它主动说的一句（自动判断放行后）
+window.pet.onSpeak((text) => {
+  setState('speaking');
+  showBubble(text, 12000);
+});
 
 // ---------------------------------------------------------------------------
 // 1) 鼠标穿透：只有指针落在真控件上才让窗口接收鼠标
@@ -53,6 +71,7 @@ let dragFrom = null;
 
 petEl.addEventListener('mousedown', (e) => {
   if (e.button !== 0) return;
+  window.pet.userAction();
   dragFrom = { x: e.screenX, y: e.screenY, moved: false };
   petEl.style.cursor = 'grabbing';
 });

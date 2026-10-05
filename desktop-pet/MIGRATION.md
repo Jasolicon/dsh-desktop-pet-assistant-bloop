@@ -53,8 +53,8 @@
 |---|---|---|---|---|
 | ~~1~~ | ~~账号 / 模型注入~~ | `Write-AgentPatch` | ✅ `src/agents.mjs` | 已完成 |
 | 1 | 配置迁移 | `config.json` | `config.mjs` + `tools/migrate-config.mjs` | 旧配置能原样读进来，缺键补默认（现在只搬了用得上的键） |
-| 2 | **屏幕采样** | `Sample-Once`（DesktopGuide.ps1） | `src/capture.mjs`（`desktopCapturer` 或原生截屏） | 采样率与 `taskRules` 一致；能出 8×8 指纹 |
-| 3 | **本地闸门** | `Test-WorthAutoJudge` | `src/gate.mjs`（纯函数） | 用真实日志回放，判定结果与 PowerShell 版逐条一致 |
+| ~~2~~ | ~~屏幕采样~~ | `Sample-Once` | ✅ `src/capture.mjs` + `src/fingerprint.mjs` | 已完成 |
+| ~~3~~ | ~~本地闸门~~ | `Test-WorthAutoJudge` | ✅ `src/gate.mjs` | 已完成 |
 | 4 | **主 agent 常驻** | `dsh-sdk.ps1`（stdio JSON-RPC） | `src/brain.mjs` 换成常驻会话 | 单轮从 8–25 秒降到 1 秒级 |
 | 5 | 语音输入 | `stt.ps1` + `stt-sensevoice.cjs` | `src/stt.mjs`（child_process 复用 `.cjs`） | 长按说话 → 识别 → 派活 |
 | 6 | 朗读 | `tts.ps1` | `src/tts.mjs` | 结论句出声；系统句/SILENT 不出声 |
@@ -120,3 +120,16 @@
 | 窗口 / 鼠标穿透 / 气泡 / 拖动 / 菜单 | `src/main.mjs` + `renderer/` | 起得来，`capturePage` 有图 |
 | 账号 + 模型注入 | `src/agents.mjs`（等价 `Write-AgentPatch`） | patch 格式与 PowerShell 版逐字对齐，有单测锁字段名 |
 | 派活（一句话 → DSH → 结论） | `src/brain.mjs` | 实测 `{"ok":true,"text":"可用","seconds":4.663}` |
+| 前台窗口（免 pwsh） | `src/win.mjs`（koffi → user32） | 实测 `{"process":"chatgpt","title":"ChatGPT"}` |
+| **屏幕采样 + 8×8 指纹** | `src/capture.mjs` + `fingerprint.mjs` | 算法与 C# 版逐字一致；6 项单测（含 960 上限、整幅降采样） |
+| **本地闸门** | `src/gate.mjs` | 12 项单测，用例照着 PowerShell 自检 5h 块抄，阈值逐条对齐 |
+| 观察循环（采样→闸门→叫模型→沉默/说话） | `src/monitor.mjs` | **端到端实跑**：放行一次并说出"Codex 窗口被挡住了大半"，随后每轮都被闸门拦下 |
+| 判断日志 / 沉默角标 | `logs/decisions.jsonl` + 渲染进程角标 | 日志按 kind=skip/silent/spoke 记录；角标显示累计"没说"次数 |
+
+### 两处**有意**与 PowerShell 版不同，别当成 bug
+
+1. **截图时机**：PowerShell 版是"采样即截图"（每次采样都编码一张 JPEG）；这里采样只算指纹
+   （160×90 缩略图），**只有闸门放行时才抓高质量截图**。理由：截图是给模型看的，而模型
+   只在放行时被叫到 —— 这样采样率可以调密而不烧 CPU。
+2. **空闲时间**用 Electron 的 `powerMonitor.getSystemIdleTime()`（= Win32 `GetLastInputInfo`），
+   不是 `process.uptime()`（那是本进程跑了多久，与用户有没有动键鼠无关）。
