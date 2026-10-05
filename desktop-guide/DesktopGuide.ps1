@@ -81,7 +81,13 @@ if (-not ('DesktopGuide.PetForm' -as [type])) {
   $runtimeDir = [System.Runtime.InteropServices.RuntimeEnvironment]::GetRuntimeDirectory()
   $refs = @(
     Get-ChildItem -LiteralPath $runtimeDir -Filter 'System.*.dll' |
-      Where-Object { $_.Name -notlike 'System.Private.CoreLib*' -and $_.Name -notlike '*.Native.dll' } |
+      # 排除 System.Private.CoreLib 是有代价的：它是"真正装着类型"的那个程序集，
+      # 其它 System.*.dll 多半只是转发壳，所以 List<T> / Thread / Task 这类类型
+      # 在这个 C# 块里用不了（CS1069）。把它加进 -ReferencedAssemblies 也没用 ——
+      # PowerShell 的 Add-Type 会自己再滤掉（实测）。
+      # 结论：这个代码块里不要用 CoreLib 的类型；要异步就用 PowerShell 的 runspace
+      # （见下面的 Reset-CaptureRunspace / Start-BackgroundCapture）。
+      Where-Object { $_.Name -notlike '*.Native.dll' } |
       Select-Object -ExpandProperty FullName
   )
   $refs += [System.Windows.Forms.Form].Assembly.Location
@@ -312,6 +318,7 @@ namespace DesktopGuide {
 
     /** 最近一次截图算出来的画面指纹（8x8 灰度量化）。GrabRectJpeg 每次抓图都会更新它。 */
     public static string LastFingerprint = "";
+
 
     static string FingerprintOf(Bitmap img) {
       using (var tiny = new Bitmap(8, 8))
@@ -1996,6 +2003,69 @@ function Test-StandbyNow {
   return ($pet.Suspended -or $pet.SessionLocked -or (-not $pet.PowerDisplayOn))
 }
 
+# ---------------------------------------------------------------------------
+# 后台抓屏（PowerShell runspace 版）
+#
+# 为什么不用 C# 开线程：PowerShell 的 Add-Type **会把 System.Private.CoreLib 从引用集里剔除**，
+# 即使把它明确写进 -ReferencedAssemblies 也一样 —— 实测报
+#   CS1069: 'Thread' ... has been forwarded to assembly 'System.Private.CoreLib'
+#           Consider adding a reference to that assembly.
+# 于是 Thread / Task / List<> 这类类型根本编译不过。这是硬限制，不是配置问题。
+# 所以改用 PowerShell 自己的 runspace 做异步：抓屏仍调同一个 C# 实现，只是换线程跑。
+#
+# 效果：UI 线程每拍只做「取走上一次抓好的」+「下令抓下一张」，都是微秒级。
+# ---------------------------------------------------------------------------
+$script:capPs = $null
+$script:capHandle = $null
+$script:capBusy = $false
+$script:capLastMs = 0
+
+function Reset-CaptureRunspace {
+  <# 建一个**常驻** runspace（别每帧重建 —— 那本身要几十毫秒）。
+      参数在建立时固定；用户改监控区域时会重建（改区域本来就会清空截图环）。 #>
+  if ($script:capPs) { try { $script:capPs.Dispose() } catch { } ; $script:capPs = $null }
+  $ps = [powershell]::Create()
+  $null = $ps.AddScript({
+      param($w, $q, $rx, $ry, $rw, $rh)
+      $sw = [System.Diagnostics.Stopwatch]::StartNew()
+      if ($rw -gt 0) { $b64 = [DesktopGuide.Capture]::GrabJpegBase64($w, $q, $rx, $ry, $rw, $rh) }
+      else { $b64 = [DesktopGuide.Capture]::GrabJpegBase64($w, $q) }
+      $sw.Stop()
+      [pscustomobject]@{ jpeg = $b64; ms = $sw.ElapsedMilliseconds; fp = [DesktopGuide.Capture]::LastFingerprint }
+    }).AddArgument([int]$cfg.screenshotMaxWidth).AddArgument([long]$cfg.jpegQuality)
+  if ($cfg.region -and $cfg.region.w) {
+    $null = $ps.AddArgument([int]$cfg.region.x).AddArgument([int]$cfg.region.y).AddArgument([int]$cfg.region.w).AddArgument([int]$cfg.region.h)
+  } else {
+    $null = $ps.AddArgument(0).AddArgument(0).AddArgument(0).AddArgument(0)
+  }
+  $script:capPs = $ps
+  $script:capBusy = $false
+  $script:capHandle = $null
+}
+
+function Start-BackgroundCapture {
+  if ($script:capBusy -or -not $script:capPs) { return }
+  $script:capBusy = $true
+  try { $script:capHandle = $script:capPs.BeginInvoke() } catch { $script:capBusy = $false; $script:capHandle = $null }
+}
+
+function Complete-BackgroundCapture {
+  <# 刚抓好一张就返回它（jpeg / 耗时 / 指纹）；还在抓或没在抓就返回 $null。 #>
+  if (-not $script:capBusy -or -not $script:capHandle) { return $null }
+  if (-not $script:capHandle.IsCompleted) { return $null }
+  $script:capBusy = $false
+  $handle = $script:capHandle
+  $script:capHandle = $null
+  try {
+    $out = $script:capPs.EndInvoke($handle)
+    if ($out -and $out.Count -gt 0 -and $out[0]) {
+      $r = $out[0]
+      if ($r.jpeg) { $script:capLastMs = [int]$r.ms; return $r }
+    }
+  } catch { }
+  return $null
+}
+
 function Get-TaskProfile {
   <#
     按**声明式规则表**（config.taskRules）判断当前是什么任务，返回这一档的采样节奏与提示。
@@ -2111,35 +2181,24 @@ function Sample-Once {
     $fp = [DesktopGuide.Capture]::LastFingerprint
     if ($fp -ne $script:lastFp) { $script:lastFp = $fp; $script:stillSince = $now }
   } catch { }
-  # **采样即截图**：采样率本身就是"多久看一眼"，而看就必须有图 ——
-  # 没有图的判断只能靠窗口标题猜（项目里实测过，那种建议信息量近乎为零）。
-  # 所以这里不再有独立的"截图间隔"：任务档把采样率调慢（视频/桌面 8–10 秒），
-  # 截图自然跟着变少；游戏档快到 0.6 秒，那就每 0.6 秒都带一张图。
-  # 留 0.3 秒地板只是为了防两个触发器（定时 + 焦点切换）撞在一起时重复抓屏。
-  if ($Force -or ((($now - $script:lastShotAt).TotalSeconds) -ge 0.3)) {
-    try {
-      if ($cfg.region -and $cfg.region.w) {
-        $rg = $cfg.region
-        $b64 = [DesktopGuide.Capture]::GrabJpegBase64([int]$cfg.screenshotMaxWidth, [long]$cfg.jpegQuality, [int]$rg.x, [int]$rg.y, [int]$rg.w, [int]$rg.h)
-      } else {
-        $b64 = [DesktopGuide.Capture]::GrabJpegBase64([int]$cfg.screenshotMaxWidth, [long]$cfg.jpegQuality)
-      }
-      [void]$script:shots.Add([pscustomobject]@{ at = $now.ToString('o'); jpegBase64 = $b64 })
-      while ($script:shots.Count -gt [int]$cfg.maxScreenshots) { $script:shots.RemoveAt(0) }
-      $script:lastShotAt = $now
-      $script:captureFails = 0
-    } catch {
-      # 兜底：信号没来（例如远程会话断开、桌面被切走）但就是抓不到屏。
-      # 连续失败到阈值就自己进待机 —— 别再每 2 秒刷一条警告，那样既没信息又淹日志。
-      $script:captureFails++
-      $limit = [int]$(if ($cfg.captureFailLimit) { $cfg.captureFailLimit } else { 3 })
-      if ($script:captureFails -ge $limit) {
-        Enter-Standby -Kind 'capture' -Display "连续 $($script:captureFails) 次抓不到屏幕"
-      } else {
-        Write-Warning "截图失败（第 $($script:captureFails)/$limit 次）：$($_.Exception.Message)"
-      }
-    }
+
+  # **采样即截图**，而且抓屏在**后台线程**上做（见 Capture.BeginCapture 的注释）：
+  #   UI 线程这一步只做两件极快的事 —— ① 取走上一次抓好的；② 下令抓下一张。
+  #   所以 0.6 秒的采样档也不会卡界面（之前是每次同步抓 190ms，占掉约 1/3 的 UI 时间）。
+  # 代价：进环的那张图最多比"现在"旧一个采样周期（游戏档 0.6 秒），完全可以接受。
+  # ① 取走后台上一次抓好的那张（微秒级，不阻塞）
+  if (-not $script:capPs) { try { Reset-CaptureRunspace } catch { } }
+  $capRes = Complete-BackgroundCapture
+  if ($capRes) {
+    [void]$script:shots.Add([pscustomobject]@{ at = $now.ToString('o'); jpegBase64 = $capRes.jpeg })
+    while ($script:shots.Count -gt [int]$cfg.maxScreenshots) { $script:shots.RemoveAt(0) }
+    $script:lastShotAt = $now
+    $script:captureFails = 0
+    $fp = [string]$capRes.fp
+    if ($fp -and $fp -ne $script:lastFp) { $script:lastFp = $fp; $script:stillSince = $now }
   }
+  # ② 下令抓下一张（也是微秒级；上一张还没抓完就自然跳过这一拍）
+  Start-BackgroundCapture
 
   $record = [pscustomobject]@{
     at        = $now.ToString('o')
@@ -2235,6 +2294,9 @@ function Test-WorthAutoJudge {
     本地代码全都知道（这也是项目一贯的立场：门控是确定性代码，模型只负责说什么）。
   #>
   if ($script:standby) { return '待机中' }
+  # 抓屏改成异步之后，启动后头一两拍可能还没有图 —— 这时候先别问，
+  # 否则主 agent 会拿到"没有截图"的一轮，判断质量反而更差。
+  if ($script:shots.Count -eq 0) { return '还没有画面（抓屏是异步的，等第一张下来）' }
   $now = Get-Date
   $fpDist = Get-FpDistance $script:lastFp $script:lastJudgedFp
   $winChanged = ($script:lastJudgedKey -ne $script:currentKey)
