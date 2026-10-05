@@ -2,7 +2,12 @@
 <html lang="zh-CN">
   <head>
     <meta charset="utf-8" />
-    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self';" />
+    <!--
+      注意 CSP 里必须写到 `file:`：这个页面是用 file:// 加载的，而 file:// 的源是不透明的，
+      `'self'` 匹配不上，结果就是 **CSS 被静默拦掉** —— 宠物完全由 CSS 画，
+      于是窗口一片透明、看着像"没起来"（实测踩过，排查了一轮）。
+    -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self' file:; script-src 'self' file:; img-src 'self' file: data:;" />
     <title>随时指导</title>
     <link rel="stylesheet" href="pet.css" />
   </head>

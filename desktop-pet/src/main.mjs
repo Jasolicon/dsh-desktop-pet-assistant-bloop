@@ -8,6 +8,7 @@
  * 没搬的那些在 desktop-guide/ 里仍然可用；两边的路径解析是**同一套规则**（paths.ps1 / paths.mjs）。
  */
 import { app, BrowserWindow, ipcMain, Menu, screen, shell } from 'electron';
+import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ROOT, dshPaths, petImage } from './paths.mjs';
 import { loadConfig, saveConfig } from './config.mjs';
@@ -46,6 +47,35 @@ function createWindow() {
   win.setAlwaysOnTop(true, 'screen-saver');
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   win.loadFile(join(ROOT, 'src', 'renderer', 'index.html'));
+
+  // 渲染进程出事时别静默：加载失败/脚本报错都打到控制台，
+  // 否则表现是"窗口一片透明"，看不出是页面没加载还是画不出来（踩过）。
+  win.webContents.on('did-fail-load', (_e, code, desc, url) => {
+    console.error('[pet] 页面加载失败', code, desc, url);
+  });
+  win.webContents.on('render-process-gone', (_e, details) => {
+    console.error('[pet] 渲染进程退出', JSON.stringify(details));
+  });
+  win.webContents.on('console-message', (_e, level, message) => {
+    if (level >= 2) console.error('[renderer]', message);
+  });
+
+  // 开发用：设了 PET_DEBUG_CAPTURE=<png 路径> 就把页面渲染结果存下来再退出。
+  // 为什么需要它：桌面截图走 BitBlt，**拍不到透明的置顶窗口**（实测：窗口明明在 z=02，
+  // 截屏里却什么都没有）。从渲染进程内部 capturePage 才是最可信的。
+  if (process.env.PET_DEBUG_CAPTURE) {
+    win.webContents.once('did-finish-load', async () => {
+      await new Promise((r) => setTimeout(r, 1500));
+      try {
+        const img = await win.webContents.capturePage();
+        writeFileSync(process.env.PET_DEBUG_CAPTURE, img.toPNG());
+        log('渲染快照已保存:', process.env.PET_DEBUG_CAPTURE);
+      } catch (err) {
+        console.error('[pet] capturePage 失败', err);
+      }
+      app.quit();
+    });
+  }
 
   // 初始整窗穿透；渲染进程在鼠标移到宠物身上时打开
   win.setIgnoreMouseEvents(true, { forward: true });

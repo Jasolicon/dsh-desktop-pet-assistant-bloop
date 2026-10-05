@@ -65,6 +65,25 @@ export function findDshRoot(configured = '') {
     } catch { /* 不在 PATH 上，往下走 */ }
   }
 
+  // 从**正在运行的 DSH 进程**反推（和 paths.ps1 同样的招）：装在哪儿就在哪儿跑，
+  // 这是最可靠的信号，也因此不需要把某台机器的盘符写进代码。
+  // 用系统自带的 powershell.exe（一定存在），超时 8 秒，失败就当没找到。
+  if (process.platform === 'win32') {
+    try {
+      const out = execFileSync(
+        'powershell.exe',
+        ['-NoProfile', '-NonInteractive', '-Command',
+          "(Get-Process -Name 'DeepSeek Harness','DeepSeekHarness' -ErrorAction SilentlyContinue | Select-Object -First 1).Path"],
+        { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 8000 },
+      );
+      const exePath = out.trim().split(/\r?\n/)[0]?.trim();
+      if (exePath) {
+        const root = dirname(exePath);
+        if (existsSync(join(root, 'resources'))) return root;
+      }
+    } catch { /* 没在跑或取不到，往下走 */ }
+  }
+
   return firstExisting([
     join(process.env.ProgramFiles || '', 'DeepSeek Harness'),
     join(process.env['ProgramFiles(x86)'] || '', 'DeepSeek Harness'),

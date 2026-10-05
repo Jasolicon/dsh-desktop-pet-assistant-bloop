@@ -8,7 +8,10 @@
  *
  * 纪律：这里**不做判断**（"该不该说话"是门控的事），只负责显示与转发。
  */
-const pet = document.getElementById('pet');
+// ⚠️ 变量名别叫 pet：preload 通过 contextBridge 把 window.pet 定义成**不可配置**属性，
+// 顶层再写 `const pet = ...` 会直接抛 "Identifier 'pet' has already been declared"，
+// 整个脚本不执行 —— 表现就是窗口一片透明（实测踩过）。
+const petEl = document.getElementById('pet');
 const bubble = document.getElementById('bubble');
 const bar = document.getElementById('bar');
 const input = document.getElementById('task');
@@ -16,7 +19,7 @@ const send = document.getElementById('send');
 
 /** 当前状态 → 光晕颜色由 CSS 管，这里只切 data-state。 */
 function setState(state) {
-  pet.dataset.state = state;
+  petEl.dataset.state = state;
 }
 
 function showBubble(text, ms = 12000) {
@@ -29,7 +32,7 @@ function showBubble(text, ms = 12000) {
 // ---------------------------------------------------------------------------
 // 1) 鼠标穿透：只有指针落在真控件上才让窗口接收鼠标
 // ---------------------------------------------------------------------------
-const INTERACTIVE = [pet, bubble, bar];
+const INTERACTIVE = [petEl, bubble, bar];
 let hovering = false;
 function updateHover(target) {
   const on = INTERACTIVE.some((el) => !el.classList.contains('hidden') && (el === target || el.contains(target)));
@@ -48,10 +51,10 @@ window.addEventListener('blur', () => updateHover(document.body));
 // ---------------------------------------------------------------------------
 let dragFrom = null;
 
-pet.addEventListener('mousedown', (e) => {
+petEl.addEventListener('mousedown', (e) => {
   if (e.button !== 0) return;
   dragFrom = { x: e.screenX, y: e.screenY, moved: false };
-  pet.style.cursor = 'grabbing';
+  petEl.style.cursor = 'grabbing';
 });
 
 window.addEventListener('mousemove', (e) => {
@@ -68,15 +71,15 @@ window.addEventListener('mousemove', (e) => {
 window.addEventListener('mouseup', () => {
   if (dragFrom && !dragFrom.moved) askSay();
   dragFrom = null;
-  pet.style.cursor = 'grab';
+  petEl.style.cursor = 'grab';
 });
 
-pet.addEventListener('dblclick', (e) => {
+petEl.addEventListener('dblclick', (e) => {
   e.preventDefault();
   toggleBar(true);
 });
 
-pet.addEventListener('contextmenu', (e) => {
+petEl.addEventListener('contextmenu', (e) => {
   e.preventDefault();
   window.pet.menu();
 });

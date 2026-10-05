@@ -23,42 +23,56 @@ npm start
 npm test
 ```
 
-### ⚠️ 这台机器上 Electron GUI 起不来（已定位为环境问题）
+### ⚠️ Electron 版本：**33 在这台机器上会崩，用 28**
 
-2026-10-05 在本机实测：`npm start` 立刻崩溃，**不是代码问题** —— 最小探针
-`tools/probe.cjs`（只有 `app.whenReady()` 后打印一行再退出）同样崩溃：
+2026-10-05 本机实测。先说结论：**Electron 33.4.11 起不来，28.3.3 正常**，所以
+`package.json` 钉在 `^28`。这不是"这台机器跑不了 Electron"，只是版本问题。
 
-```
-[probe] module loaded, electron = 33.4.11     ← 主进程跑起来了
-exit = -1073741819  (0xC0000005 访问冲突)      ← 崩在 app 就绪那一刻
-```
-
-已经排除的：`--disable-gpu` / `--disable-gpu-compositing` / `--disable-features=Vulkan` /
-`--use-angle=swiftshader` —— 全都一样崩；也不是我们的 main.mjs（探针也不打印 `app ready`）。
-
-最可能的原因：**Smart App Control 处于强制开启状态**。证据：
+排查过程（都留了可复现的探针）：
 
 ```
-HKLM\SYSTEM\CurrentControlSet\Control\CI\Policy\VerifiedAndReputablePolicyState = 1   （1 = 强制）
-Microsoft-Windows-CodeIntegrity/Operational 里有 "Smart App Control Block Deteails" 事件
+最小探针 tools/probe.cjs（只有 app.whenReady() 后打印一行再退出）
+
+  electron 33.4.11 : [probe] module loaded … 然后 exit=-1073741819 (0xC0000005)
+                     事件日志的"出错模块"就是 electron.exe 自己，偏移固定 0x1f1e1bb
+                     --disable-gpu / --disable-gpu-compositing / --disable-features=Vulkan /
+                     --use-angle=swiftshader 全试过，一样崩
+  electron 28.3.3  : [probe] module loaded → [probe] app ready, quitting   exit=0  ✔
 ```
 
-而且 `electron --version` **必须加 `--no-sandbox` 才返回**（不加就 0x80000003 直接退出）——
-沙箱正是 SAC 这类完整性策略最先拦的地方。npm 下下来的 Electron 二进制没有签名，
-这台机器上装的 DSH 能跑是因为它是走安装包装的、在系统眼里可信。
+另外两条排查中被否掉的假设，记下来省得重走：
 
-**没有抓到直接针对 `electron.exe` 的拦截记录**，所以只能说是"极可能"，不是 100% 断定。
+- **不是"未签名 exe 一律被拦"**。这台机器 Smart App Control 确实是强制开着
+  （`HKLM\...\CI\Policy\VerifiedAndReputablePolicyState = 1`），但**本地用 csc 编译的、
+  完全没签名的 WinForms exe 跑得好好的**（探针见仓库根的 `packaging-probe/`）。
+  SAC 的证据不成立。
+- **不是下载标记**：npm 解出来的 `dist/` 里一个 `Zone.Identifier` 都没有。
 
-可选出路（都要你拍板，我不擅自改系统设置）：
+已知的坑还有一个：`--no-sandbox` 是必需的（不加，连 `--version` 都不返回）。
 
-| 出路 | 代价 |
-|---|---|
-| 关掉智能应用控制 | **单向操作**：关了以后要重装 Windows 才能再开。不建议为了开发就关 |
-| 换台机器 / 虚拟机 / WSL2 里开发 | 最省事，代码不用改 |
-| 本机继续用 PowerShell 版，Electron 版先只写代码 | 功能不丢，只是本机看不了效果 |
-| 给开发版签名 | 需要代码签名证书（花钱） |
+#### 想看渲染结果，别用桌面截图
 
-代码本身是好的：7 项路径测试全过，主进程能加载、能解析 DSH 路径。**换台机器 `npm start` 就能看。**
+桌面的 `CopyFromScreen`（BitBlt）**拍不到透明的置顶窗口** —— 实测窗口明明在 z=02、
+Win32 枚举也报 `vis`，截图里却什么都没有，白白怀疑了一轮渲染。
+
+要看渲染结果用这个（从渲染进程内部抓，最可信）：
+
+```powershell
+$env:PET_DEBUG_CAPTURE = "$PWD\debug-render.png"
+npm run start:no-sandbox     # 窗口打开 1.5 秒后自动存图并退出
+```
+
+#### 派活链路：机制是通的，缺的是凭据
+
+```
+node -e "import('./src/brain.mjs').then(m => m.askDsh('只回复两个字：可用', {}).then(r => console.log(r)))"
+→ { ok: false, why: 'dsh: MISSING_CREDENTIAL: llm-deepseek: no API key …' }
+```
+
+DSH 被正确拉起、错误也被正确解析回来了 —— 说明 `paths.mjs` → spawn → 解析事件流这条链是通的。
+报错是 `headless` profile 里没有 key：`desktop-guide` 那边是靠 `agents.json` + `--patch`
+把账号和模型注入进去的（见 `dsh-agents.ps1`），Electron 版还没搬这部分，在 `MIGRATION.md`
+的清单里。临时想跑通，在启动环境里给一个 `DEEPSEEK_API_KEY` 即可。
 
 ## 交互
 

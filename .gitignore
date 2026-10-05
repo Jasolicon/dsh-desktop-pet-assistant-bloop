@@ -10,6 +10,12 @@ desktop-guide/.webui-profile/
 desktop-pet/node_modules/
 desktop-pet/dist/
 desktop-pet/out/
+# 调试用的渲染快照 / 桌面截图（不该进库）
+desktop-pet/debug-render*.png
+desktop-pet/screenshot-*.png
+
+# 打包路线探针编译出来的 exe（源码在 packaging-probe/Probe.cs）
+packaging-probe/*.exe
 
 # 运行产物（截图、录音、请求应答、临时 payload、以及密钥文件）
 desktop-guide/run/
