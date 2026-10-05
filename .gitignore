@@ -26,6 +26,9 @@ desktop-guide/logs/
 */run/
 */logs/
 
+# 学习出来的采样率表（每台机器自己看出来的，不进库；手写规则在 config.json 的 taskRules）
+desktop-guide/task-samples.json
+
 # 凭据（双保险：run/ 已整体忽略，这里再挡一次）
 *.key
 **/*.key

@@ -1664,6 +1664,11 @@ $defaults = [ordered]@{
   silentBackoffMax      = 4     # 连续"它决定不说"时，间隔最多放宽到几倍
   judgeIdleSkipSeconds  = 600   # 人多久没键鼠输入 + 窗口没换 → 别打扰
   judgeMaxGapSeconds    = 300   # 保险丝：不管画面多静，隔这么久也要看一眼（防止闸门把桌宠饿死）
+  # 学习出来的采样率会被夹在这个区间里（防止学出 0.05 秒把机器烧了）
+  minSampleSeconds      = 0.3
+  maxSampleSeconds      = 60
+  # 两次采样之间画面指纹跳变超过这个值就算"漏掉了东西"（指纹总差上限 960）
+  jumpDeltaThreshold    = 200
   # 常驻大脑：一个进程持有 DSH 运行时，派任务时不再每轮起新进程（见 brain-sdk.ps1）
   brainTransport        = $true
   brainEffort           = 'low'
@@ -1745,6 +1750,7 @@ $script:judgeSkipped = 0                    # 本地闸门挡掉了多少次模�
 $script:lastSkipReason = ''
 $script:curProfile = $null          # 当前任务档（由 config.taskRules 判定）
 $script:curTaskName = ''
+$script:curTaskKey = ''
 $script:lastObserveLogAt = [datetime]::MinValue
 $script:silentTotal = 0   # 沉默总次数（从日志全量读出 + 运行时累加，不受内存缓冲上限影响）
 $interactionPath = Join-Path $logDir 'interactions.jsonl'
@@ -2076,6 +2082,117 @@ function Complete-BackgroundCapture {
   return $null
 }
 
+# ---------------------------------------------------------------------------
+# 任务采样表（会学习的那一张）
+#
+# 规则（供 Electron 版照搬，逻辑刻意保持简单、可移植）：
+#   1. 表存在一个**独立 JSON 文件** task-samples.json 里，和手写的 config.taskRules 分开。
+#      手写表是"部署方的意见"，学习表是"观察到的现实"；分开写，谁改谁不互相覆盖。
+#   2. 键 = 进程名（小写）。一个进程一个条目，够用且不会长成一张烂表。
+#   3. 采样率有两个来源：
+#        - 模型建议：主 agent 可以在回复里多给一行 `SAMPLE: <秒>`，说这个环境多久看一次合适
+#        - 用户行为：在同一个环境里**反复唤醒**（点它/长按/打字）说明当前太慢了 → 调低
+#   4. 学习值**覆盖**手写规则里的采样率，但手写规则里的 hint（这类任务该怎么帮）保留。
+# ---------------------------------------------------------------------------
+$script:taskSamplesPath = Join-Path $PSScriptRoot 'task-samples.json'
+$script:taskSamples = $null          # @{ <key> = @{ sampleSeconds; source; evidence; updatedAt; why } }
+$script:wakeCounts = @{}             # 本进程内的唤醒计数（不进表，只是触发条件）
+$script:jumpStreak = 0               # 连续几次采样之间画面大跳变（= 采样太慢的信号）
+
+function Get-TaskKey {
+  <# 任务键 = 进程名小写。取不到进程就退化成窗口标题里的一小段。 #>
+  param([string]$Process = '', [string]$Title = '')
+  if ($Process) { return $Process.ToLower() }
+  if ($Title) { return ('title:' + $Title.ToLower().Substring(0, [Math]::Min(24, $Title.Length))) }
+  return ''
+}
+
+function Load-TaskSamples {
+  if ($script:taskSamples) { return $script:taskSamples }
+  $script:taskSamples = @{}
+  if (Test-Path -LiteralPath $script:taskSamplesPath) {
+    try {
+      $raw = Get-Content -LiteralPath $script:taskSamplesPath -Raw -Encoding UTF8 | ConvertFrom-Json
+      foreach ($p in @($raw.entries.PSObject.Properties)) {
+        $script:taskSamples[$p.Name] = $p.Value
+      }
+    } catch {
+      Write-Warning "读 task-samples.json 失败（当作空表继续）：$($_.Exception.Message)"
+    }
+  }
+  return $script:taskSamples
+}
+
+function Save-TaskSamples {
+  try {
+    $obj = [pscustomobject]@{
+      _note = '学习出来的采样率表：键=进程名(小写)。sampleSeconds 是"多久看一眼"，source 说明这条是怎么来的（model=主 agent 建议 / wake=用户反复唤醒后调低）。手写规则在 config.json 的 taskRules 里；学习值覆盖采样率，但不覆盖 hint。'
+      entries = $script:taskSamples
+    }
+    ($obj | ConvertTo-Json -Depth 8) | Set-Content -LiteralPath $script:taskSamplesPath -Encoding UTF8
+  } catch { Write-Warning "写 task-samples.json 失败：$($_.Exception.Message)" }
+}
+
+function Set-TaskSample {
+  <#
+    记录/更新一个任务键的采样率。
+    - Seconds 会用 [minSampleSeconds, maxSampleSeconds] 夹住（免得学出 0.05 秒把机器烧了）
+    - Source: 'model' | 'wake' | 'manual'
+  #>
+  param([string]$Key, [double]$Seconds, [string]$Source = 'model', [string]$Why = '')
+  if (-not $Key -or $Seconds -le 0) { return }
+  $lo = [double]$(if ($cfg.minSampleSeconds) { $cfg.minSampleSeconds } else { 0.3 })
+  $hi = [double]$(if ($cfg.maxSampleSeconds) { $cfg.maxSampleSeconds } else { 60 })
+  $v = [math]::Round([math]::Min($hi, [math]::Max($lo, $Seconds)), 2)
+  [void](Load-TaskSamples)
+  $old = $script:taskSamples[$Key]
+  $ev = if ($old -and ($old.PSObject.Properties.Name -contains 'evidence')) { [int]$old.evidence + 1 } else { 1 }
+  $script:taskSamples[$Key] = [pscustomobject]@{
+    sampleSeconds = $v
+    source        = $Source
+    evidence      = $ev
+    updatedAt     = (Get-Date).ToString('o')
+    why           = $Why
+  }
+  Save-TaskSamples
+  Add-Interaction 'sample_learn' "$Key → ${v}s（$Source）"
+  return $v
+}
+
+function Note-ManualWake {
+  <#
+    【已废弃 —— 这条判据是错的，保留函数只为不破坏调用点，不再调低采样率】
+
+    原来的想法：用户在同一环境里反复唤醒 = 采样太慢。
+    但**有的提醒只需要看一眼就够，根本不产生交互** —— 拿"唤醒次数"当证据，
+    等于把"安静地看了"判成"没在意"，还会把采样越调越快、越调越费。
+    交互不是价值的代理变量，所以这里什么都不做了。
+  #>
+  param([string]$Key)
+  return
+}
+
+function Note-SampleJump {
+  <#
+    **不需要任何交互的判据**：两次采样之间画面跳变很大 = 这中间发生过我们没看到的东西，
+    说明采样太慢。连续 3 次大跳变就把这个键的采样率调低 30%。
+
+    为什么用它而不是"用户叫了几次"：判断依据必须是**观察到的现实**（画面上有没有漏掉东西），
+    不能是"用户理没理我" —— 因为好的提醒本来就可能只需要看一眼。
+  #>
+  param([string]$Key, [double]$Delta)
+  if (-not $Key) { return }
+  $thr = [double]$(if ($cfg.jumpDeltaThreshold) { $cfg.jumpDeltaThreshold } else { 200 })
+  if ($Delta -lt $thr) { $script:jumpStreak = 0; return }
+  $script:jumpStreak++
+  if ($script:jumpStreak -lt 3) { return }
+  $cur = $script:curProfile
+  $base = if ($cur -and $cur.sample -gt 0) { [double]$cur.sample } else { [double]$cfg.sampleSeconds }
+  $v = Set-TaskSample -Key $Key -Seconds ($base * 0.7) -Source 'jump' -Why "连续 3 次采样间画面跳变超过 $thr"
+  $script:jumpStreak = 0
+  try { $pet.ShowMessage("这个环境变化比我看得还快（连漏 3 次）—— 采样从 $([math]::Round($base,2))s 调到 ${v}s。", 6) } catch { }
+}
+
 function Get-TaskProfile {
   <#
     按**声明式规则表**（config.taskRules）判断当前是什么任务，返回这一档的采样节奏与提示。
@@ -2108,9 +2225,20 @@ function Get-TaskProfile {
     if ($r.screenshotSeconds) { $prof.shot = [double]$r.screenshotSeconds }
     if ($r.judgeMinSeconds) { $prof.judge = [double]$r.judgeMinSeconds }
     $prof.hint = [string]$r.hint
-    return $prof
+    $hitProf = $prof
+    break
   }
-  return $def
+  $prof = if ($hitProf) { $hitProf } else { $def }
+
+  # ---- 学习表覆盖采样率（但**不覆盖**手写规则里的 hint）----
+  # 顺序：手写规则定"这类任务该怎么帮"（hint），学习表定"多久看一眼"（sample）。
+  $key = Get-TaskKey -Process $Process -Title $Title
+  $learned = (Load-TaskSamples)[$key]
+  if ($learned -and ($learned.PSObject.Properties.Name -contains 'sampleSeconds') -and $learned.sampleSeconds) {
+    $prof.sample = [double]$learned.sampleSeconds
+    if ($prof.name -eq '默认') { $prof.name = "学习：$key" }
+  }
+  return $prof
 }
 
 function Enter-Standby {
@@ -2172,6 +2300,7 @@ function Sample-Once {
   Add-TimelineEntry -Process $proc -Title $title
 
   # ---- 任务档：决定"多久看一眼"，以及"这类任务该怎么帮" ----
+  $script:curTaskKey = Get-TaskKey -Process $proc -Title $title
   $prof = Get-TaskProfile -Process $proc -Title $title
   if ($prof.name -ne $script:curTaskName) {
     $script:curTaskName = $prof.name
@@ -2205,7 +2334,11 @@ function Sample-Once {
     $script:lastShotAt = $now
     $script:captureFails = 0
     $fp = [string]$capRes.fp
-    if ($fp -and $fp -ne $script:lastFp) { $script:lastFp = $fp; $script:stillSince = $now }
+    if ($fp) {
+      # 先用**上一次**采样的指纹算跳变量，再更新 —— 顺序反了就没得比了
+      if ($script:lastFp) { Note-SampleJump -Key $script:curTaskKey -Delta (Get-FpDistance $fp $script:lastFp) }
+      if ($fp -ne $script:lastFp) { $script:lastFp = $fp; $script:stillSince = $now }
+    }
   }
   # 抓屏失败的兜底（信号没来、但就是抓不到屏时，别一直拿旧图判断）：
   # 连续 captureFailLimit 次就自己进待机。
@@ -2275,6 +2408,8 @@ function Build-Payload {
     task      = [pscustomobject]@{
       name = $script:curTaskName
       hint = $(if ($script:curProfile) { [string]$script:curProfile.hint } else { '' })
+      sampleSeconds = $(if ($script:curProfile) { [double]$script:curProfile.sample } else { 0 })
+      key  = $script:curTaskKey
     }
     userAwayS = $(if ($script:lastUserAt -eq [datetime]::MinValue) { -1 } else { [int]((Get-Date) - $script:lastUserAt).TotalSeconds })
     extras    = [pscustomobject]@{
@@ -2483,7 +2618,12 @@ function Complete-AdvisorIfDone {
   $reason = (($rows | Where-Object { $_ -match '^REASON[:：]' } | Select-Object -First 1) -replace '^REASON[:：]\s*', '')
   $watch = (($rows | Where-Object { $_ -match '^WATCH[:：]' } | Select-Object -First 1) -replace '^WATCH[:：]\s*', '')
   $optionsLine = (($rows | Where-Object { $_ -match '^OPTIONS[:：]' } | Select-Object -First 1) -replace '^OPTIONS[:：]\s*', '')
-  $shownText = ($rows | Where-Object { $_ -notmatch '^REASON[:：]' -and $_ -notmatch '^WATCH[:：]' -and $_ -notmatch '^OPTIONS[:：]' } | Select-Object -First 1)
+  $sampleLine = (($rows | Where-Object { $_ -match '^SAMPLE[:：]' } | Select-Object -First 1) -replace '^SAMPLE[:：]\s*', '')
+  # 主 agent 建议的采样率 → 记进学习表（下次同一个环境就按这个看）
+  if ($sampleLine -match '^\s*([0-9]+(\.[0-9]+)?)\s*$') {
+    try { [void](Set-TaskSample -Key $script:curTaskKey -Seconds ([double]$matches[1]) -Source 'model' -Why '主 agent 建议') } catch { }
+  }
+  $shownText = ($rows | Where-Object { $_ -notmatch '^REASON[:：]' -and $_ -notmatch '^WATCH[:：]' -and $_ -notmatch '^OPTIONS[:：]' -and $_ -notmatch '^SAMPLE[:：]' } | Select-Object -First 1)
   if ([string]::IsNullOrWhiteSpace($shownText)) { $shownText = $text }
   if ($watch) { try { [void](Set-WatchFromAgent -Target $watch -Quiet) } catch { } }
 
@@ -2939,7 +3079,9 @@ $probe3 = New-Object DesktopGuide.PetForm -ArgumentList @([double]$script:UiScal
   Write-Output ("  待机中                → " + (Test-WorthAutoJudge))
   $script:standby = $false
   Write-Output ("  指纹距离 最暗 vs 最亮  → " + (Get-FpDistance $zeroFp $fullFp) + "（最大 960）")
-  Write-Output '=== 5i. 沉默判定口径（四个大脑的输出都要认得）==='
+  # 编号说明：原来这块叫 5i，但 5i 已经被上面的「任务档」占了（两处撞号），
+  # 采样表学习那块叫 5k 又和「路径解析」撞号 —— 一并重新编号：5l = 本块，5m = 采样表学习。
+  Write-Output '=== 5l. 沉默判定口径（四个大脑的输出都要认得）==='
   # 回归：老代码只认 '选择不说'，于是默认的 DSH 大脑（自动模式走的那条）永远判不出沉默 ——
   # 退避不生效、角标不涨、沉默率恒偏低，而且自动模式下还会把「没说」当发言弹出来。
   # 下面四条就是四个 advisor 真实会输出的东西（外加未翻译的原始哨兵词），一个都不能漏。
@@ -3003,6 +3145,35 @@ $probe3 = New-Object DesktopGuide.PetForm -ArgumentList @([double]$script:UiScal
     $tbmp.Save($outTi, [System.Drawing.Imaging.ImageFormat]::Png)
     Write-Output ("  预览：{0}" -f $outTi)
   } finally { $tbmp.Dispose(); $tif.Dispose() }
+  Write-Output '=== 5m. 采样表学习（模型建议 / 画面漏帧）==='
+  # 用临时表跑，别动真正的 task-samples.json
+  $realPath = $script:taskSamplesPath
+  $script:taskSamplesPath = Join-Path $runDir 'task-samples.selftest.json'
+  try {
+    $script:taskSamples = $null; $script:wakeCounts = @{}
+    $script:curProfile = [pscustomobject]@{ sample = 2.0 }
+    [void](Set-TaskSample -Key 'probe-game' -Seconds 1.2 -Source 'model' -Why '自检')
+    Write-Output ("  模型建议 1.2s → 表里记成 {0}s，来源={1}" -f `
+        $script:taskSamples['probe-game'].sampleSeconds, $script:taskSamples['probe-game'].source)
+    $prof = Get-TaskProfile -Process 'probe-game' -Title 'Probe Game'
+    Write-Output ("  下次遇到 probe-game → 采样 {0}s（学习值覆盖默认 2s）" -f $prof.sample)
+    # 真实运行时 curProfile 就是解析后的档；自检里也要这样，否则算出来的是假数
+    $script:curProfile = $prof
+    # 注意：判据不是"用户叫了几次"——好提醒可能只要看一眼、零交互。
+    # 这里模拟的是**画面连续大跳变**（两次采样之间漏掉了东西 = 采样太慢）。
+    1..2 | ForEach-Object { Note-SampleJump -Key 'probe-game' -Delta 400 }
+    $before = $script:taskSamples['probe-game'].sampleSeconds
+    Note-SampleJump -Key 'probe-game' -Delta 400
+    $after = $script:taskSamples['probe-game'].sampleSeconds
+    Write-Output ("  连续 3 次大跳变 → {0}s 降到 {1}s（来源={2}）" -f $before, $after, $script:taskSamples['probe-game'].source)
+    Note-SampleJump -Key 'probe-game' -Delta 5
+    Write-Output ("  画面几乎没动（跳变 5，阈值 {0}）→ 不触发" -f $([int]$cfg.jumpDeltaThreshold))
+    Write-Output ("  夹取保护：请求 0.01s 会被夹到 {0}s" -f (Set-TaskSample -Key 'probe-fast' -Seconds 0.01 -Source 'model'))
+  } finally {
+    $script:taskSamplesPath = $realPath
+    $script:taskSamples = $null
+    Remove-Item -LiteralPath (Join-Path $runDir 'task-samples.selftest.json') -Force -ErrorAction SilentlyContinue
+  }
   Write-Output '=== 5k. 路径解析（不再依赖本机绝对路径）==='
   # 这一块盯的是"换台机器还能不能跑"：DSH 装在哪、node/edge 在哪、配置里有没有写死本机路径。
   $dshPaths = Get-DgDshPaths

@@ -97,6 +97,18 @@ if ($payload.task -and $payload.task.hint) {
   [void]$lines.Add([string]$payload.task.hint)
 }
 
+# 采样率：让主 agent 自己判断"这个环境多久看一次合适"，桌宠会把建议记进 task-samples.json。
+# 这是**唯一**一处让模型决定资源开销的地方 —— 因为它比本地规则更清楚"刚才那一眼值不值"。
+if ($payload.task) {
+  $cur = if ($payload.task.sampleSeconds) { [string]$payload.task.sampleSeconds } else { '(未知)' }
+  [void]$lines.Add('')
+  [void]$lines.Add("【采样率】当前每一眼间隔 ${cur} 秒（等于每次采样都带一张截图，图越密越费资源）。")
+  [void]$lines.Add("如果你判断这个环境值得看得更勤或更省，就在最后多给一行：SAMPLE: <秒>（0.3–60）。")
+  [void]$lines.Add('判断依据：**画面上有没有因为你没看而漏掉的东西**（变化快、你看到的总是"结果"而不是"过程"）→ 调小；画面基本不动 → 调大。')
+  [void]$lines.Add('注意：**不要**用"用户有没有理我"来判断 —— 有的提醒只需要看一眼就够，零交互才是常态。')
+  [void]$lines.Add('不需要改就别写这一行。')
+}
+
 # 长期记忆：把当天观察日志压成一段活动汇总，让判断不再只看最近 30 秒。
 # 窗口长度 / 上限 / 「清空记忆」时间点都在 config.json 里（memoryHours 等），改参数不用改代码。
 . (Join-Path $PSScriptRoot 'memory.ps1')
