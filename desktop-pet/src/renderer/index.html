@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self';" />
+    <title>随时指导</title>
+    <link rel="stylesheet" href="pet.css" />
+  </head>
+  <body>
+    <!-- 整窗透明：只有 #stage 里的东西会画出来，其余区域靠主进程切鼠标穿透 -->
+    <div id="stage">
+      <div id="bubble" class="hidden"></div>
+
+      <div id="pet" data-state="idle" title="点我：说一句　双击：打字派活　右键：菜单">
+        <div class="body">
+          <div class="eye left"></div>
+          <div class="eye right"></div>
+          <div class="blush left"></div>
+          <div class="blush right"></div>
+        </div>
+        <div class="shadow"></div>
+      </div>
+
+      <!-- 打字派活：就一个长圆角输入框 + 一个发送按钮（与 PowerShell 版同一套观感） -->
+      <div id="bar" class="hidden">
+        <input id="task" type="text" placeholder="说一句，它去做，做完报结论" autocomplete="off" spellcheck="false" />
+        <button id="send" type="button">发送</button>
+      </div>
+    </div>
+    <script src="pet.js"></script>
+  </body>
+</html>

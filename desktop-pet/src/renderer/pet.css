@@ -1,0 +1,188 @@
+/*
+  pet.css —— 桌宠的样子
+
+  颜色沿用 PowerShell 版那套：说话态蓝 #2F7FD0、思考琥珀 #C98A2B、
+  沉默灰 #6E6E78、聆听红 #D04A4A。状态用**背后那圈光晕**表达，
+  角色图本身不变色（图片改不了色，这是踩过的坑）。
+*/
+
+:root {
+  --speak: #2f7fd0;
+  --think: #c98a2b;
+  --silent: #6e6e78;
+  --listen: #d04a4a;
+  --idle: #5c6b7f;
+  --ink: #1a1e28;
+  --surface: #fafbfd;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: transparent;      /* 关键：整窗透明 */
+  overflow: hidden;
+  font-family: "Microsoft YaHei UI", "Segoe UI", system-ui, sans-serif;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+#stage {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 8px;
+  pointer-events: none;          /* 默认不拦鼠标；下面给真控件单独打开 */
+}
+
+/* ---------- 气泡 ---------- */
+#bubble {
+  pointer-events: auto;
+  max-width: 100%;
+  max-height: 120px;
+  overflow: hidden;
+  padding: 8px 10px;
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 1.5;
+  border: 1px solid rgba(47, 127, 208, 0.35);
+  box-shadow: 0 4px 14px rgba(20, 26, 38, 0.18);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* ---------- 宠物本体 ---------- */
+#pet {
+  pointer-events: auto;
+  cursor: grab;
+  position: relative;
+  width: 96px;
+  height: 112px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  border-radius: 50% 50% 42% 42%;
+  background: radial-gradient(circle at 50% 38%, rgba(92, 107, 127, 0.0) 40%, rgba(92, 107, 127, 0.0) 100%);
+  transition: filter 0.25s ease;
+}
+
+/* 状态光晕：图片改不了色，就用背后一圈柔光表达 */
+#pet::before {
+  content: "";
+  position: absolute;
+  inset: -6px -6px -2px -6px;
+  border-radius: 50%;
+  background: radial-gradient(circle, currentColor 0%, transparent 68%);
+  opacity: 0.35;
+  transition: color 0.25s ease, opacity 0.25s ease;
+  pointer-events: none;
+}
+
+#pet[data-state="idle"]      { color: var(--idle); }
+#pet[data-state="thinking"]  { color: var(--think); }
+#pet[data-state="speaking"]  { color: var(--speak); }
+#pet[data-state="silent"]    { color: var(--silent); }
+#pet[data-state="listening"] { color: var(--listen); }
+#pet[data-state="thinking"]::before { animation: pulse 1.4s ease-in-out infinite; }
+
+@keyframes pulse {
+  0%, 100% { opacity: 0.28; }
+  50%      { opacity: 0.6; }
+}
+
+.body {
+  position: relative;
+  width: 88px;
+  height: 96px;
+  /* C 形身体：一个圆角矩形挖掉右边一块，和 PowerShell 版那只同一个造型 */
+  border-radius: 46% 46% 44% 44% / 52% 52% 46% 46%;
+  background: linear-gradient(180deg, #eef3fa 0%, #dfe8f4 100%);
+  box-shadow: inset 0 -6px 12px rgba(40, 60, 90, 0.10), 0 6px 14px rgba(20, 26, 38, 0.16);
+}
+
+.eye {
+  position: absolute;
+  top: 38px;
+  width: 11px;
+  height: 15px;
+  border-radius: 50%;
+  background: #1c2029;
+  transition: height 0.12s ease;
+}
+.eye.left  { left: 22px; }
+.eye.right { right: 22px; }
+
+/* 眨眼 / 说话时眯眼 */
+#pet[data-state="speaking"] .eye { height: 9px; }
+
+.blush {
+  position: absolute;
+  top: 58px;
+  width: 14px;
+  height: 7px;
+  border-radius: 50%;
+  background: rgba(224, 122, 122, 0.45);
+}
+.blush.left  { left: 12px; }
+.blush.right { right: 12px; }
+
+.shadow {
+  position: absolute;
+  bottom: -4px;
+  width: 64px;
+  height: 8px;
+  border-radius: 50%;
+  background: rgba(20, 26, 38, 0.16);
+  filter: blur(2px);
+}
+
+/* ---------- 打字派活：长圆角输入框 + 发送按钮 ---------- */
+#bar {
+  pointer-events: auto;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: 16px;
+  background: var(--surface);
+  border: 1px solid rgba(30, 40, 60, 0.14);
+  box-shadow: 0 4px 14px rgba(20, 26, 38, 0.16);
+}
+
+#task {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: 12px;
+  font-family: inherit;
+  padding: 4px 2px;
+}
+#task::placeholder { color: #98a0ae; }
+
+#send {
+  flex: none;
+  border: 0;
+  border-radius: 999px;
+  padding: 6px 14px;
+  background: var(--speak);
+  color: #fff;
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+}
+#send:hover:not(:disabled) { background: #3e8ede; }
+#send:disabled { opacity: 0.5; cursor: default; }
+
+.hidden { display: none !important; }

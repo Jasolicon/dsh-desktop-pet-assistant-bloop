@@ -6,6 +6,11 @@ desktop-guide/.tts/
 desktop-guide/.stt/
 desktop-guide/.webui-profile/
 
+# Electron 重写版的依赖与产物
+desktop-pet/node_modules/
+desktop-pet/dist/
+desktop-pet/out/
+
 # 运行产物（截图、录音、请求应答、临时 payload、以及密钥文件）
 desktop-guide/run/
 desktop-guide/logs/
