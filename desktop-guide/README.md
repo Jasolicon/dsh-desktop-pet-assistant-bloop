@@ -16,19 +16,20 @@
 `-SelfTest` 会生成两张带 alpha 的自绘预览，可以先看长相：
 `run/pet-preview.png`（说话中）、`run/pet-preview-idle.png`（空闲）。
 
-### 角色图：默认复用本机已装的 DSH 桌宠素材
+### 角色图：仓库自带一张，随时可换
 
-`config.json` 里的 `petImage` 指向一张带透明通道的 PNG；留空则**自动**使用本机已装的
-`dsh-whale-widget/assets/DSniang1.png`，找不到才退回代码绘制的圆脸。
+`config.json` 的 `petImage` 默认指向 **`desktop-guide\assets\pet.png`**（610×610，带透明通道），
+所以**不用装任何别的插件就能跑**。换成自己的图有两条路：覆盖 `assets\pet.png`，
+或把 `petImage` 指到别的 PNG（支持 `{root}` / `{dshHome}` / `{userProfile}` 等占位符）；
+两条都没有才退回代码绘制的圆脸。
 
 图片不能换色，所以四个状态改用**背后一圈光晕**表达：空闲无色 / 思考琥珀 / 说话蓝 / 沉默灰。
 
-> ⚠️ **授权提醒**：`dsh-whale-widget` 的代码是 MIT，但它的 `assets/**`（图片、动图、音效）
-> **明确不在 MIT 覆盖范围内**，其 `PROVENANCE.md` 写明「由维护者提供或使用 AI 工具生成，
-> 按 as-is 随插件分发，**仅用于运行本插件**；不授予再许可，也不声明为原创作品」。
->
-> 结论：**在自己机器上自用没问题；一旦要对外分发这套桌宠，必须换成你自己拥有或可再分发的素材。**
-> 把自己画的 / 生成的 PNG 放进 `desktop-guide\assets\pet.png` 也会被自动采用。
+> ⚠️ **这张图不在本项目的许可范围内**：来源不可考（最初取自 `dsh-whale-widget`，
+> 那份 `PROVENANCE.md` 自述"AI 生成、按 as-is 分发、不授予再许可"），
+> 作者**不对它主张任何权利**，也没法替它授权给你。权利人提出要求就立即替换或移除 ——
+> 完整声明见 [`assets/PROVENANCE.md`](assets/PROVENANCE.md) 与根目录
+> [`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md)。
 
 ### 判断记录直接画在气泡里（不用翻日志）
 
