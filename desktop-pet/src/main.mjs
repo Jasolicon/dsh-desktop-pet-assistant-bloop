@@ -15,13 +15,35 @@ import { loadConfig, saveConfig } from './config.mjs';
 import { askDsh } from './brain.mjs';
 import { createMonitor } from './monitor.mjs';
 import { dataDir } from './dirs.mjs';
+import { DshSession } from './dsh-session.mjs';
 
 let win = null;
 let cfg = loadConfig();
 let busy = false;
 let monitor = null;
+/** 常驻 DSH 会话：一次 initialize（约 4.5s），之后每轮秒级。见 dsh-session.mjs。 */
+let session = null;
 
 const log = (...a) => console.log('[pet]', ...a);
+
+/**
+ * 问一轮。优先走常驻会话（秒级）；起不来或出错就退回一次性调用（慢但可靠）。
+ * 这条降级路径很重要：常驻会话挂了不该让桌宠整个哑掉。
+ */
+async function ask(text, { imagePaths = [] } = {}) {
+  if (session) {
+    try {
+      const r = await session.prompt(text, { imagePaths });
+      if (r.ok) return r;
+      log('常驻会话这一轮没成：', r.why);
+      return r;   // 会话在，只是这一轮没结论 —— 那是判断结果，不回退
+    } catch (err) {
+      log('常驻会话出错，退回一次性调用：', err.message);
+      session = null;
+    }
+  }
+  return askDsh(text, cfg);
+}
 
 function createWindow() {
   const { workArea } = screen.getPrimaryDisplay();
@@ -122,11 +144,8 @@ function buildLookPrompt(payload) {
     lines.push('- 最近的窗口切换（新→旧）：');
     for (const t of tl.slice(-6).reverse()) lines.push(`    ${t.key} 停留 ${t.seconds}s`);
   }
-  const shots = payload.shots || [];
-  if (shots.length) {
-    lines.push('', '【最新截图】先读它们再判断（用 read_image）：');
-    for (const s of shots) lines.push(`- ${s}`);
-  }
+  // 截图由调用方以 imageBlocks 内联送进模型（常驻会话支持），所以这里只需要说一声
+  if ((payload.shots || []).length) lines.push('', '【最新截图】随本条消息一起给你了，直接看。');
   lines.push(
     '',
     '【怎么回答】',
@@ -202,7 +221,7 @@ function registerIpc() {
     busy = true;
     try {
       log('task:', String(task).slice(0, 80));
-      const r = await askDsh(String(task), cfg);
+      const r = await ask(String(task));
       log('task done:', r.ok, r.seconds.toFixed(1) + 's', r.why || '');
       return r;
     } finally {
@@ -216,7 +235,7 @@ function registerIpc() {
     monitor?.noteUserAction(cfg.userQuietSeconds || 6);
     busy = true;
     try {
-      return await askDsh(sayPrompt(), cfg);
+      return await ask(sayPrompt());
     } finally {
       busy = false;
     }
@@ -260,7 +279,7 @@ if (!app.requestSingleInstanceLock()) {
       config: cfg,
       onState: (s) => win?.webContents.send('pet:state', s),
       onDecision: async (payload) => {
-        const r = await askDsh(buildLookPrompt(payload), cfg);
+        const r = await ask(buildLookPrompt(payload), { imagePaths: payload.shots || [] });
         // 失败就当"没说"：宁可少说一句，也不要在出错时打扰用户
         if (!r.ok) {
           log('判断失败，按沉默处理：', r.why);
@@ -276,6 +295,14 @@ if (!app.requestSingleInstanceLock()) {
     if (!process.env.PET_NO_AUTO) monitor.start();
     else log('PET_NO_AUTO=1：观察循环未启动');
 
+    // 预热常驻会话（约 4.5 秒，后台进行）：这样第一次判断不用再付进程启动的钱。
+    // 起不来就退化成一次性调用，桌宠照常能用 —— 只是慢一点。
+    session = new DshSession({ config: cfg });
+    session.start().catch((err) => {
+      log('常驻会话起不来，退回一次性调用：', err.message);
+      session = null;
+    });
+
     // 黑屏/锁屏时不看屏幕（省一次截图 + 一轮模型调用）
     powerMonitor.on('suspend', () => monitor?.setStandby(true));
     powerMonitor.on('resume', () => monitor?.setStandby(false));
@@ -283,5 +310,6 @@ if (!app.requestSingleInstanceLock()) {
     powerMonitor.on('unlock-screen', () => monitor?.setStandby(false));
   });
 
+  app.on('will-quit', () => session?.stop());
   app.on('window-all-closed', () => app.quit());
 }

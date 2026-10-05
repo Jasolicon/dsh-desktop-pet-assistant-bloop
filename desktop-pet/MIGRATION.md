@@ -55,7 +55,7 @@
 | ~~1~~ | ~~配置迁移~~ | `config.json` | ✅ `tools/migrate-config.mjs` | 已搬 15 个用得上的键 |
 | ~~2~~ | ~~屏幕采样~~ | `Sample-Once` | ✅ `src/capture.mjs` + `src/fingerprint.mjs` | 已完成 |
 | ~~3~~ | ~~本地闸门~~ | `Test-WorthAutoJudge` | ✅ `src/gate.mjs` | 已完成 |
-| 4 | **主 agent 常驻** | `dsh-sdk.ps1`（stdio JSON-RPC） | `src/brain.mjs` 换成常驻会话 | 单轮从 8–25 秒降到 1 秒级 |
+| ~~4~~ | ~~主 agent 常驻~~ | `dsh-sdk.ps1` | ✅ `src/dsh-session.mjs` | 已完成，单轮 **0.9–1.3 秒**（见下） |
 | 5 | 语音输入 | `stt.ps1` + `stt-sensevoice.cjs` | `src/stt.mjs`（child_process 复用 `.cjs`） | 长按说话 → 识别 → 派活 |
 | ~~6~~ | ~~朗读~~ | `tts.ps1` | ✅ 渲染进程的 Web Speech API | 已完成，且**不再依赖 pwsh** |
 | 7 | 选项问答 / 审批应答 | `AskTimer` + `pet-responder/index.js` | 渲染进程按钮 + IPC | 审批能在气泡上点 |
@@ -129,13 +129,17 @@
 | 朗读（TTS） | 渲染进程 `speechSynthesis` | 用 Chromium 自带音色，离线零依赖；系统句 / SILENT / 「你在做：」不出声 |
 | 判断记录卡片 | 右键「看它判过什么」 | 从 `logs/decisions.jsonl` 读回，卡片里给沉默率 |
 | 配置迁移 | `tools/migrate-config.mjs` | 从 desktop-guide/config.json 搬了 15 个用得上的键 |
+| **主 agent 常驻** | `src/dsh-session.mjs`（stdio JSON-RPC） | initialize 4.5s 一次性；之后每轮 **0.897s**（对比一次性起的 4.66s） |
+
+**常驻会话带来的一个额外好处**：`session/prompt` 的 `contentBlocks` **支持内联图片**
+（TypeScript 版那边 headless CLI 没有附件入口，只能让模型用 `read_image` 读路径、多花一轮）。
+所以自动判断现在是**截图直接随消息给模型**，省掉那一轮往返。
 
 ### 还没搬的（4 项）
 
 | # | 能力 | 现状 | 说明 |
 |---|---|---|---|
 | 5 | 语音输入（STT） | ⬜ | 识别器 `stt-sensevoice.cjs` 是现成的，缺的是 Electron 侧的录音（渲染进程 `getUserMedia` → 16k PCM → 调那个 .cjs） |
-| 4 | 主 agent 常驻 | ⬜ | 现在每次判断都新起一个 dsh 进程（实测一次约 9 秒）；`dsh-sdk.ps1` 那套 stdio JSON-RPC 常驻能把单轮压到秒级 |
 | 7 | 选项问答 / 审批应答 | ⬜ | `run/ask/` 那套协议在（见 DesktopGuide 的 AskTimer），但 **`pet-responder` 目前没装、`run/ask` 目录也不存在**，所以还没有对话方 |
 | 8 | 子 agent 观察 | ⬜ | 后台 agent 的进度显示 + 把 agents 字段塞进判断 payload |
 
