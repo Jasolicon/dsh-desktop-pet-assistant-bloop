@@ -172,9 +172,9 @@ patch 的字段名是 desktop-guide 那侧踩出来的、写错不会报错只�
 见根目录的迁移计划 `MIGRATION.md`。一句话：打包成 exe 解决不了真正的问题
 （外部依赖 + 绝对路径 + 只跑 Windows），而这个仓库的目标是能对外分发。
 
-## 开源
+## 许可
 
-- 本项目代码：MIT，见根目录 [LICENSE](../LICENSE)
+- 本项目：**PolyForm Noncommercial 1.0.0**（非商业免费，商用需授权），见根目录 [LICENSE](../LICENSE)
 - 运行时借用的第三方组件与**不可分发的素材**：见 [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md)
 - 参考过 Coopanion（AGPL-3.0）的设计思路，但**没有复制它的代码**
 - **分发方案（不花钱也能发）**：见 [DISTRIBUTION.md](DISTRIBUTION.md)

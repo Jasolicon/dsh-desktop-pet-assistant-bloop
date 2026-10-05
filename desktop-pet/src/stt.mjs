@@ -1,7 +1,7 @@
 /**
  * stt.mjs —— 语音输入：一段 16 位 PCM → 文字
  *
- * 识别器直接复用 desktop-guide/stt-sensevoice.cjs（同一份代码，MIT）：
+ * 识别器直接复用 desktop-guide/stt-sensevoice.cjs（同一份代码，同一个许可）：
  * 它是"借 DSH 自带的 sherpa-onnx + SenseVoice 模型"，而模型有 228MB，
  * 两边各存一份没有意义。所以默认指向那边，路径可配置（sttRunner / sttModelDir）。
  *

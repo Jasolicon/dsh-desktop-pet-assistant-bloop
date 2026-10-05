@@ -20,7 +20,7 @@
     "cordis.patch.yml",
     "icon.svg"
   ],
-  "license": "MIT",
+  "license": "PolyForm-Noncommercial-1.0.0",
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"

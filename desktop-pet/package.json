@@ -2,8 +2,8 @@
   "name": "desktop-pet",
   "version": "0.1.0",
   "private": true,
-  "description": "桌面「随时指导」桌宠 —— Electron 重写版（开源）",
-  "license": "MIT",
+  "description": "泡泡 · Bloop —— 桌面「随时指导」桌宠 Electron 重写版（非商业）",
+  "license": "PolyForm-Noncommercial-1.0.0",
   "type": "module",
   "main": "src/main.mjs",
   "scripts": {

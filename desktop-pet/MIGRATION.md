@@ -2,7 +2,7 @@
 
 **日期**：2026-10-05
 **起点**：`desktop-guide/`（PowerShell 7 + WinForms，约 4100 行主脚本 + 9 个模块）
-**目标**：`desktop-pet/`（Electron，跨平台、可分发的 exe/安装包，MIT 开源）
+**目标**：`desktop-pet/`（Electron，跨平台、可分发的 exe/安装包，PolyForm Noncommercial 1.0.0）
 
 ---
 
@@ -81,7 +81,7 @@
 
 | 项 | 状态 |
 |---|---|
-| LICENSE（MIT） | ✅ 根目录 |
+| LICENSE（PolyForm Noncommercial 1.0.0） | ✅ 根目录 |
 | THIRD_PARTY_NOTICES（含"鲸鱼素材不可分发"） | ✅ 根目录 |
 | 不复制 AGPL 代码（Coopanion） | ✅ 只借思路 |
 | `.gitignore`（node_modules / .stt / .tts / run / logs） | ✅ |
