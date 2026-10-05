@@ -496,6 +496,36 @@ function Stop-DshAgent {
   return $true
 }
 
+# 启动时对账：把上一次运行留下的"running"记录收拾掉。
+#
+# 为什么需要它：agentTimer 的 tick 里有一句
+#   if ($script:watchedAgents.Count -eq 0) { $agentTimer.Stop(); return }
+# 也就是说**只有本进程派过任务，才会去更新 agent 状态**。桌宠一重启，
+# watchedAgents 是空的 → 定时器立刻停 → 上一轮留下的记录永远没人管，
+# run\agents.json 里就一直挂着一条 running（实测：一条早就成功的任务挂了几个小时）。
+#
+# 对账规则：
+#   - 先跑一遍 Update-AgentStatus：有结果文件的（走常驻大脑）会正常结算成 done
+#   - 剩下的 running 里，**带 brainId 的直接判 failed** —— 常驻大脑是随桌宠进程活的，
+#     桌宠重启后那个大脑已经没了，这类任务不可能再完成，挂着只会误导人
+#   - 带 pid 的不动：进程可能还活着，交给 Update-AgentStatus 的存活检查
+function Reset-StaleAgentRecords {
+  param([string]$RunDir)
+  $agents = @(Update-AgentStatus -RunDir $RunDir)
+  $fixed = 0
+  foreach ($a in $agents) {
+    if ($a.status -ne 'running') { continue }
+    if (-not ($a.PSObject.Properties.Name -contains 'brainId') -or -not $a.brainId) { continue }
+    Set-AgentField $a 'status' 'failed'
+    Set-AgentField $a 'exitCode' 1
+    Set-AgentField $a 'endedAt' (Get-Date).ToString('o')
+    Set-AgentField $a 'note' '桌宠重启，这一轮任务中断（常驻大脑已不在）'
+    $fixed++
+  }
+  if ($fixed -gt 0) { Save-Agents -RunDir $RunDir -Agents $agents }
+  return [pscustomobject]@{ Agents = $agents; Interrupted = $fixed }
+}
+
 # 从 --json 的事件流里抽出人类可读的最后结论
 function Get-AgentResult {
   param([string]$LogFile)

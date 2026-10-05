@@ -3611,6 +3611,16 @@ $priorityTimer.Add_Tick({
   })
 $priorityTimer.Start()
 
+# 启动时对账一次：把上一次运行残留的 running 记录收拾掉。
+# 不加这一句的话，agentTimer 因为 watchedAgents 为空会立刻停，
+# run\agents.json 里那条旧记录就永远挂着（实测挂了几小时，还带着一条假 running）。
+try {
+  $stale = Reset-StaleAgentRecords -RunDir $runDir
+  if ($stale.Interrupted -gt 0) {
+    Write-Host "已清理 $($stale.Interrupted) 条上次重启遗留的 running 记录"
+  }
+} catch { Write-Warning "对账 agent 记录失败（不影响使用）：$($_.Exception.Message)" }
+
 # 设置改完要写回 agents.json，并刷新菜单上的勾选
 function Save-PetConfig {
   try { ($cfg | ConvertTo-Json -Depth 6) | Set-Content -LiteralPath $Config -Encoding UTF8 } catch { }
