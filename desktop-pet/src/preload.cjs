@@ -7,6 +7,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('pet', {
   info: () => ipcRenderer.invoke('pet:info'),
   status: () => ipcRenderer.invoke('pet:status'),
+  decisions: () => ipcRenderer.invoke('pet:decisions'),
   task: (text) => ipcRenderer.invoke('pet:task', text),
   say: () => ipcRenderer.invoke('pet:say'),
   hover: (hovering) => ipcRenderer.send('pet:hover', !!hovering),
@@ -16,4 +17,5 @@ contextBridge.exposeInMainWorld('pet', {
   // 主进程推过来的两件事：观察状态（角标用）、它想说的话
   onState: (cb) => ipcRenderer.on('pet:state', (_e, s) => cb(s)),
   onSpeak: (cb) => ipcRenderer.on('pet:speak', (_e, text) => cb(text)),
+  onShowDecisions: (cb) => ipcRenderer.on('pet:showDecisions', () => cb()),
 });

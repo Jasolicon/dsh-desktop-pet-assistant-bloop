@@ -8,7 +8,7 @@
  * 没搬的那些在 desktop-guide/ 里仍然可用；两边的路径解析是**同一套规则**（paths.ps1 / paths.mjs）。
  */
 import { app, BrowserWindow, ipcMain, Menu, powerMonitor, screen, shell } from 'electron';
-import { writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ROOT, dshPaths, petImage } from './paths.mjs';
 import { loadConfig, saveConfig } from './config.mjs';
@@ -164,6 +164,36 @@ function registerIpc() {
 
   ipcMain.handle('pet:status', () => monitor?.snapshot() ?? null);
 
+  /**
+   * 「看它判过什么」：把判断日志读回最近 N 条，渲染进程画成卡片。
+   * 沉默率 = 没说 / (说了 + 没说) —— 只统计**真的问过模型**的那些，
+   * 被本地闸门挡掉的不算分母（那些连问都没问）。
+   */
+  ipcMain.handle('pet:decisions', () => {
+    try {
+      const file = join(dataDir(), 'logs', 'decisions.jsonl');
+      if (!existsSync(file)) return { rows: [], stats: null };
+      const lines = readFileSync(file, 'utf8').split(/\r?\n/).filter(Boolean);
+      const rows = lines.slice(-30).map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+      const spoke = rows.filter((r) => r.kind === 'spoke').length;
+      const silent = rows.filter((r) => r.kind === 'silent').length;
+      const skipped = rows.filter((r) => r.kind === 'skip').length;
+      const answered = spoke + silent;
+      return {
+        rows: rows.slice(-5).reverse(),
+        stats: {
+          spoke,
+          silent,
+          skipped,
+          // 沉默率只算"问到模型"的那些
+          silentRate: answered ? Math.round((100 * silent) / answered) : null,
+        },
+      };
+    } catch (err) {
+      return { rows: [], stats: null, why: err.message };
+    }
+  });
+
   // 「打字派活」：一句话交给 dsh 去跑，跑完把结论送回去
   ipcMain.handle('pet:task', async (_e, task) => {
     if (busy) return { ok: false, why: '上一个任务还在跑' };
@@ -198,6 +228,7 @@ function registerIpc() {
     Menu.buildFromTemplate([
       { label: `资源：${p.root ? '已找到 DSH' : '未找到 DSH'}`, enabled: false },
       { type: 'separator' },
+      { label: '看它判过什么', click: () => win.webContents.send('pet:showDecisions') },
       { label: '显示/隐藏', click: () => (win.isVisible() ? win.hide() : win.show()) },
       {
         label: '打开配置目录',

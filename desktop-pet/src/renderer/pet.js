@@ -31,6 +31,40 @@ function showBubble(text, ms = 12000) {
 }
 
 // ---------------------------------------------------------------------------
+// 朗读：把**结论句**读出来。
+//
+// 用 Chromium 自带的 Web Speech API（speechSynthesis）—— 走系统已装的音色，
+// 离线、零依赖，也不用为此保留 PowerShell（desktop-guide 那边是 edge-tts / SAPI）。
+//
+// 过滤掉不该出声的：
+//   · 「（…）」系统句（它选择不说 / 大脑没有输出 …）
+//   · SILENT 哨兵词
+//   · 「你在做：…」——那只是证明它看懂了，不是建议
+// 这跟 PowerShell 版 ConvertTo-Speakable 的过滤规则是同一套。
+// ---------------------------------------------------------------------------
+function speakable(text) {
+  const t = String(text || '').trim();
+  if (!t) return '';
+  if (/^\W*SILENT\W*$/i.test(t)) return '';
+  if (/^[（(]/.test(t)) return '';
+  if (/^你在做[:：]/.test(t)) return '';
+  return t.split(/\r?\n/)[0].slice(0, 180);
+}
+
+function say(text) {
+  const line = speakable(text);
+  if (!line) return;
+  try {
+    if (!window.speechSynthesis) return;
+    window.speechSynthesis.cancel();          // 新的盖掉旧的，别排队念一串
+    const u = new SpeechSynthesisUtterance(line);
+    u.lang = 'zh-CN';
+    u.rate = 1.05;
+    window.speechSynthesis.speak(u);
+  } catch { /* 没音色就静默，不影响气泡 */ }
+}
+
+// ---------------------------------------------------------------------------
 // 观察状态：角标 = 累计"看过了但决定不说"的次数
 // ---------------------------------------------------------------------------
 window.pet.onState((s) => {
@@ -45,6 +79,24 @@ window.pet.onState((s) => {
 window.pet.onSpeak((text) => {
   setState('speaking');
   showBubble(text, 12000);
+  say(text);
+});
+
+// 「看它判过什么」：把判断记录画成一张卡片（不翻日志就能看）
+window.pet.onShowDecisions(async () => {
+  const { rows, stats, why } = await window.pet.decisions();
+  if (why) { showBubble(`读不到判断记录：${why}`, 8000); return; }
+  if (!rows || rows.length === 0) { showBubble('还没有判断记录。', 6000); return; }
+  const rate = stats?.silentRate == null ? '—' : `${stats.silentRate}%`;
+  const head = `判断 ${stats.spoke + stats.silent} 次 · 说了 ${stats.spoke} / 没说 ${stats.silent} · 沉默率 ${rate}`;
+  const sub = `本地闸门省下 ${stats.skipped} 次模型调用`;
+  const lines = rows.map((r) => {
+    const t = String(r.at || '').slice(11, 16);
+    if (r.kind === 'skip') return `${t} 没问 · ${r.reason || ''}`;
+    if (r.kind === 'silent') return `${t} 没说 · ${r.key || ''}`;
+    return `${t} 说了 · ${String(r.text || '').slice(0, 40)}`;
+  });
+  showBubble([head, sub, '———', ...lines].join('\n'), 25000);
 });
 
 // ---------------------------------------------------------------------------
@@ -88,7 +140,14 @@ window.addEventListener('mousemove', (e) => {
 });
 
 window.addEventListener('mouseup', () => {
-  if (dragFrom && !dragFrom.moved) askSay();
+  if (dragFrom && !dragFrom.moved) {
+    // 正在朗读时点一下 = 打断（而不是再让它说一句）——和 PowerShell 版的"双击打断"同义
+    if (window.speechSynthesis && window.speechSynthesis.speaking) {
+      window.speechSynthesis.cancel();
+    } else {
+      askSay();
+    }
+  }
   dragFrom = null;
   petEl.style.cursor = 'grab';
 });
@@ -124,6 +183,7 @@ async function askSay() {
   }
   setState('speaking');
   showBubble(r.text, 12000);
+  say(r.text);
 }
 
 function toggleBar(show) {
@@ -152,6 +212,7 @@ async function dispatchTask() {
   }
   setState('speaking');
   showBubble(`${r.text}\n\n（${r.seconds.toFixed(1)} 秒）`, 20000);
+  say(r.text);
 }
 
 send.addEventListener('click', dispatchTask);

@@ -52,15 +52,15 @@
 | # | 能力 | 源 | 目标 | 验收 |
 |---|---|---|---|---|
 | ~~1~~ | ~~账号 / 模型注入~~ | `Write-AgentPatch` | ✅ `src/agents.mjs` | 已完成 |
-| 1 | 配置迁移 | `config.json` | `config.mjs` + `tools/migrate-config.mjs` | 旧配置能原样读进来，缺键补默认（现在只搬了用得上的键） |
+| ~~1~~ | ~~配置迁移~~ | `config.json` | ✅ `tools/migrate-config.mjs` | 已搬 15 个用得上的键 |
 | ~~2~~ | ~~屏幕采样~~ | `Sample-Once` | ✅ `src/capture.mjs` + `src/fingerprint.mjs` | 已完成 |
 | ~~3~~ | ~~本地闸门~~ | `Test-WorthAutoJudge` | ✅ `src/gate.mjs` | 已完成 |
 | 4 | **主 agent 常驻** | `dsh-sdk.ps1`（stdio JSON-RPC） | `src/brain.mjs` 换成常驻会话 | 单轮从 8–25 秒降到 1 秒级 |
 | 5 | 语音输入 | `stt.ps1` + `stt-sensevoice.cjs` | `src/stt.mjs`（child_process 复用 `.cjs`） | 长按说话 → 识别 → 派活 |
-| 6 | 朗读 | `tts.ps1` | `src/tts.mjs` | 结论句出声；系统句/SILENT 不出声 |
+| ~~6~~ | ~~朗读~~ | `tts.ps1` | ✅ 渲染进程的 Web Speech API | 已完成，且**不再依赖 pwsh** |
 | 7 | 选项问答 / 审批应答 | `AskTimer` + `pet-responder/index.js` | 渲染进程按钮 + IPC | 审批能在气泡上点 |
 | 8 | 子 agent 观察 | `Get-ObservedAgents` | `src/agents.mjs` | 后台任务进度显示在当前气泡上 |
-| 9 | 判断记录 / 沉默角标 | `Format-DecisionCard` | 渲染进程卡片 + `logs/utterances.jsonl` | 沉默率与角标跨重启仍准 |
+| ~~9~~ | ~~判断记录 / 沉默角标~~ | `Format-DecisionCard` | ✅ `logs/decisions.jsonl` + 右键「看它判过什么」 | 已完成（含沉默率） |
 | ~~10~~ | ~~打包~~ | — | ✅ electron-builder 已配好 | 便携版已产出；安装器在本机被应用控制策略拦下，见 `DISTRIBUTION.md` §6 |
 
 **顺序上的理由**：2、3 是核心能力（"什么时候该说"），必须在 UI 打磨之前搬完并且
@@ -126,6 +126,18 @@
 | 观察循环（采样→闸门→叫模型→沉默/说话） | `src/monitor.mjs` | **端到端实跑**：放行一次并说出"Codex 窗口被挡住了大半"，随后每轮都被闸门拦下 |
 | 判断日志 / 沉默角标 | `logs/decisions.jsonl` + 渲染进程角标 | 日志按 kind=skip/silent/spoke 记录；角标显示累计"没说"次数 |
 | 打包（electron-builder） | `package.json` 的 `build` 段 + `npm run pack` / `dist` | 便携版产出成功（168 MB）；安装器在本机被策略拦下，见 `DISTRIBUTION.md` §6 |
+| 朗读（TTS） | 渲染进程 `speechSynthesis` | 用 Chromium 自带音色，离线零依赖；系统句 / SILENT / 「你在做：」不出声 |
+| 判断记录卡片 | 右键「看它判过什么」 | 从 `logs/decisions.jsonl` 读回，卡片里给沉默率 |
+| 配置迁移 | `tools/migrate-config.mjs` | 从 desktop-guide/config.json 搬了 15 个用得上的键 |
+
+### 还没搬的（4 项）
+
+| # | 能力 | 现状 | 说明 |
+|---|---|---|---|
+| 5 | 语音输入（STT） | ⬜ | 识别器 `stt-sensevoice.cjs` 是现成的，缺的是 Electron 侧的录音（渲染进程 `getUserMedia` → 16k PCM → 调那个 .cjs） |
+| 4 | 主 agent 常驻 | ⬜ | 现在每次判断都新起一个 dsh 进程（实测一次约 9 秒）；`dsh-sdk.ps1` 那套 stdio JSON-RPC 常驻能把单轮压到秒级 |
+| 7 | 选项问答 / 审批应答 | ⬜ | `run/ask/` 那套协议在（见 DesktopGuide 的 AskTimer），但 **`pet-responder` 目前没装、`run/ask` 目录也不存在**，所以还没有对话方 |
+| 8 | 子 agent 观察 | ⬜ | 后台 agent 的进度显示 + 把 agents 字段塞进判断 payload |
 
 ### 两处**有意**与 PowerShell 版不同，别当成 bug
 
