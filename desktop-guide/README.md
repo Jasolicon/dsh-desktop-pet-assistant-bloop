@@ -580,6 +580,34 @@ web UI 里由 `dsh-client-ui-approval` / `dsh-client-ui-user-questions` 当应�
 **需要 PowerShell 7（`pwsh`）**。Windows PowerShell 5.1 用的是 .NET Framework，
 `Add-Type` 的引用解析完全不同，会直接报错退出——脚本开头有版本守卫，会明确告诉你。
 
+### DSH / node / Edge 装在哪：`paths.ps1`
+
+原先 DSH 的安装位置在 11 处硬编码成 `D:\DeepSeekHarness\...`，换台机器整个桌宠就哑了，
+而且报错只会说「找不到文件」。现在所有机器相关路径都收在 `paths.ps1`，解析链统一是：
+
+```
+1. 显式配置（config.json / agents.json）—— 可以写 {root} {dshRoot} {userProfile} {dshHome} 占位符
+2. 环境变量（DG_* 一族）
+3. 自动探测：正在运行的 DSH 进程 → PATH 上的 dsh.cmd → 常见安装位置
+```
+
+装了非默认位置时，最省事的做法是设一个环境变量：
+
+| 变量 | 作用 |
+|---|---|
+| `DG_DSH_ROOT` | DSH 安装根目录（**一般只需要设这一个**） |
+| `DG_DSH_EXE` / `DG_DSH_CLI` / `DG_DSH_CMD` | 单独指定三个入口（极少用） |
+| `DG_NODE` | 跑 STT 用的普通 node.exe |
+| `DG_EDGE` | 对话窗口用的 msedge.exe |
+| `DG_PET_IMAGE` | 桌宠角色图（带透明通道的 PNG） |
+
+> 注意 `cli.js` 在 `app.asar` **归档里面**，`Test-Path` 看不见它（逐级测到 `app.asar\` 就是 False），
+> 但 Electron 读得到 —— 所以这一项不能用"文件存在"来判断，只能校验挂载点 `app.asar` 在不在。
+> 这是踩过的坑，`paths.ps1` 里有注释。
+
+自检的 5k 块会打印解析结果，并断言两件事：四个入口都能解析出来，以及
+**config.json / agents.json 里不再出现本机用户名或安装盘符的字面量**（防止以后又写回去）。
+
 ## 主 agent 的工具裁剪（省 token + 少走错路）
 
 主 agent 的活是"看一眼，判断要不要开口"，它**只会用 `read_image`**（实测一条会话里 174 次工具调用全是它）。

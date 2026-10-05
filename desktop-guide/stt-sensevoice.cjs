@@ -3,8 +3,8 @@
  * stt-sensevoice.cjs —— 用 **DSH 自带的 sherpa-onnx + SenseVoice** 把一段 WAV 转成文字
  *
  * 为什么要借 DSH 的运行时（而不是自己装一套）：
- *   DSH 发行包里已经带了 sherpa-onnx 的原生插件
- *     D:\DeepSeekHarness\resources\app.asar.unpacked\dsh\node_modules\sherpa-onnx-win-x64\sherpa-onnx.node
+ *   DSH 发行包里已经带了 sherpa-onnx 的原生插件（在 app.asar.unpacked 下）：
+ *     <DSH 安装根>\resources\app.asar.unpacked\dsh\node_modules\sherpa-onnx-win-x64\sherpa-onnx.node
  *   用普通 node 跑（不要用 Electron 的 ELECTRON_RUN_AS_NODE：它禁止原生外部缓冲区，
  *   readWave 会直接抛 "External buffers are not allowed"）。
  *   JS 包装层从 app.asar 抽到 .stt\sherpa\sherpa-onnx-node\，原生目录用 junction 指过去。
@@ -36,9 +36,28 @@ const HERE = __dirname;
 // 优先用抽出来的本地副本（.stt\sherpa\）：asar 里的那份要 Electron 才读得到，
 // 而 Electron 的 node **不允许原生外部缓冲区** —— readWave 一返回就报
 // "External buffers are not allowed"（实测）。普通 node 没这个限制。
+// DSH 自带的那份 sherpa-onnx-node 在 app.asar 里，位置不写死：
+//   DG_DSH_ROOT（首选，装了别处时设它）→ Program Files / LocalAppData 下的常见安装位置。
+// 注意 app.asar 里的那份要 Electron 才读得到，普通 node 用不了，所以它只是最后兜底；
+// 真正在用的是第一项 —— 从 asar 抽到本地的 .stt\sherpa\ 副本（stt.ps1 负责抽）。
+function dshSherpaDirs() {
+  const roots = [];
+  const envRoot = (process.env.DG_DSH_ROOT || process.env.DSH_ROOT || '').trim();
+  if (envRoot) roots.push(envRoot);
+  const pf = process.env.ProgramFiles || '';
+  const pf86 = process.env['ProgramFiles(x86)'] || '';
+  const lad = process.env.LOCALAPPDATA || '';
+  for (const base of [pf, pf86]) if (base) roots.push(path.join(base, 'DeepSeek Harness'));
+  if (lad) {
+    roots.push(path.join(lad, 'Programs', 'DeepSeek Harness'));
+    roots.push(path.join(lad, 'DeepSeekHarness'));
+  }
+  return roots.map((r) => path.join(r, 'resources', 'app.asar', 'dsh', 'node_modules', 'sherpa-onnx-node'));
+}
+
 const DEFAULT_SHERPA_DIRS = [
   path.join(HERE, '.stt', 'sherpa', 'sherpa-onnx-node'),
-  'D:\\DeepSeekHarness\\resources\\app.asar\\dsh\\node_modules\\sherpa-onnx-node',
+  ...dshSherpaDirs(),
 ];
 
 function parseArgs(argv) {

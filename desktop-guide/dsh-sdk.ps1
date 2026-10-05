@@ -31,6 +31,9 @@ $script:DshSdkRoot =
   elseif ($MyInvocation.MyCommand.Path) { Split-Path -Parent $MyInvocation.MyCommand.Path }
   else { (Get-Location).Path }
 
+# 机器相关路径统一走 paths.ps1
+if (-not (Get-Command Get-DgDshPaths -ErrorAction SilentlyContinue)) { . (Join-Path $script:DshSdkRoot 'paths.ps1') }
+
 $script:DshRt = [pscustomobject]@{
   Proc         = $null      # System.Diagnostics.Process
   Pending      = $null      # 半途的 ReadLineAsync 任务（**不能丢**，丢了下次读会炸）
@@ -46,18 +49,10 @@ $script:DshRt = [pscustomobject]@{
 
 function Resolve-DshSdkPaths {
   param($Config)
-  $get = {
-    param($n, $d)
-    if ($Config -and ($Config.PSObject.Properties.Name -contains $n) -and $null -ne $Config.$n) { return $Config.$n }
-    return $d
-  }
-  $exe = [string](& $get 'dshExe' '')
-  if (-not $exe -or -not (Test-Path -LiteralPath $exe)) { $exe = 'D:\DeepSeekHarness\DeepSeek Harness.exe' }
-  $cli = [string](& $get 'dshCli' '')
-  if (-not $cli -or -not (Test-Path -LiteralPath $cli)) {
-    $cli = 'D:\DeepSeekHarness\resources\app.asar\dsh\node_modules\@deepseek-ai\dsh-desktop-host\lib\cli.js'
-  }
-  return [pscustomobject]@{ Exe = $exe; Cli = $cli }
+  # 统一走 paths.ps1：配置 → DG_DSH_* 环境变量 → 自动探测安装位置。
+  # （cli.js 在 app.asar 里，Test-Path 看不见它，所以不能靠"存在性"判断 —— 见 paths.ps1。）
+  $p = Get-DgDshPaths -Config $Config
+  return [pscustomobject]@{ Exe = $p.Exe; Cli = $p.Cli }
 }
 
 function Send-DshRpc {

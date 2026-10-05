@@ -10,6 +10,12 @@
 #   原生外部缓冲区，sherpa.readWave() 一返回就抛 "External buffers are not allowed"（实测踩过）。
 #   node 的查找顺序：config.sttNode → DSH 自带运行时 → PATH 里的 node。
 #   模型不在包里（int8 约 228MB），第一次用的时候按需下载到 .stt\model\。
+
+# 机器相关路径统一走 paths.ps1（node / DSH 安装位置都不写死）
+if (-not (Get-Command Get-DgNodePath -ErrorAction SilentlyContinue)) {
+  $dgRoot = if ($PSScriptRoot) { $PSScriptRoot } elseif ($MyInvocation.MyCommand.Path) { Split-Path -Parent $MyInvocation.MyCommand.Path } else { (Get-Location).Path }
+  . (Join-Path $dgRoot 'paths.ps1')
+}
 #   全程本机、离线、不出机器 —— 和 Ollama 那条路一致。
 #
 # 录音用 Windows 自带的 MCI（winmm.dll）：零依赖、能直接落 WAV。
@@ -278,14 +284,13 @@ function Get-SttConfigValue {
 function Resolve-SttNode {
   <# 找一个能跑 sherpa 原生插件的普通 node（不能用 Electron 的 RUN_AS_NODE，见文件头）。 #>
   param([string]$Hint)
-  $cands = @()
-  if ($Hint) { $cands += $Hint }
-  $cands += (Join-Path $env:USERPROFILE '.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe')
-  $cands += 'C:\Program Files\nodejs\node.exe'
-  foreach ($c in $cands) { if ($c -and (Test-Path -LiteralPath $c)) { return $c } }
-  $cmd = Get-Command node.exe -ErrorAction SilentlyContinue
-  if ($cmd) { return $cmd.Source }
-  return ''
+  # 位置统一走 paths.ps1：显式 hint → DG_NODE → PATH → 常见安装位置。
+  # （原来这里写死 C:\Program Files\nodejs\node.exe，装在别处就找不到。）
+  return (Resolve-DgFirst @(
+      $Hint,
+      (Join-Path $env:USERPROFILE '.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe'),
+      (Get-DgNodePath)
+    ))
 }
 
 function Initialize-Stt {

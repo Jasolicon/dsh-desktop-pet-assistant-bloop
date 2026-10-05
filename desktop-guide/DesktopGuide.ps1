@@ -74,6 +74,10 @@ if ($PSVersionTable.PSVersion.Major -lt 7) {
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
+# 机器相关路径（DSH 装在哪、node/edge 在哪、角色图用哪张）统一走 paths.ps1。
+# 别在本文件里写绝对路径 —— 换台机器就哑，而且报错只会说「找不到文件」。
+if (-not (Get-Command Get-DgDshPaths -ErrorAction SilentlyContinue)) { . (Join-Path $PSScriptRoot 'paths.ps1') }
+
 # ---------------------------------------------------------------------------
 # 原生互操作 + 桌宠本体（C#，因为要自绘和精确控制窗口样式）
 # ---------------------------------------------------------------------------
@@ -1886,16 +1890,12 @@ function Restore-PetWidthAfterPrompt {
   try { Set-PetWidth $w } catch { }
 }
 
-# 有现成角色图就用它：优先 config 里配的，其次自动用本机已装的 DSH 桌宠素材。
+# 有现成角色图就用它。顺序在 paths.ps1 的 Get-DgPetImage 里：
+# config.petImage → DG_PET_IMAGE → 本目录 assets\pet.png → 本机已装的鲸鱼挂件（自用兜底）。
+# 注意最后那条是**别人插件的素材**，授权不允许随本项目分发，对外发布前必须换成自绘的。
 function Resolve-PetImage {
   param([string]$Configured)
-  if (-not [string]::IsNullOrWhiteSpace($Configured) -and (Test-Path $Configured)) { return $Configured }
-  $candidates = @(
-    'C:\Users\<user>\.dsh\profiles\desktop\node_modules\dsh-whale-widget\assets\DSniang1.png',
-    (Join-Path $PSScriptRoot 'assets\pet.png')
-  )
-  foreach ($c in $candidates) { if (Test-Path $c) { return $c } }
-  return ''
+  return (Get-DgPetImage -Configured $Configured)
 }
 
 # 把「它判过什么 + 你用过它几次」画成一张卡片 —— 不用去翻日志。
@@ -2392,7 +2392,9 @@ function Start-Advisor {
   #   自动检查走 advisor —— DSH 主 agent（有常驻记忆，但要启动进程 + 一轮读图工具，8-14 秒）
   # 为什么手动不能用 DSH：dsh-headless 的 CLI 没有附件入口（源码里只有 task），
   # 图只能靠 read_image 工具读，必然多一轮模型调用。实测过。
+  # 配置里的命令可以带占位符（{root} 等），在这里展开 —— 这样 config.json 不用写死本机路径。
   $cmd = if (-not $Auto -and $cfg.advisorFast) { [string]$cfg.advisorFast } else { [string]$cfg.advisor }
+  $cmd = Expand-DgTokens $cmd
 
   if ([string]::IsNullOrWhiteSpace($cmd)) {
     $pet.ShowMessage((Invoke-BuiltinAdvisor -Payload $payload), [int]$cfg.showSeconds)
@@ -3001,6 +3003,33 @@ $probe3 = New-Object DesktopGuide.PetForm -ArgumentList @([double]$script:UiScal
     $tbmp.Save($outTi, [System.Drawing.Imaging.ImageFormat]::Png)
     Write-Output ("  预览：{0}" -f $outTi)
   } finally { $tbmp.Dispose(); $tif.Dispose() }
+  Write-Output '=== 5k. 路径解析（不再依赖本机绝对路径）==='
+  # 这一块盯的是"换台机器还能不能跑"：DSH 装在哪、node/edge 在哪、配置里有没有写死本机路径。
+  $dshPaths = Get-DgDshPaths
+  $dgNode = Get-DgNodePath
+  $dgEdge = Get-DgEdgePath
+  Write-Output ("  DSH 根  : {0}" -f $(if ($dshPaths.Root) { $dshPaths.Root } else { '（未找到 —— 设 DG_DSH_ROOT）' }))
+  Write-Output ("  exe     : {0}" -f $(if ($dshPaths.Exe) { $dshPaths.Exe } else { '（未找到）' }))
+  Write-Output ("  cli.js  : {0}" -f $(if ($dshPaths.Cli) { $dshPaths.Cli } else { '（未找到）' }))
+  Write-Output ("  dsh.cmd : {0}" -f $(if ($dshPaths.Cmd) { $dshPaths.Cmd } else { '（未找到）' }))
+  Write-Output ("  node    : {0}" -f $(if ($dgNode) { $dgNode } else { '（未找到）' }))
+  Write-Output ("  edge    : {0}" -f $(if ($dgEdge) { $dgEdge } else { '（未找到）' }))
+  # 配置里不该再出现本机用户名或 DSH 安装盘符的字面量
+  $hardRe = '[A-Za-z]:\\Users|DeepSeekHarness'
+  $cfgHard = [regex]::Matches((Get-Content -LiteralPath (Join-Path $PSScriptRoot 'config.json') -Raw -Encoding UTF8), $hardRe).Count
+  $agHard = [regex]::Matches((Get-Content -LiteralPath (Join-Path $PSScriptRoot 'agents.json') -Raw -Encoding UTF8), $hardRe).Count
+  $tkRoot = Expand-DgTokens '{root}\advisor-dsh.ps1'
+  $pathChecks = [ordered]@{
+    'DSH 根已解析'     = [bool]$dshPaths.Root
+    'exe 已解析'       = [bool]$dshPaths.Exe
+    'cli.js 已解析'    = [bool]$dshPaths.Cli
+    'dsh.cmd 已解析'   = [bool]$dshPaths.Cmd
+    '配置无机器字面量' = (($cfgHard + $agHard) -eq 0)
+    '令牌 {root} 展开' = ($tkRoot -eq (Join-Path $PSScriptRoot 'advisor-dsh.ps1'))
+  }
+  $pBad = @($pathChecks.Keys | Where-Object { -not $pathChecks[$_] })
+  foreach ($k in $pathChecks.Keys) { Write-Output ("  {0} {1}" -f $(if ($pathChecks[$k]) { '✔' } else { '✘' }), $k) }
+  Write-Output ("  配置里的机器字面量：config.json $cfgHard 处，agents.json $agHard 处；{0}/{1} 项通过" -f ($pathChecks.Count - $pBad.Count), $pathChecks.Count)
   Write-Output '=== 6. 朗读（TTS）==='
   # -Check 只列音色，不出声（自检不该在半夜突然开口）。
   [void](Initialize-Tts -Config $cfg)

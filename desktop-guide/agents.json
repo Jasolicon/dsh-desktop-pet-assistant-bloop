@@ -1,9 +1,10 @@
 {
   "_comment": "DSH agent 引擎的配置。models 里每一项都会生成一个 --patch 覆盖 agent-default-model；access 里每一项是一档『对电脑的访问权限』。",
   "_how": "dsh.cmd 其实是 `set ELECTRON_RUN_AS_NODE=1` 后调用下面的 exe + cli.js。直接调底层可以绕开 cmd 的引号问题，也能用 Start-Process 重定向。",
-  "dsh": "D:\\DeepSeekHarness\\resources\\runtime\\cli\\bin\\dsh.cmd",
-  "dshExe": "D:\\DeepSeekHarness\\DeepSeek Harness.exe",
-  "dshCli": "D:\\DeepSeekHarness\\resources\\app.asar\\dsh\\node_modules\\@deepseek-ai\\dsh-desktop-host\\lib\\cli.js",
+  "_pathsNote": "下面三项留空 = 自动探测 DSH 装在哪（优先从正在运行的 DSH 进程反推，其次是 PATH 上的 dsh.cmd，最后是常见安装位置）。装了别处就在环境变量里设 DG_DSH_ROOT（或分别设 DG_DSH_EXE / DG_DSH_CLI）；也可以在这里写具体路径或用 {dshRoot} 占位符。解析逻辑见 paths.ps1，加载点见 Get-AgentConfig。",
+  "dsh": "",
+  "dshExe": "",
+  "dshCli": "",
   "profile": "headless",
   "models": [
     {

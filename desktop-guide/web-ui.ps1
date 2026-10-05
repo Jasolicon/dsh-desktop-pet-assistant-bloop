@@ -22,6 +22,9 @@ $script:WebUiRoot =
   elseif ($MyInvocation.MyCommand.Path) { Split-Path -Parent $MyInvocation.MyCommand.Path }
   else { (Get-Location).Path }
 
+# 机器相关路径统一走 paths.ps1
+if (-not (Get-Command Get-DgDshPaths -ErrorAction SilentlyContinue)) { . (Join-Path $script:WebUiRoot 'paths.ps1') }
+
 function Get-WebUiPlan {
   param($Config)
   $get = {
@@ -29,20 +32,12 @@ function Get-WebUiPlan {
     if ($Config -and ($Config.PSObject.Properties.Name -contains $name) -and $null -ne $Config.$name) { return $Config.$name }
     return $default
   }
-  $exe = [string](& $get 'dshExe' '')
-  if (-not $exe -or -not (Test-Path -LiteralPath $exe)) { $exe = 'D:\DeepSeekHarness\DeepSeek Harness.exe' }
-  $cli = [string](& $get 'dshCli' '')
-  if (-not $cli -or -not (Test-Path -LiteralPath $cli)) {
-    $cli = 'D:\DeepSeekHarness\resources\app.asar\dsh\node_modules\@deepseek-ai\dsh-desktop-host\lib\cli.js'
-  }
-  $edge = [string](& $get 'webEdge' '')
-  if (-not $edge -or -not (Test-Path -LiteralPath $edge)) {
-    foreach ($c in @(
-      'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe',
-      'C:\Program Files\Microsoft\Edge\Application\msedge.exe')) {
-      if (Test-Path -LiteralPath $c) { $edge = $c; break }
-    }
-  }
+  # DSH 与 Edge 的位置一律走 paths.ps1（配置 → DG_* 环境变量 → 自动探测），
+  # 这里不再出现 D:\DeepSeekHarness 这类写死的路径。
+  $dsh = Get-DgDshPaths -Config $Config
+  $exe = $dsh.Exe
+  $cli = $dsh.Cli
+  $edge = Get-DgEdgePath -Config $Config
   return [pscustomobject]@{
     Exe          = $exe
     Cli          = $cli

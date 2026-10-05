@@ -10,10 +10,28 @@
 #
 # 本模块只做三件事：起 agent、列 agent、停 agent。UI 由外层（桌宠）负责。
 
+# 机器相关路径统一走 paths.ps1（别在这里写 D:\DeepSeekHarness\...）
+if (-not (Get-Command Get-DgDshPaths -ErrorAction SilentlyContinue)) { . (Join-Path $PSScriptRoot 'paths.ps1') }
+
 function Get-AgentConfig {
   param([string]$Path)
   if (-not (Test-Path $Path)) { throw "找不到 agent 配置：$Path" }
-  return (Get-Content -LiteralPath $Path -Raw -Encoding UTF8 | ConvertFrom-Json)
+  $cfg = Get-Content -LiteralPath $Path -Raw -Encoding UTF8 | ConvertFrom-Json
+  # DSH 的三个入口不写死在配置里：统一走 paths.ps1 的解析链
+  # （配置里的具体值优先级最高 → 环境变量 DG_DSH_* → 自动探测安装位置）。
+  # 配置里也可以写 {dshRoot} 这类占位符，见 paths.ps1 顶部。
+  $p = Get-DgDshPaths -Config $cfg
+  $resolved = [ordered]@{ dsh = $p.Cmd; dshExe = $p.Exe; dshCli = $p.Cli }
+  foreach ($k in $resolved.Keys) {
+    $v = $resolved[$k]
+    if (-not $v) { continue }
+    if ($cfg.PSObject.Properties.Name -contains $k) { $cfg.$k = $v }
+    else { $cfg | Add-Member -NotePropertyName $k -NotePropertyValue $v }
+  }
+  if (-not $p.Exe -or -not $p.Cli) {
+    Write-Warning ("没能定位 DSH 安装：exe='{0}' cli='{1}'。装到非默认位置时设环境变量 DG_DSH_ROOT（或 DG_DSH_EXE / DG_DSH_CLI）。" -f $p.Exe, $p.Cli)
+  }
+  return $cfg
 }
 
 function Get-AgentStatePath {
@@ -288,12 +306,11 @@ function Write-AgentPatch {
   if ($EnableDeliverables) {
     [void]$insert.Add('    - id: present')
     [void]$insert.Add("      name: '@deepseek-ai/dsh-tool-present'")
-    $nodeExe = ''
-    foreach ($c in @(
-        (Join-Path $env:USERPROFILE '.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe'),
-        'C:\Program Files\nodejs\node.exe')) {
-      if (Test-Path -LiteralPath $c) { $nodeExe = $c; break }
-    }
+    # node.exe 的位置也走 paths.ps1（DG_NODE → PATH → 常见安装位置），不再写死 C:\Program Files。
+    $nodeExe = Resolve-DgFirst @(
+      (Join-Path $env:USERPROFILE '.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe'),
+      (Get-DgNodePath)
+    )
     [void]$insert.Add('    - id: skill-office')
     [void]$insert.Add("      name: '@deepseek-ai/dsh-skill-office'")
     if ($nodeExe) {
