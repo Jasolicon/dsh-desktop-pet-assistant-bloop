@@ -120,12 +120,20 @@ window.addEventListener('blur', () => updateHover(document.body));
 // 2) 交互
 // ---------------------------------------------------------------------------
 let dragFrom = null;
+let holdTimer = null;
+let rec = null;                 // 录音中的上下文
+const LONG_PRESS_MS = 400;      // 和 PowerShell 版一致：长按 400ms 判定为"按住说话"
 
 petEl.addEventListener('mousedown', (e) => {
   if (e.button !== 0) return;
   window.pet.userAction();
   dragFrom = { x: e.screenX, y: e.screenY, moved: false };
   petEl.style.cursor = 'grabbing';
+  // 按住不动 400ms = 开始说话（和"点一下说一句"共用一个手势，靠时长区分）
+  holdTimer = setTimeout(() => {
+    holdTimer = null;
+    if (dragFrom && !dragFrom.moved) beginRecording();
+  }, LONG_PRESS_MS);
 });
 
 window.addEventListener('mousemove', (e) => {
@@ -134,12 +142,15 @@ window.addEventListener('mousemove', (e) => {
   const dy = e.screenY - dragFrom.y;
   if (Math.abs(dx) + Math.abs(dy) < 3) return;   // 手抖不算拖动
   dragFrom.moved = true;
+  if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }   // 开始拖了就别再录
   dragFrom.x = e.screenX;
   dragFrom.y = e.screenY;
   window.pet.drag(dx, dy);
 });
 
 window.addEventListener('mouseup', () => {
+  if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
+  if (rec) { finishRecording(); dragFrom = null; petEl.style.cursor = 'grab'; return; }
   if (dragFrom && !dragFrom.moved) {
     // 正在朗读时点一下 = 打断（而不是再让它说一句）——和 PowerShell 版的"双击打断"同义
     if (window.speechSynthesis && window.speechSynthesis.speaking) {
@@ -151,6 +162,63 @@ window.addEventListener('mouseup', () => {
   dragFrom = null;
   petEl.style.cursor = 'grab';
 });
+
+// ---------------------------------------------------------------------------
+// 语音输入：按住宠物说话 → 松开识别 → 识别到的那句话**直接派活**
+// （和打字派活同一条下游：识别是唯一被替换的环节）
+// ---------------------------------------------------------------------------
+async function beginRecording() {
+  if (rec) return;
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const ctx = new AudioContext();
+    const src = ctx.createMediaStreamSource(stream);
+    // ScriptProcessorNode 虽然过时，但零依赖、行为可预期；这里每帧只要 4k 样本
+    const proc = ctx.createScriptProcessor(4096, 1, 1);
+    const chunks = [];
+    proc.onaudioprocess = (e) => chunks.push(new Float32Array(e.inputBuffer.getChannelData(0)));
+    src.connect(proc);
+    proc.connect(ctx.destination);
+    rec = { stream, ctx, src, proc, chunks };
+    setState('listening');
+    showBubble('正在听…（松开结束）', 0);
+  } catch (err) {
+    rec = null;
+    setState('silent');
+    showBubble(`开不了麦克风：${err.message}`, 8000);
+  }
+}
+
+async function finishRecording() {
+  const r = rec;
+  rec = null;
+  if (!r) return;
+  const rate = r.ctx.sampleRate;
+  try { r.proc.disconnect(); r.src.disconnect(); } catch { /* 已经断了 */ }
+  try { r.stream.getTracks().forEach((t) => t.stop()); } catch { /* 忽略 */ }
+  try { await r.ctx.close(); } catch { /* 忽略 */ }
+
+  const total = r.chunks.reduce((a, c) => a + c.length, 0);
+  if (total < rate * 0.3) {           // 比 0.3 秒还短当作没说话（和 sttMinSeconds 同义）
+    setState('idle');
+    bubble.classList.add('hidden');
+    return;
+  }
+  const samples = new Float32Array(total);
+  let o = 0;
+  for (const c of r.chunks) { samples.set(c, o); o += c.length; }
+
+  setState('thinking');
+  showBubble('听清楚了，正在认字…', 0);
+  const res = await window.pet.transcribe(samples, rate);
+  if (!res.ok || !res.text) {
+    setState('silent');
+    showBubble(res.why ? `（没认出来：${res.why}）` : '（没听清）', 8000);
+    return;
+  }
+  showBubble(`听到：${res.text}`, 0);
+  await dispatchTask(res.text);
+}
 
 petEl.addEventListener('dblclick', (e) => {
   e.preventDefault();
@@ -195,9 +263,10 @@ function toggleBar(show) {
   }
 }
 
-async function dispatchTask() {
-  const text = input.value.trim();
+async function dispatchTask(overrideText) {
+  const text = (overrideText ?? input.value).trim();
   if (!text) return;
+  toggleBar(false);
   send.disabled = true;
   setState('thinking');
   showBubble(`收到，去做：${text}`, 0);

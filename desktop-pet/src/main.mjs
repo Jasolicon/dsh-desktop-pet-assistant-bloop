@@ -8,6 +8,7 @@
  * 没搬的那些在 desktop-guide/ 里仍然可用；两边的路径解析是**同一套规则**（paths.ps1 / paths.mjs）。
  */
 import { app, BrowserWindow, ipcMain, Menu, powerMonitor, screen, shell } from 'electron';
+import { session as electronSession } from 'electron';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ROOT, dshPaths, petImage } from './paths.mjs';
@@ -16,6 +17,7 @@ import { askDsh } from './brain.mjs';
 import { createMonitor } from './monitor.mjs';
 import { dataDir } from './dirs.mjs';
 import { DshSession } from './dsh-session.mjs';
+import { transcribe } from './stt.mjs';
 
 let win = null;
 let cfg = loadConfig();
@@ -157,6 +159,16 @@ function buildLookPrompt(payload) {
 }
 
 function registerIpc() {
+  // 麦克风权限：Electron 默认不弹系统提示，得自己放行，否则 getUserMedia 直接失败。
+  // 只放行 media，别的（摄像头/地理位置…）一律拒。
+  try {
+    electronSession.defaultSession.setPermissionRequestHandler((_wc, permission, cb) => {
+      cb(permission === 'media');
+    });
+  } catch (err) {
+    log('权限处理器没装上：', err.message);
+  }
+
   // 鼠标在宠物身上 → 关掉穿透；离开 → 打开（forward 保证还能收到 move）
   ipcMain.on('pet:hover', (_e, hovering) => {
     if (win) win.setIgnoreMouseEvents(!hovering, { forward: true });
@@ -182,6 +194,14 @@ function registerIpc() {
   }));
 
   ipcMain.handle('pet:status', () => monitor?.snapshot() ?? null);
+
+  /** 语音输入：渲染进程录好的 PCM 拿过来识别。 */
+  ipcMain.handle('pet:transcribe', async (_e, { samples, sampleRate }) => {
+    monitor?.noteUserAction(cfg.userQuietSeconds || 6);
+    const r = await transcribe(samples, sampleRate, cfg);
+    log('识别：', r.ok ? JSON.stringify(r.text) : r.why, `(${r.seconds.toFixed(1)}s)`);
+    return r;
+  });
 
   /**
    * 「看它判过什么」：把判断日志读回最近 N 条，渲染进程画成卡片。
