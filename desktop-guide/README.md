@@ -121,7 +121,7 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\DesktopGuide.ps1
 **挑音色**（这是耳朵的活，不是脑子的活）：
 
 ```powershell
-cd C:\Users\<user>\Documents\deepseek-harness\default-workspace\desktop-guide
+cd <仓库根>\desktop-guide
 pwsh -NoProfile -Command ". .\md-plain.ps1; . .\tts.ps1; Initialize-Tts -Config (Get-Content .\config.json -Raw | ConvertFrom-Json) | Out-Null; Invoke-TtsAudition"
 ```
 

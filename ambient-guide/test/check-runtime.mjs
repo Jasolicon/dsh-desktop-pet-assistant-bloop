@@ -155,7 +155,7 @@ if (totalInjections === 0) {
   console.log('');
   console.log('如果已经重启过还是这样，按顺序排查：');
   console.log('  1. profile 的 bundle 列表里是否还有 dsh-ambient-guide');
-  console.log('     Get-Content "C:\\Users\\<user>\\.dsh\\profiles\\desktop\\package.json" -Raw');
+    console.log('     Get-Content "$env:USERPROFILE\\.dsh\\profiles\\desktop\\package.json" -Raw');
   console.log('  2. cordis.patch.yml 里的 enabled 是否为 true');
   console.log('  3. 应用启动时是否有插件加载报错');
   process.exit(1);

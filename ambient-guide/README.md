@@ -180,7 +180,7 @@
 
 ```powershell
 $dsh = "D:\DeepSeekHarness\resources\runtime\cli\bin\dsh.cmd"
-$pkg = "C:\Users\<user>\Documents\deepseek-harness\default-workspace\ambient-guide"
+$pkg = "<仓库根>\ambient-guide"
 & $dsh plugin --profile desktop add "link:$pkg"
 ```
 
@@ -194,7 +194,7 @@ $pkg = "C:\Users\<user>\Documents\deepseek-harness\default-workspace\ambient-gui
 直接运行启动器（不用设任何变量，任意目录都行）：
 
 ```
-C:\Users\<user>\Documents\deepseek-harness\default-workspace\ambient-guide\test\verify.cmd
+<仓库根>\ambient-guide\test\verify.cmd
 ```
 
 覆盖 **141 项**：折叠逻辑（事件形状取自真实日志）、摘要渲染与长度上限、注入消息形状与插入位置、
@@ -206,7 +206,7 @@ C:\Users\<user>\Documents\deepseek-harness\default-workspace\ambient-guide\test\
 ### 运行时验证（重启之后跑，这是唯一的硬证据）
 
 ```
-C:\Users\<user>\Documents\deepseek-harness\default-workspace\ambient-guide\test\check.cmd
+<仓库根>\ambient-guide\test\check.cmd
 ```
 
 它只认结构化证据：会话日志里必须出现 `agent/inbox/spliced` 且
