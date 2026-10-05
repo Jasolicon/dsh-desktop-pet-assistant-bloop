@@ -210,13 +210,24 @@ async function finishRecording() {
 
   setState('thinking');
   showBubble('听清楚了，正在认字…', 0);
-  const res = await window.pet.transcribe(samples, rate);
-  if (!res.ok || !res.text) {
+  const res = await window.pet.voice(samples, rate);
+  if (!res.ok) {
     setState('silent');
-    showBubble(res.why ? `（没认出来：${res.why}）` : '（没听清）', 8000);
+    showBubble(res.why ? `（没接住：${res.why}）` : '（没听清）', 8000);
     return;
   }
-  showBubble(`听到：${res.text}`, 0);
+  // 听到什么先给用户看一眼 —— 识别错了要能当场发现
+  const heard = `听到：${res.transcript}`;
+
+  // 只是聊天 → 就地回一句，**不起后台 agent**（快、也不动用户的电脑）
+  if (res.kind !== 'task') {
+    setState('speaking');
+    showBubble(`${heard}\n\n${res.text || '嗯，我在。'}`, 15000);
+    say(res.text);
+    return;
+  }
+
+  showBubble(`${heard}\n\n收到，去做：${res.text}`, 0);
   await dispatchTask(res.text);
 }
 

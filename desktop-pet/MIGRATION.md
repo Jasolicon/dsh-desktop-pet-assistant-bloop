@@ -131,6 +131,7 @@
 | 配置迁移 | `tools/migrate-config.mjs` | 从 desktop-guide/config.json 搬了 15 个用得上的键 |
 | **主 agent 常驻** | `src/dsh-session.mjs`（stdio JSON-RPC） | initialize 4.5s 一次性；之后每轮 **0.897s**（对比一次性起的 4.66s） |
 | 语音输入（STT） | `src/stt.mjs` + 渲染进程 `getUserMedia` | 识别链路实测：1 秒静音 → `{ok:true,text:""}`（3.1s，含模型加载）。**长按录音 → 派活这一段没端到端验过**（得真人按住说话），代码路径与打字派活共用 `dispatchTask` |
+| 语音意图分流 | `src/router.mjs` | 识别完先判 TASK/CHAT，**聊天不起 agent**。真实模型实测 4 例全对（0.7–1.6s/次） |
 
 **常驻会话带来的一个额外好处**：`session/prompt` 的 `contentBlocks` **支持内联图片**
 （TypeScript 版那边 headless CLI 没有附件入口，只能让模型用 `read_image` 读路径、多花一轮）。

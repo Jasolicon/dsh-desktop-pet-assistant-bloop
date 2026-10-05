@@ -18,6 +18,7 @@ import { createMonitor } from './monitor.mjs';
 import { dataDir } from './dirs.mjs';
 import { DshSession } from './dsh-session.mjs';
 import { transcribe } from './stt.mjs';
+import { route } from './router.mjs';
 
 let win = null;
 let cfg = loadConfig();
@@ -201,6 +202,33 @@ function registerIpc() {
     const r = await transcribe(samples, sampleRate, cfg);
     log('识别：', r.ok ? JSON.stringify(r.text) : r.why, `(${r.seconds.toFixed(1)}s)`);
     return r;
+  });
+
+  /**
+   * 语音输入的完整一条路：识别 → 判定「派活还是只是聊天」→ 各自分流。
+   *
+   * 为什么要判：原来的设计是"说一件事去做"，识别完直接起后台 agent。
+   * 但"你好""刚才那个挺好"这类只是说话，为它起一个完整 agent 又慢又费，
+   * 而且它还会煞有介事地开工。判定交给已经热着的常驻会话（一轮 1 秒级），
+   * 判不出来时**按聊天处理** —— 宁可少起一个 agent，也不要在用户只是聊天时
+   * 让后台 agent 开始动他的电脑。
+   */
+  ipcMain.handle('pet:voice', async (_e, { samples, sampleRate }) => {
+    monitor?.noteUserAction(cfg.userQuietSeconds || 6);
+    const stt = await transcribe(samples, sampleRate, cfg);
+    log('识别：', stt.ok ? JSON.stringify(stt.text) : stt.why, `(${stt.seconds.toFixed(1)}s)`);
+    if (!stt.ok || !stt.text) return { ok: false, why: stt.why || '没听清', transcript: '' };
+
+    const r = await route(stt.text, (prompt) => ask(prompt));
+    log('判定：', r.kind, JSON.stringify(r.text).slice(0, 80), `(${r.seconds?.toFixed?.(1) ?? '?'}s)`);
+    return {
+      ok: true,
+      transcript: stt.text,
+      kind: r.kind,
+      text: r.text,
+      sttSeconds: stt.seconds,
+      routeSeconds: r.seconds,
+    };
   });
 
   /**

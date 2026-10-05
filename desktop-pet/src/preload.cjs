@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld('pet', {
   status: () => ipcRenderer.invoke('pet:status'),
   decisions: () => ipcRenderer.invoke('pet:decisions'),
   transcribe: (samples, sampleRate) => ipcRenderer.invoke('pet:transcribe', { samples, sampleRate }),
+  voice: (samples, sampleRate) => ipcRenderer.invoke('pet:voice', { samples, sampleRate }),
   task: (text) => ipcRenderer.invoke('pet:task', text),
   say: () => ipcRenderer.invoke('pet:say'),
   hover: (hovering) => ipcRenderer.send('pet:hover', !!hovering),
