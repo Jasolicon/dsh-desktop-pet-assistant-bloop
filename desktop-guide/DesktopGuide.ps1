@@ -702,14 +702,19 @@ namespace DesktopGuide {
         // 自检 / 收摊时会先 Dispose 再泵消息，这时还可能有最后一拍到 —— 先停掉再走
         if (IsDisposed || Disposing) { try { anim.Stop(); } catch { } return; }
         tick++;
-        // 菜单开着时鼠标跑远 → 自动关。小屏上菜单会盖住一大片，
-        // 不该逼用户去精确点那块空白。子菜单通常紧贴主菜单，所以判定范围放宽了 250px。
+        // 菜单开着时鼠标跑远 → 自动关。小屏上菜单会盖住一大片，不该逼用户去精确点那块空白。
+        //
+        // ⚠️ 这里踩过一次：以前只拿 ContextMenuStrip.Bounds 当范围（再外扩 250px），
+        // 但**子菜单是独立窗口**，Bounds 里没有它们 —— 桌宠贴在屏幕右缘时，
+        // 「设置 → 说话风格」这种嵌套子菜单会一路往左铺开，鼠标刚移过去就被判成"跑远"，
+        // 800ms 后整个菜单关掉（用户原话：右键菜单来不及点就消失了）。
+        // 现在把**主菜单 + 所有已弹出的子菜单**的范围并起来算，外扩也按缩放走，停留阈值放宽到 1.2 秒。
         if (ContextMenuStrip != null && ContextMenuStrip.Visible) {
-          var zone = ContextMenuStrip.Bounds;
-          zone.Inflate(250, 250);
+          var zone = MenuZone();
+          zone.Inflate(S(140), S(140));
           if (!zone.Contains(Cursor.Position)) {
             if (menuAwaySince == DateTime.MinValue) menuAwaySince = DateTime.Now;
-            else if ((DateTime.Now - menuAwaySince).TotalMilliseconds > 800) { ContextMenuStrip.Close(); menuAwaySince = DateTime.MinValue; }
+            else if ((DateTime.Now - menuAwaySince).TotalMilliseconds > 1200) { ContextMenuStrip.Close(); menuAwaySince = DateTime.MinValue; }
           } else menuAwaySince = DateTime.MinValue;
         } else menuAwaySince = DateTime.MinValue;
         // 选项倒计时到点 → 自动取消（当作"没选"）
@@ -736,6 +741,27 @@ namespace DesktopGuide {
       item.Click += (s, e) => Fire(handler);
       return item;
     }
+
+    /// 主菜单 + **所有已经弹出的子菜单**的范围之和（子菜单是独立窗口，Bounds 不包含它们）。
+    Rectangle MenuZone() {
+      if (ContextMenuStrip == null) return Rectangle.Empty;
+      var zone = ContextMenuStrip.Bounds;
+      CollectDropDowns(ContextMenuStrip.Items, ref zone);
+      return zone;
+    }
+    void CollectDropDowns(ToolStripItemCollection items, ref Rectangle zone) {
+      foreach (ToolStripItem it in items) {
+        var di = it as ToolStripDropDownItem;
+        if (di == null) continue;
+        var dd = di.DropDown;
+        if (dd != null && dd.Visible) {
+          zone = Rectangle.Union(zone, dd.Bounds);
+          CollectDropDowns(dd.Items, ref zone);   // 允许多层嵌套（设置 → 说话风格 → …）
+        }
+      }
+    }
+    /** 自检用：当前算出来的"菜单范围"。 */
+    public Rectangle MenuZoneBox { get { return MenuZone(); } }
 
     /// 由外层把「可选的模型名」灌进来，生成「新建 agent ▸ 模型」子菜单。
     public void SetAgentModels(string[] names) {
@@ -3479,6 +3505,29 @@ $probe3 = New-Object DesktopGuide.PetForm -ArgumentList @([double]$script:UiScal
   if ($more) { Write-Output ("  「更多」{0} 项" -f $more.DropDownItems.Count) }
   if ($setm) { Write-Output ("  「设置」{0} 项" -f $setm.DropDownItems.Count) }
   Write-Output ("  顶层文字：" + (($cm.Items | ForEach-Object { if ($_.Text) { $_.Text } else { '—' } }) -join ' / '))
+  # 「鼠标移开就自动关」必须把**子菜单**算进去 —— 子菜单是独立窗口，只按主菜单算范围的话，
+  # 鼠标刚移向「设置 → 说话风格」就会被判成"跑远"，菜单啪一下就没了（用户报过这个）。
+  $zoneOk = @()
+  try {
+    $cm.Show($mprobe, (New-Object System.Drawing.Point 10, 10))
+    [System.Windows.Forms.Application]::DoEvents()
+    if ($setm) { $setm.ShowDropDown() }
+    [System.Windows.Forms.Application]::DoEvents()
+    Start-Sleep -Milliseconds 120
+    [System.Windows.Forms.Application]::DoEvents()
+    $zone = $mprobe.MenuZoneBox
+    $sub = if ($setm) { $setm.DropDown.Bounds } else { [System.Drawing.Rectangle]::Empty }
+    $zoneOk += ($sub.Width -gt 0)
+    $zoneOk += ($sub.Width -eq 0 -or $zone.Contains($sub))
+    $zoneOk += ($zone.Width -gt 0)
+    # 远处（屏幕外）显然不该在范围里 —— 否则"移开就关"这条就永远不触发了
+    $farAway = New-Object System.Drawing.Rectangle ($zone.Right + 2000), ($zone.Bottom + 2000), 10, 10
+    $zoneOk += (-not $zone.Contains($farAway))
+    Write-Output ("  菜单范围 {0}x{1} @({2},{3})｜「设置」子菜单 {4}x{5} @({6},{7})" -f `
+      $zone.Width, $zone.Height, $zone.X, $zone.Y, $sub.Width, $sub.Height, $sub.X, $sub.Y)
+    $cm.Close()
+  } catch { Write-Output "  ✘ 菜单范围自检失败：$($_.Exception.Message)" }
+  Write-Output ("  5f 菜单范围：子菜单算进去了、远处不算 → {0}/4 项通过" -f @($zoneOk | Where-Object { $_ }).Count)
   $mprobe.Dispose()
   Write-Output '=== 5o. 气泡页脚（余额 / 上次调用 / 今天）==='
   $fprobe = New-Object DesktopGuide.PetForm -ArgumentList @([double]$script:UiScale, [string]$cfg.fontFamily, [double]$cfg.fontSize)
