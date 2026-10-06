@@ -428,8 +428,6 @@ namespace DesktopGuide {
     public event EventHandler CollapseRequested;
     public event EventHandler Moved;
     public event EventHandler AgentListRequested;
-    /** 在「Agent 列表」里点了一条 → 把它设为后续派活的目标（LastAgentPicked = '' 表示每次新建） */
-    public event EventHandler AgentPickRequested;
     public event EventHandler AgentStartRequested;
     /** 用户说"我是醒着的"：立刻重新看一眼（待机卡住时的手动出口） */
     public event EventHandler WakeRequested;
@@ -506,8 +504,6 @@ namespace DesktopGuide {
     bool longPressFired;
     /** 长按判定阈值（毫秒）。低于这个时长的按住仍然算普通点击。 */
     public int LongPressMs = 400;
-    /** 在「Agent 列表」里选中的那条 agent（'' = 每次新建） */
-    public string LastAgentPicked = "";
 
     // 逻辑尺寸（96 DPI 下的像素），实际使用时会乘 uiScale
     readonly double uiScale;
@@ -566,8 +562,6 @@ namespace DesktopGuide {
     readonly ToolStripMenuItem ttsItem;
     /** 「朗读」子菜单（挂在「设置」下） */
     ToolStripMenuItem ttsMenu;
-    /** 「更多 → Agent 列表」那个子菜单（派活给谁） */
-    ToolStripMenuItem agentListMenu;
     readonly Timer anim;
     string message = "";
     DateTime messageUntil = DateTime.MinValue;
@@ -754,55 +748,9 @@ namespace DesktopGuide {
         agentMenu.DropDownItems.Add(item);
       }
       moreMenu.DropDownItems.Add(agentMenu);
-      // 「Agent 列表」现在是**子菜单**：点其中一条 = 之后的派活都交给它（接着它的会话跑）。
-      // 内容由 SetAgentList 填 —— 每次菜单弹出前刷新一次，因为 agent 一直在变。
-      agentListMenu = new ToolStripMenuItem("Agent 列表（派活给谁）");
-      moreMenu.DropDownItems.Add(agentListMenu);
-      SetAgentList(new string[0], new string[0], "");
-    }
-
-    /// 填「Agent 列表」子菜单。ids 为空 = 只剩「每次新建」那一条（原来的行为）。
-    public void SetAgentList(string[] ids, string[] labels, string current) {
-      if (agentListMenu == null) return;
-      // 先搬到临时数组再清空 —— 直接边遍历边 Dispose/Clear 会报
-      // "Collection was modified; enumeration operation may not execute"（实测踩过）
-      var old = new System.Collections.ArrayList();
-      foreach (ToolStripItem it in agentListMenu.DropDownItems) old.Add(it);
-      agentListMenu.DropDownItems.Clear();
-      foreach (ToolStripItem it in old) it.Dispose();
-
-      var fresh = new ToolStripMenuItem("每次新建（默认）");
-      fresh.Checked = string.IsNullOrEmpty(current);
-      fresh.Click += (s, e) => { LastAgentPicked = ""; Fire(AgentPickRequested); };
-      agentListMenu.DropDownItems.Add(fresh);
-
-      if (ids != null && ids.Length > 0) {
-        agentListMenu.DropDownItems.Add(new ToolStripSeparator());
-        for (int i = 0; i < ids.Length; i++) {
-          string label = (labels != null && i < labels.Length) ? labels[i] : ids[i];
-          var item = new ToolStripMenuItem(label);
-          item.Checked = (ids[i] == current);
-          string captured = ids[i];
-          item.Click += (s, e) => { LastAgentPicked = captured; Fire(AgentPickRequested); };
-          agentListMenu.DropDownItems.Add(item);
-        }
-      }
-      agentListMenu.DropDownItems.Add(new ToolStripSeparator());
-      agentListMenu.DropDownItems.Add(MakeMenuItem("在气泡里看进度…", AgentListRequested));
-    }
-
-    /** 自检用：当前「Agent 列表」子菜单里有什么（[x] 前缀 = 当前派活目标，--- = 分隔线） */
-    public string[] AgentMenuLabels() {
-      if (agentListMenu == null) return new string[0];
-      // 只能用 ArrayList：Add-Type 会把 System.Private.CoreLib 从引用集里剔除，
-      // 泛型 List<> 编译不过（这条硬限制文件里别处也踩过）。
-      var list = new System.Collections.ArrayList();
-      foreach (ToolStripItem it in agentListMenu.DropDownItems) {
-        if (it is ToolStripSeparator) { list.Add("---"); continue; }
-        var mi = it as ToolStripMenuItem;
-        list.Add((mi != null && mi.Checked ? "[x] " : "") + it.Text);
-      }
-      return (string[])list.ToArray(typeof(string));
+      // 「Agent 列表（派活给谁）」打开一个**窗口**：在那边选一条 / 新建一条 / 删一条。
+      // 菜单里只放入口 —— 列表要能看状态、能新建删除，子菜单干不了这些。
+      moreMenu.DropDownItems.Add(MakeMenuItem("Agent 列表（派活给谁）…", AgentListRequested));
     }
 
     /// 「设置」子菜单：主 agent 用哪个模型、工作 agent 用哪档权限。
@@ -1933,6 +1881,8 @@ $logPath = Join-Path $logDir ("observe-{0}.jsonl" -f (Get-Date -Format 'yyyyMMdd
 . (Join-Path $PSScriptRoot 'ledger.ps1')
 # 设置窗口：schema 驱动的图形界面，一个窗口改完 config.json 里的每个参数。见 settings-window.ps1 头部。
 . (Join-Path $PSScriptRoot 'settings-window.ps1')
+# 「派活给谁」窗口：选一条 / 新建一条 / 删一条。见 agents-window.ps1 头部。
+. (Join-Path $PSScriptRoot 'agents-window.ps1')
 
 # ---------------------------------------------------------------------------
 # 采集
@@ -3445,22 +3395,6 @@ $probe3 = New-Object DesktopGuide.PetForm -ArgumentList @([double]$script:UiScal
   if ($more) { Write-Output ("  「更多」{0} 项" -f $more.DropDownItems.Count) }
   if ($setm) { Write-Output ("  「设置」{0} 项" -f $setm.DropDownItems.Count) }
   Write-Output ("  顶层文字：" + (($cm.Items | ForEach-Object { if ($_.Text) { $_.Text } else { '—' } }) -join ' / '))
-  Write-Output '=== 5q. Agent 列表（派活给谁）==='
-  # 子菜单：第一条永远是「每次新建」，最后一条是「在气泡里看进度…」，中间是按状态标好的 agent。
-  $mprobe.SetAgentList(@('agent-aaaa', 'agent-bbbb'), @('● agent-aaaa · 改 docx', '✓ agent-bbbb · 查余额'), 'agent-bbbb')
-  $labels = $mprobe.AgentMenuLabels()
-  foreach ($l in $labels) { Write-Output "  $l" }
-  $okAgent = @(
-    ($labels.Count -eq 6)                                   # 每次新建 + 分隔 + 两条 + 分隔 + 看进度
-    ($labels[0] -eq '每次新建（默认）')
-    ($labels[2] -eq '● agent-aaaa · 改 docx')
-    ($labels[3] -eq '[x] ✓ agent-bbbb · 查余额')            # 当前派活目标带对勾
-    ($labels[5] -eq '在气泡里看进度…')
-  )
-  Write-Output ("  5q {0}/5 项通过（选了 agent-bbbb → 菜单里 [x] 落在它身上）" -f @($okAgent | Where-Object { $_ }).Count)
-  $mprobe.SetAgentList(@(), @(), '')
-  $labels2 = $mprobe.AgentMenuLabels()
-  Write-Output ("  清空后：{0} 条（{1}）；「每次新建」被勾上 = {2}" -f $labels2.Count, ($labels2 -join ' / '), ($labels2[0] -eq '[x] 每次新建（默认）'))
   $mprobe.Dispose()
   Write-Output '=== 5o. 气泡页脚（余额 / 上次调用 / 今天）==='
   $fprobe = New-Object DesktopGuide.PetForm -ArgumentList @([double]$script:UiScale, [string]$cfg.fontFamily, [double]$cfg.fontSize)
@@ -3715,6 +3649,19 @@ $probe3 = New-Object DesktopGuide.PetForm -ArgumentList @([double]$script:UiScal
   # 名字写错的话桌宠会直接起不来，而这种错只有到运行时才暴露。
   $swEvt = [DesktopGuide.PetForm].GetMethod('add_SettingsRequested')
   Write-Output ("  事件接线：add_SettingsRequested 存在 = {0}" -f ($null -ne $swEvt))
+  Write-Output '=== 5s. Agent 列表窗口（派活给谁：选 / 新建 / 删）==='
+  # 三件事一起盯：① 逻辑自检（在临时目录里跑"新建 / 设目标 / 删除"，见 agents-window.ps1）
+  # ② 真窗口离屏渲染一张图（版面用眼睛核）③ 事件接线 —— 自检在"挂菜单事件"那段代码**之前**
+  #    就 exit 了，事件名写错的话桌宠会直接起不来，那种错只有运行时才暴露。
+  try {
+    . (Join-Path $PSScriptRoot 'dsh-agents.ps1')
+    . (Join-Path $PSScriptRoot 'agents-window.ps1')
+    [void](Test-DgAgents -Root $PSScriptRoot -UiScale $script:UiScale)
+    [void](Show-DgAgents -Root $PSScriptRoot -UiScale $script:UiScale -RenderTo $runDir -SelfTest)
+  } catch { Write-Output "  ✘ agents 窗口自检失败：$($_.Exception.Message)" }
+  $evtA = [DesktopGuide.PetForm].GetMethod('add_AgentListRequested')
+  $evtW = [DesktopGuide.PetForm].GetMethod('add_WakeRequested')
+  Write-Output ("  事件接线：add_AgentListRequested = {0}｜add_WakeRequested = {1}" -f ($null -ne $evtA), ($null -ne $evtW))
   Write-Output '=== 6. 朗读（TTS）==='
   # -Check 只列音色，不出声（自检不该在半夜突然开口）。
   [void](Initialize-Tts -Config $cfg)
@@ -3851,6 +3798,8 @@ try {
   $reaped = Clear-OrphanDsh -RunDir $runDir -OlderThanMinutes 15
   if ($reaped -gt 0) { Write-Host "清理了 $reaped 个占着会话的孤儿 dsh 进程" }
   Write-Host ("agent 引擎已就绪：模型 {0} 个，权限 {1} 档" -f @($script:AgentCfg.models).Count, @($script:AgentCfg.access).Count)
+  # 派活目标（「Agent 列表」窗口选的）：存在 run\dispatch.json，窗口一改这里就能读到
+  $script:dispatchAgent = [string](Get-DispatchTarget -RunDir $runDir)
 } catch {
   Write-Warning "agent 引擎未加载：$($_.Exception.Message)"
 }
@@ -4051,6 +4000,8 @@ function Start-PetTask {
     # ---- 派活给指定的 agent？（更多 → Agent 列表 里选的那条）----
     # 选了一条就：① 更新它那条记录（列表里不再每次新增）② 沿用它的模型 / 权限
     # ③ 接着它的 sessionId 跑 —— 上下文不断，"刚才那个文件"这种指代才有意义。
+    # 目标是从 run\dispatch.json **现读**的：窗口里改完立刻生效，不用重启桌宠。
+    $script:dispatchAgent = [string](Get-DispatchTarget -RunDir $runDir)
     $reuseId = ''; $sid = ''; $reusing = $false
     if ($script:dispatchAgent) {
       $target = @(Update-AgentStatus -RunDir $runDir) | Where-Object { $_.id -eq $script:dispatchAgent } | Select-Object -First 1
@@ -4512,24 +4463,19 @@ function Show-MainAgentSession {
   $pet.ShowMessage(($lines -join "`n"), 0)
 }
 
-# ---- 「更多 → Agent 列表」子菜单（派活给谁）----
-# 以前这一项只在气泡里列个清单（只读）。现在它是**子菜单**：点其中一条，
-# 之后的语音 / 打字 / 拖文件派活都交给它 —— 并且接着它的会话跑，上下文不断。
-function Update-AgentMenu {
-  <# 菜单每次弹出前刷新：agent 一直在变，子菜单得跟着变。
-      标签里的 ●/✓/✗ 是状态，前面带对勾的那条就是当前派活目标。 #>
-  try {
-    $agents = @(Update-AgentStatus -RunDir $runDir)
-    $recent = @($agents | Select-Object -Last 6)
-    $ids = @(); $labels = @()
-    foreach ($a in $recent) {
-      $mark = switch ($a.status) { 'running' { '●' } 'done' { '✓' } 'failed' { '✗' } default { '○' } }
-      $ids += [string]$a.id
-      $labels += ("{0} {1} · {2}" -f $mark, $a.id, (Shorten-Text $a.task 14))
-    }
-    $pet.SetAgentList([string[]]$ids, [string[]]$labels, [string]$script:dispatchAgent)
-  } catch {
-    try { $pet.SetAgentList([string[]]@(), [string[]]@(), [string]$script:dispatchAgent) } catch { }
+# ---- 「派活给谁」：窗口里选一条 / 新建一条 / 删一条（界面在 agents-window.ps1）----
+function Edit-DispatchTarget {
+  <# 打开窗口；关掉后把目标重新读一遍（窗口可能选/新建/删了）。
+     目标存在 run\dispatch.json —— 桌宠每轮派活前会重读，所以不用重启。 #>
+  [void](Show-DgAgents -Root $PSScriptRoot -UiScale $script:UiScale -OwnerForm $pet)
+  $script:dispatchAgent = [string](Get-DispatchTarget -RunDir $runDir)
+  Set-DispatchTarget -RunDir $runDir -AgentId $script:dispatchAgent   # 顺便把时间戳刷新一下
+  if ($script:dispatchAgent) {
+    Add-Interaction 'dispatch_target' $script:dispatchAgent
+    $pet.ShowMessage("之后的派活都交给 $($script:dispatchAgent)`n（接着它的会话跑，上下文不断）", [int]$cfg.showSeconds)
+  } else {
+    Add-Interaction 'dispatch_target' 'new'
+    $pet.ShowMessage('之后的派活每次都新建一个 agent。', [int]$cfg.showSeconds)
   }
 }
 
@@ -4586,7 +4532,6 @@ $pet.Add_Moved({
 
 $pet.Add_MenuOpened({
     Note-UserAction 'menu'
-    Update-AgentMenu   # agent 列表是动态的，每次弹菜单前刷一遍
   })
 
 # 屏幕开关 / 锁屏 / 睡眠 → 进待机；恢复 → 醒过来重新看一眼
@@ -4596,23 +4541,7 @@ $pet.Add_StandbyChanged({
 
 $pet.Add_AgentListRequested({
     Add-Interaction 'agents_list'
-    Show-AgentList
-  })
-
-# 「派活给谁」：在 Agent 列表里点一条（或点「每次新建」）
-$pet.Add_AgentPickRequested({
-    try {
-      $script:dispatchAgent = [string]$pet.LastAgentPicked
-      Save-PetState
-      Update-AgentMenu
-      if ($script:dispatchAgent) {
-        Add-Interaction 'dispatch_target' $script:dispatchAgent
-        $pet.ShowMessage("好，之后的派活都交给 $($script:dispatchAgent)`n（接着它的会话跑，上下文不断）", [int]$cfg.showSeconds)
-      } else {
-        Add-Interaction 'dispatch_target' 'new'
-        $pet.ShowMessage('好，之后每次都新建一个 agent。', [int]$cfg.showSeconds)
-      }
-    } catch { }
+    try { Edit-DispatchTarget } catch { $pet.ShowMessage("打开失败了：$($_.Exception.Message)", [int]$cfg.showSeconds) }
   })
 
 # 「我是醒着的」：待机卡住（系统通知漏发）时的手动出口 —— 不用重启进程

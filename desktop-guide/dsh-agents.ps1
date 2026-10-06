@@ -589,3 +589,75 @@ function Get-AgentResult {
   }
   return $last
 }
+
+# ---------------------------------------------------------------------------
+# 派活目标（run\dispatch.json）—— 「Agent 列表」窗口与桌宠共用同一份状态
+#
+# 为什么单独一个文件、而不是塞进 run\pet.json：pet.json 是桌宠**自己**在写的（拖动、
+# 开关、静音都会存一次），窗口改完可能被下一次拖动覆盖掉。独立文件 = 两边各写各的，
+# 桌宠每轮派活前重读一次，窗口一改就立刻生效，不用重启。
+# ---------------------------------------------------------------------------
+function Get-DispatchTarget {
+  param([string]$RunDir)
+  $f = Join-Path $RunDir 'dispatch.json'
+  if (-not (Test-Path -LiteralPath $f)) { return '' }
+  try { return [string]((Get-Content -LiteralPath $f -Raw -Encoding UTF8 | ConvertFrom-Json).agent) } catch { return '' }
+}
+
+function Set-DispatchTarget {
+  param([string]$RunDir, [string]$AgentId = '')
+  $f = Join-Path $RunDir 'dispatch.json'
+  try {
+    ([pscustomobject]@{ agent = [string]$AgentId; at = (Get-Date).ToString('o') } | ConvertTo-Json -Compress) |
+      Set-Content -LiteralPath $f -Encoding UTF8
+  } catch { }
+}
+
+function New-DshAgentSlot {
+  <#
+    建一条「空 agent」（status=ready）：还没派过活，但可以当派活目标。
+    新建的不是进程，是一个**位置** —— 在窗口里挑好模型和权限，之后的派活都落在它身上。
+  #>
+  param(
+    [string]$RunDir,
+    [string]$LogDir,
+    [string]$ModelName,
+    [string]$AccessName,
+    [string]$Note = ''
+  )
+  $id = 'agent-' + ([guid]::NewGuid().ToString('N').Substring(0, 8))
+  $rec = [pscustomobject]@{
+    id        = $id
+    task      = $(if ($Note) { $Note } else { '(还没派活)' })
+    model     = $ModelName
+    access    = $AccessName
+    pid       = $null
+    startedAt = (Get-Date).ToString('o')
+    endedAt   = $null
+    status    = 'ready'
+    exitCode  = $null
+    logFile   = (Join-Path $LogDir ("$id.jsonl"))
+    patch     = ''
+    # 稳定会话名：第一次派活时由 DSH 建出来，之后一直用它 → 上下文连续
+    sessionId = ('pet-task-' + ($id -replace '^agent-', ''))
+  }
+  $agents = @(Get-Agents -RunDir $RunDir)
+  $agents += $rec
+  Save-Agents -RunDir $RunDir -Agents $agents
+  return $rec
+}
+
+function Remove-DshAgentRecord {
+  <# 从列表里删掉一条记录。跑着的先停（不然会有个没人管的进程）。日志文件留着，便于回溯。 #>
+  param([string]$RunDir, [string]$Id)
+  $agents = @(Get-Agents -RunDir $RunDir)
+  $target = $agents | Where-Object { $_.id -eq $Id } | Select-Object -First 1
+  if (-not $target) { return $false }
+  if ($target.status -eq 'running') {
+    try { if ($target.pid) { taskkill /PID $target.pid /T /F | Out-Null } } catch { }
+  }
+  $keep = @($agents | Where-Object { $_.id -ne $Id })
+  Save-Agents -RunDir $RunDir -Agents $keep
+  if ((Get-DispatchTarget -RunDir $RunDir) -eq $Id) { Set-DispatchTarget -RunDir $RunDir -AgentId '' }
+  return $true
+}
