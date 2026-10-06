@@ -535,6 +535,10 @@ namespace DesktopGuide {
     bool suppressClick;   // 双击的第二次抬起不要再当成一次「问一句」
     Point dragAnchor;
     bool hover;
+    /** 常驻气泡右上角的 × 是否被悬停（只为了画得亮一点） */
+    bool closeHot;
+    /** 上一次画出来的 × 位置：命中判断用它，保证"画在哪、点在哪"是同一个矩形 */
+    Rectangle closeRect = Rectangle.Empty;
     Bitmap surface;
     Image petImage;   // 有现成角色图就画图，没有就退回代码画的小圆脸
 
@@ -870,6 +874,8 @@ namespace DesktopGuide {
       int hb = -1;
       for (int i = 0; i < buttonRects.Length; i++) if (buttonRects[i].Contains(e.Location)) { hb = i; break; }
       if (hb != hotButton) { hotButton = hb; Render(); }
+      bool hc = CloseVisible() && CloseRect().Contains(e.Location);
+      if (hc != closeHot) { closeHot = hc; Render(); }
       if (dragging) {
         if (Math.Abs(e.X - dragAnchor.X) > 3 || Math.Abs(e.Y - dragAnchor.Y) > 3) {
           moved = true;
@@ -893,6 +899,13 @@ namespace DesktopGuide {
         if (ContextMenuStrip != null && ContextMenuStrip.Visible) { ContextMenuStrip.Close(); base.OnMouseUp(e); return; }
         if (moved) { Fire(Moved); }
         else {
+          // 常驻气泡右上角的 ×：点它就是「收起气泡」，和右键菜单那条走同一个事件
+          if (CloseVisible() && CloseRect().Contains(e.Location)) {
+            ClearMessage();
+            Fire(CollapseRequested);
+            base.OnMouseUp(e);
+            return;
+          }
           // 有待选选项时，点的是选项
           if (OptionPending()) {
             for (int oi = 0; oi < optionRects.Length; oi++) {
@@ -996,6 +1009,8 @@ namespace DesktopGuide {
 
     /// 有提问/审批正在等用户回答 —— 外层据此决定要不要让进度播报/收起让路。
     public bool PromptPending { get { return OptionPending(); } }
+    /** 自检用：常驻气泡右上角那个 × 在哪儿（不显示时是空矩形）。 */
+    public Rectangle CloseButtonRect { get { return CloseVisible() ? CloseRect() : Rectangle.Empty; } }
 
     /// 收起提问：文字和选项一起清掉。
     /// 只清文字会留下还能点的按钮（气泡没了按钮还在），所以必须走这里。
@@ -1524,7 +1539,7 @@ namespace DesktopGuide {
 
       TextRenderer.DrawText(
         g, message, bubbleFont,
-        new Rectangle(rect.X + 10, rect.Y + BubblePadY, rect.Width - 20, msgH),
+        new Rectangle(rect.X + 10, rect.Y + BubblePadY, rect.Width - 20 - CloseReserveW(), msgH),
         Color.FromArgb(31, 35, 42),
         TextFormatFlags.WordBreak | TextFormatFlags.NoPrefix);
       // 最下方那行小字：余额 / 上次调用花了多少。比正文小一号、颜色更淡。
@@ -1536,6 +1551,18 @@ namespace DesktopGuide {
             Color.FromArgb(140, 148, 162),
             TextFormatFlags.WordBreak | TextFormatFlags.NoPrefix);
       }
+      // 常驻气泡的 ×（画在最后，保证不被文字盖住）
+      if (CloseVisible()) {
+        closeRect = CloseRect();
+        using (var b = new SolidBrush(Color.FromArgb(closeHot ? 48 : 18, 20, 26, 38))) g.FillEllipse(b, closeRect);
+        using (var p = new Pen(Color.FromArgb(closeHot ? 205 : 135, 62, 72, 88), Math.Max(1.5f, (float)S(2)))) {
+          int m = S(6);
+          g.DrawLine(p, closeRect.Left + m, closeRect.Top + m, closeRect.Right - m - 1, closeRect.Bottom - m - 1);
+          g.DrawLine(p, closeRect.Right - m - 1, closeRect.Top + m, closeRect.Left + m, closeRect.Bottom - m - 1);
+        }
+      } else {
+        closeRect = Rectangle.Empty;
+      }
     }
 
     /// 有选项时气泡要多留的高度（几行按钮 + 行间距）；没有选项就是 0。
@@ -1545,9 +1572,27 @@ namespace DesktopGuide {
       return optionRows * BtnH + (optionRows - 1) * optionGapY + S(6);
     }
 
+    // ---- 常驻气泡的关闭按钮 ----
+    // 卡片（「看它判过什么」）这类消息没有自动消失时间，以前只能右键 →「收起气泡」。
+    // 现在在这类气泡的右上角画一个 ×：点它就是收起，和菜单那条走同一个事件。
+    bool CloseVisible() {
+      if (OptionPending() || string.IsNullOrEmpty(message)) return false;
+      if (messageUntil != DateTime.MaxValue) return false;    // 会自动消失的气泡不用 ×，免得挡字
+      return state == "speaking" || state == "silent";        // 排除 thinking / listening 这些过渡态
+    }
+
+    Rectangle CloseRect() {
+      var r = BubbleRect();
+      int d = S(18);
+      return new Rectangle(r.Right - d - S(9), r.Y + S(8), d, d);
+    }
+
+    /// × 要占掉的正文宽度（按钮本身 + 一点间距）；不显示时返回 0
+    int CloseReserveW() { return CloseVisible() ? S(18) + S(12) : 0; }
+
     /// 气泡矩形：DrawBubble 和 LayoutButtons 共用，保证按钮正好落在气泡内部。
     Rectangle BubbleRect() {
-      int textW = Width - 2 * BubblePadX - 20;
+      int textW = Width - 2 * BubblePadX - 20 - CloseReserveW();
       int textH = 0;
       if (!string.IsNullOrEmpty(message)) {
         var measured = TextRenderer.MeasureText(message, bubbleFont, new Size(textW, 2000), TextFormatFlags.WordBreak);
@@ -3090,6 +3135,30 @@ $probe3 = New-Object DesktopGuide.PetForm -ArgumentList @([double]$script:UiScal
   $probe3.SavePreview($out3)
   Write-Output ("卡片 {0}x{1}，预览：{2}" -f $probe3.Width, $probe3.Height, $out3)
   $probe3.Dispose()
+  Write-Output '=== 5p. 常驻气泡的关闭按钮（×）==='
+  # 卡片这种"不会自己消失"的气泡，右上角要有一个 ×；会自己消失的气泡和
+  # 正在等回答的选项气泡都不该有（前者没用，后者一收就把问题弄丢了）。
+  $probeClose = New-Object DesktopGuide.PetForm -ArgumentList @([double]$script:UiScale, [string]$cfg.fontFamily, [double]$cfg.fontSize)
+  $null = $probeClose.Handle
+  $probeClose.ShowMessage('常驻消息（判断记录卡片就是这样）', 0)
+  $cw = $probeClose.Width
+  $cCard = $probeClose.CloseButtonRect
+  $probeClose.ShowMessage('3 秒后自己消失的消息', 3)
+  $cTimed = $probeClose.CloseButtonRect
+  $probeClose.ShowPrompt('要我装对应的 skill 吗？', @('好', '不用'), 5)
+  $cOpt = $probeClose.CloseButtonRect
+  $probeClose.Dispose()
+  $closeOk = [ordered]@{
+    '卡片（常驻）有 ×'      = ($cCard.Width -gt 0)
+    '× 不出气泡右边界'      = ($cCard.Right -le $cw - 4)
+    '× 落在气泡顶部区域'    = ($cCard.Top -lt (24 * $script:UiScale))
+    '自动消失的气泡没有 ×'  = ($cTimed.Width -eq 0)
+    '等回答的选项气泡没有 ×' = ($cOpt.Width -eq 0)
+  }
+  foreach ($k in $closeOk.Keys) { Write-Output ("  {0} {1}" -f $(if ($closeOk[$k]) { '✔' } else { '✘' }), $k) }
+  Write-Output ("  × {0}x{1} @({2},{3})｜气泡右侧留白 {4}px｜{5}/{6} 项通过" -f `
+    $cCard.Width, $cCard.Height, $cCard.X, $cCard.Y, ($cw - $cCard.Right),
+    @($closeOk.Values | Where-Object { $_ }).Count, $closeOk.Count)
   Write-Output '=== 5b. 选项交互预览 ==='
   $probe4 = New-Object DesktopGuide.PetForm -ArgumentList @([double]$script:UiScale, [string]$cfg.fontFamily, [double]$cfg.fontSize)
   $null = $probe4.Handle
@@ -4132,6 +4201,16 @@ function Show-AgentList {
 }
 
 $pet.Add_AskRequested({
+    # 它正在朗读时，这一下不是「再问一句」，而是「别说了」—— 打断优先，不再叠一次判断。
+    # 为什么不做成"先停再问"：Edge 合成要 3–5 秒，用户点下去就是想让它闭嘴，
+    # 这时再起一轮判断只会在几秒后冒出第二段话，等于没打断。
+    if (Test-TtsSpeaking) {
+      Note-UserAction 'interrupt'
+      Add-Interaction 'interrupt' 'click'
+      [void](Stop-Tts)
+      $pet.ShowMessage('（不说了）', 3)
+      return
+    }
     Note-UserAction 'ask'
     Add-Interaction 'ask' $pet.LastAskSource
     try { Start-Advisor } catch { Write-Warning "触发失败：$($_.Exception.Message)" }
@@ -4364,6 +4443,12 @@ $pet.Add_LongPressStarted({
         return
       }
       Add-Interaction 'voice' 'start'
+      # 说话即打断：它还在念上一条时就先闭嘴 —— 否则朗读声会盖住用户的话，
+      # 也会被录进去干扰识别。
+      if (Test-TtsSpeaking) {
+        [void](Stop-Tts)
+        Add-Interaction 'interrupt' 'voice'
+      }
       [void](Start-SttRecording)
       $pet.ShowListening("正在听…（松开结束，最多 $([int]$script:Stt.MaxSeconds) 秒）")
       $sttTimer.Start()                # 用来在超过上限时自动停止
