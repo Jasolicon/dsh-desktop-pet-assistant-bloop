@@ -282,6 +282,10 @@ function Get-DgSettingsSchema {
          Help='信号没来但连续抓不到屏这么多次 → 自动进待机。防的是远程会话断开时一直刷警告。' }
       @{ Key='standbyProbeSeconds'; Label='待机时多久试一次'; Kind='number'; Min=5; Max=600; Step=5; Decimals=0; Def=30; Unit='秒'
          Help='待机中每隔这么久试探一次能不能恢复（黑屏 / 锁屏 / 睡眠本身走系统信号，不用试探）。' }
+      @{ Key='standbyProbeIdleSeconds'; Label='自愈探测的「有人在用」'; Kind='number'; Min=0; Max=3600; Step=10; Decimals=0; Def=60; Unit='秒'
+         Help='待机自愈：距上次键鼠输入小于这么多秒、且没锁屏、且抓得到屏 —— 三条都成立就当信号漏发了，自己醒过来。防的是系统通知漏发后桌宠一直以为在待机、手里一张截图都没有。0 = 关掉这条。' }
+      @{ Key='shotStaleSeconds'; Label='截图多久算过期'; Kind='number'; Min=1; Max=600; Step=5; Decimals=0; Def=30; Unit='秒'
+         Help='最近一张截图超过这么久就当作「没有截图」：这时提示词会**禁止**模型照窗口标题脑补操作步骤，只能说"我还没看清"。' }
     )
   })
 
@@ -310,17 +314,44 @@ function Get-DgSettingsSchema {
 # 为什么不靠闭包抓局部变量：WinForms 的事件处理器里取外层局部变量不可靠（这个仓库踩过，
 # 见 DesktopGuide.ps1 里 TaskInput 的注释），所以统一走 Tag。
 # ---------------------------------------------------------------------------
+function Get-DgUiScale {
+  <#
+    DPI 缩放（1.0 = 96dpi）。
+
+    为什么不直接问 Graphics.FromHwnd(0).DpiX：那个值取决于**进程此刻的 DPI 感知状态**，
+    而那是 WinForms 初始化时顺带设的 —— 同一台机器、同一份代码实测有时给 96、有时给 192，
+    窗口大小直接差一倍。桌宠自己是在最开头显式调 SetProcessDpiAwarenessContext(PER_MONITOR_AWARE_V2)
+    再 GetDpiForSystem，这里照做（桌宠进程里已经设过，重复调用无副作用）。
+  #>
+  if ('DesktopGuide.Dpi' -as [type]) {
+    # 被桌宠 Dot-Source 时直接用它的，免得两处实现漂移
+    return [Math]::Max(1.0, [double]([DesktopGuide.Dpi]::Scale()) / 96.0)
+  }
+  if (-not ('DgSettings.Dpi' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+namespace DgSettings {
+  public static class Dpi {
+    [DllImport("user32.dll", SetLastError = true)] public static extern bool SetProcessDpiAwarenessContext(IntPtr value);
+    [DllImport("user32.dll")] public static extern uint GetDpiForSystem();
+    public static readonly IntPtr PER_MONITOR_AWARE_V2 = new IntPtr(-4);
+    public static uint Scale() {
+      try { SetProcessDpiAwarenessContext(PER_MONITOR_AWARE_V2); } catch { }
+      try { return GetDpiForSystem(); } catch { return 96; }
+    }
+  }
+}
+'@
+  }
+  return [Math]::Max(1.0, [double]([DgSettings.Dpi]::Scale()) / 96.0)
+}
+
 function New-DgSettingsContext {
   param([string]$ConfigPath, [string]$Root = '', [double]$UiScale = 0, [string]$RenderTo = '')
 
   if (-not $Root) { $Root = $PSScriptRoot }
-  if ($UiScale -le 0) {
-    try {
-      $g = [System.Drawing.Graphics]::FromHwnd([intptr]::Zero)
-      $UiScale = [Math]::Max(1.0, [double]$g.DpiX / 96.0)
-      $g.Dispose()
-    } catch { $UiScale = 1.0 }
-  }
+  if ($UiScale -le 0) { $UiScale = Get-DgUiScale }
 
   $origin = [ordered]@{}
   if (Test-Path -LiteralPath $ConfigPath) {
