@@ -1,5 +1,5 @@
 ﻿# 泡泡 · Bloop —— 桌面常驻的主动式助手（原「随时指导」桌宠）
-# Copyright (c) 2026 Jasolicon · 许可：PolyForm Noncommercial License 1.0.0（仓库根目录 LICENSE）
+# Copyright (c) 2026 https://github.com/Jasolicon · 许可：PolyForm Noncommercial License 1.0.0（仓库根目录 LICENSE）
 # SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 
 # advisor-minimax —— 用 MiniMax 当「随时指导」的大脑（可带截图）
