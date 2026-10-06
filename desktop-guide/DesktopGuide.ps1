@@ -504,6 +504,15 @@ namespace DesktopGuide {
     bool longPressFired;
     /** 长按判定阈值（毫秒）。低于这个时长的按住仍然算普通点击。 */
     public int LongPressMs = 400;
+    /** 暂停标志（托盘里「暂停（停止观察）」）。为 true 时在**头顶左上角**画一个小暂停标。 */
+    bool pausedNow;
+    Rectangle pauseRect = Rectangle.Empty;
+    public bool PausedNow {
+      get { return pausedNow; }
+      set { if (pausedNow != value) { pausedNow = value; Render(); } }
+    }
+    /** 自检用：暂停标画在哪儿（没暂停就是空矩形）。 */
+    public Rectangle PauseMarkBox { get { return pauseRect; } }
 
     // 逻辑尺寸（96 DPI 下的像素），实际使用时会乘 uiScale
     readonly double uiScale;
@@ -1254,6 +1263,7 @@ namespace DesktopGuide {
         DrawGlow(g, slot);
         g.InterpolationMode = InterpolationMode.HighQualityBicubic;
         g.DrawImage(petImage, dest);
+        DrawPauseMark(g, dest);
         DrawButtons(g);
         return;
       }
@@ -1347,6 +1357,7 @@ namespace DesktopGuide {
             g.DrawArc(pen, bodyRect.Right - 6 + i * 5, bodyRect.Y + bodyRect.Height / 2 - 12 - i * 3, 16, 24 + i * 6, -60, 120);
       }
 
+      DrawPauseMark(g, bodyRect);
       DrawButtons(g);
     }
 
@@ -1525,6 +1536,32 @@ namespace DesktopGuide {
       if (i == 0) return Color.FromArgb(a, 47, 127, 208);
       return Color.FromArgb(a, 120, 128, 142);
     }
+    /// 暂停标志：**头顶左上角**一个圆角胶囊 + 两道竖杠。
+    /// anchor = 角色图实际占的矩形（或代码绘制时的身体范围），标就贴它的左上角内侧。
+    /// 描一圈白边是为了在深色背景 / 深色头发上也看得清 —— 和托盘里那个"已暂停"是同一个状态。
+    void DrawPauseMark(Graphics g, Rectangle anchor) {
+      if (!pausedNow) { pauseRect = Rectangle.Empty; return; }
+      int h = S(20), w = S(22);
+      var rect = new Rectangle(anchor.Left + S(4), anchor.Top + S(2), w, h);
+      pauseRect = rect;
+      using (var path = new GraphicsPath()) {
+        int r = h;
+        path.AddArc(rect.X, rect.Y, r, r, 90, 180);
+        path.AddArc(rect.Right - r, rect.Y, r, r, 270, 180);
+        path.CloseFigure();
+        using (var b = new SolidBrush(Color.FromArgb(216, 72, 82, 100))) g.FillPath(b, path);
+        using (var p = new Pen(Color.FromArgb(240, 255, 255, 255), Math.Max(1f, (float)S(2)))) g.DrawPath(p, path);
+      }
+      int bw = Math.Max(2, S(3)), bh = Math.Max(6, S(9));
+      int gap = Math.Max(2, S(3));
+      int x0 = rect.X + (rect.Width - (2 * bw + gap)) / 2;
+      int y0 = rect.Y + (rect.Height - bh) / 2;
+      using (var wb = new SolidBrush(Color.FromArgb(248, 255, 255, 255))) {
+        g.FillRectangle(wb, x0, y0, bw, bh);
+        g.FillRectangle(wb, x0 + bw + gap, y0, bw, bh);
+      }
+    }
+
     void DrawBadgeOld(Graphics g, Rectangle anchor) {
       if (SilentCount <= 0) return;
       string badge = SilentCount > 99 ? "99+" : SilentCount.ToString();
@@ -3308,6 +3345,30 @@ $probe3 = New-Object DesktopGuide.PetForm -ArgumentList @([double]$script:UiScal
   Write-Output ("  × {0}x{1} @({2},{3})｜气泡右侧留白 {4}px｜{5}/{6} 项通过" -f `
     $cCard.Width, $cCard.Height, $cCard.X, $cCard.Y, ($cw - $cCard.Right),
     @($closeOk.Values | Where-Object { $_ }).Count, $closeOk.Count)
+  Write-Output '=== 5t. 暂停标志（托盘暂停 → 头顶左上角）==='
+  # 托盘图标只有鼠标悬上去才看得到状态，所以桌面上也要看得见：暂停时在头顶左上角画一个小暂停标。
+  $pprobe = New-Object DesktopGuide.PetForm -ArgumentList @([double]$script:UiScale, [string]$cfg.fontFamily, [double]$cfg.fontSize)
+  $null = $pprobe.Handle
+  if ($img) { $pprobe.SetImage($img) }
+  $pNone = $pprobe.PauseMarkBox
+  $pprobe.PausedNow = $true
+  $pBox = $pprobe.PauseMarkBox
+  $outP = Join-Path $runDir 'pet-preview-paused.png'
+  $pprobe.SavePreview($outP)
+  $pW = $pprobe.Width; $pH = $pprobe.Height
+  $pprobe.Dispose()
+  $pauseOk = [ordered]@{
+    '没暂停就不画'        = ($pNone.Width -eq 0)
+    '暂停了就画出来'      = ($pBox.Width -gt 0)
+    '在左半边'            = ($pBox.Left -lt [int]($pW / 2))
+    '在上半边（头顶）'    = ($pBox.Top -lt [int]($pH / 2))
+    '不出窗口边界'        = ($pBox.Right -le $pW -and $pBox.Bottom -le $pH)
+  }
+  foreach ($k in $pauseOk.Keys) { Write-Output ("  {0} {1}" -f $(if ($pauseOk[$k]) { '✔' } else { '✘' }), $k) }
+  Write-Output ("  暂停标 {0}x{1} @({2},{3})｜窗口 {4}x{5}｜{6}/{7} 项通过" -f `
+    $pBox.Width, $pBox.Height, $pBox.X, $pBox.Y, $pW, $pH,
+    @($pauseOk.Values | Where-Object { $_ }).Count, $pauseOk.Count)
+  Write-Output ("  暂停外观预览：{0}" -f $outP)
   Write-Output '=== 5b. 选项交互预览 ==='
   $probe4 = New-Object DesktopGuide.PetForm -ArgumentList @([double]$script:UiScale, [string]$cfg.fontFamily, [double]$cfg.fontSize)
   $null = $probe4.Handle
@@ -5035,6 +5096,7 @@ $sampleTimer.Start()
 #     那些是"你要它做的"，不是"它自己多事"。把 agent 回报也静音会让你以为活没跑。
 # ---------------------------------------------------------------------------
 $script:paused = $false
+try { $pet.PausedNow = $false } catch { }
 
 function Set-PetPaused {
   param([bool]$Paused)
@@ -5052,6 +5114,8 @@ function Set-PetPaused {
       }
     } catch { }
   }
+  # 头顶左上角画个暂停标 —— 托盘图标只有鼠标悬上去才看得出状态，桌面上得看得见
+  try { $pet.PausedNow = $Paused } catch { }
   try { Refresh-PetTray } catch { }
   try {
     $pet.ShowMessage($(if ($Paused) { '（已暂停：不再自己观察和开口。要我说话随时点我）' } else { '（继续了）' }), 6)
