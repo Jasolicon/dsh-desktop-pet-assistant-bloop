@@ -1964,6 +1964,13 @@ $script:lastUserAt = [datetime]::MinValue   # 用户最后一次动桌宠的时�
 # 之后的语音 / 打字 / 拖文件派活都更新在这条记录上，并且接着它的会话跑（见 Start-PetTask）。
 # 存在 run\pet.json 的 dispatchAgent 字段里，重启后还在。
 $script:dispatchAgent = ''
+# 上次是暂停着关掉的？在 Load-PetState 里填，在托盘那一段真正生效（见 Initialize-PetTray 之后）。
+# ⚠️ 这两个**必须**在这儿先声明：托盘那段在 Load-PetState **之后**执行，
+# 初始化写在那边会把刚读出来的值覆盖掉（实测踩过：重启后没恢复暂停）。
+$script:pausedAtLoad = $false
+# 暂停状态本身（托盘里那个开关）。**初始化必须在这儿**：真正用到它的地方在文件后段，
+# 如果把 `$script:paused = $false` 写在那边，会把前面刚恢复出来的 true 又覆盖掉（同一个坑踩过两次）。
+$script:paused = $false
 $script:pendingAutoResume = $false          # 自动判断被用户打断过 → 等用户停手后再补一次
 $script:thinking = $false
 $script:suppressShow = $false
@@ -2359,6 +2366,9 @@ $script:capHandle = $null
 $script:capBusy = $false
 $script:capLastMs = 0
 $script:capLastError = ''
+$script:captureFails = 0
+$script:stallLogged = $false
+$script:lastTickError = ''      # 采样/焦点定时器最近一次异常（同类只记一条）
 
 function Reset-CaptureRunspace {
   <# 建一个**常驻** runspace（别每帧重建 —— 那本身要几十毫秒）。
@@ -2686,7 +2696,9 @@ function Try-WakeFromStandby {
 function Sample-Once {
   param([switch]$Force)   # -Force：焦点刚换过，立刻采（并且立刻截图）
   # 待机就什么都别做：不抓屏、不记轨迹、不涨"停留时间"。
-  if ($script:standby) { return }
+  # 暂停同理 —— 这里再挡一道，是因为"暂停"是靠停定时器实现的，而在飞的那一拍 Tick 照样会跑
+  # （实测：暂停着启动时还会记一条 task + 一条 judge_skip）。多这一道闸，暂停就真的什么都不做。
+  if ($script:standby -or $script:paused) { return }
   $fgPid = [DesktopGuide.Native]::ForegroundPid()
   $title = [DesktopGuide.Native]::ForegroundTitle()
   $proc = Get-ProcessNameSafe -ProcessId $fgPid
@@ -2739,11 +2751,34 @@ function Sample-Once {
     $script:capLastError = ''
     $script:captureFails++
     $limit = [int]$(if ($cfg.captureFailLimit) { $cfg.captureFailLimit } else { 3 })
+    # 抓屏失败**要记进日志**：以前只 Write-Warning（窗口是隐藏的，谁也看不到），
+    # 出问题时表现就是"桌宠不再看屏幕了"，而日志里一个字都没有。
+    # 只在每一轮的第一条和最后一条记，免得 0.6 秒一档把日志刷爆。
+    if ($script:captureFails -eq 1 -or $script:captureFails -ge $limit) {
+      Add-Interaction 'capture_fail' ("第 $($script:captureFails)/$limit 次：$capErr")
+    }
     if ($script:captureFails -ge $limit) {
       Enter-Standby -Kind 'capture' -Display "连续 $($script:captureFails) 次抓不到屏幕"
     } else {
       Write-Warning "截图失败（第 $($script:captureFails)/$limit 次）：$capErr"
     }
+  }
+  # ---- 采样停滞看门狗 ----
+  # 正常时 lastShotAt 每个采样周期都会更新。如果它比"当前采样间隔的 6 倍"还旧（至少 60 秒），
+  # 说明后台抓屏线程可能死了 —— 表现就是"桌宠还在，但再也不看屏幕"，而且不像待机那样有信号。
+  # 记一条日志并重建抓屏 runspace（不改状态、不打扰用户，只自救）。
+  $stallAfter = [math]::Max(60, (6 * [double]$prof.sample))
+  if ($script:lastShotAt -ne [datetime]::MinValue -and ((Get-Date) - $script:lastShotAt).TotalSeconds -gt $stallAfter) {
+    $stalled = [int]((Get-Date) - $script:lastShotAt).TotalSeconds
+    if (-not $script:stallLogged) {
+      $script:stallLogged = $true
+      Add-Interaction 'sample_stall' ("$stalled s 没有抓到新画面，重建抓屏线程")
+      try { Reset-CaptureRunspace } catch { }
+    }
+  } elseif ($script:stallLogged) {
+    # 恢复了就清掉标记，下次再停还能记一条
+    $script:stallLogged = $false
+    Add-Interaction 'sample_resume' ''
   }
   # ② 下令抓下一张（也是微秒级；上一张还没抓完就自然跳过这一拍）
   Start-BackgroundCapture
@@ -2906,7 +2941,8 @@ function Start-Advisor {
   param([switch]$Auto)
   $script:advisorStarted = Get-Date
   # 待机中没屏幕可看，别浪费一次模型调用（手动问一句不受此限：用户点得到就说明人醒着）
-  if ($Auto -and $script:standby) { return }
+  # 暂停同理，而且这里必须显式挡：暂停是靠停掉 autoTimer 实现的，在飞的那一拍仍会走到这儿。
+  if ($Auto -and ($script:standby -or $script:paused)) { return }
   # 已经有一轮在跑了 → 不要再起一个。
   # 以前没有这道闸，连点两下会起两个 advisor，第二个会去抢同一个会话的写句柄
   # （"already owned by an active write handle"），留下孤儿 dsh 进程。双击打断要依赖这一点。
@@ -3007,6 +3043,7 @@ function Complete-AdvisorIfDone {
         ((Get-Date) - $script:advisorProc.StartTime).TotalSeconds -gt [double]$cfg.advisorTimeoutSeconds) {
       try { $script:advisorProc.Kill() } catch { }
       $script:thinking = $false
+      Add-Interaction 'judge_timeout' ("$([int]((Get-Date) - $script:advisorProc.StartTime).TotalSeconds)s 没有结果，已杀掉")
       $pet.ShowMessage('（想太久了，先不想了）', [int]$cfg.showSeconds)
     }
     return
@@ -3023,6 +3060,8 @@ function Complete-AdvisorIfDone {
   $text = ConvertTo-PlainText $text
 
   if ([string]::IsNullOrWhiteSpace($text)) {
+    # 判断失败也要留痕：气泡会一闪而过，日志里得能查到"这一轮为什么没结论"
+    Add-Interaction 'judge_error' $(if ([string]::IsNullOrWhiteSpace($err)) { '大脑没有输出' } else { "大脑报错：$err" })
     if (-not $script:autoAsk) {
       $msg = if ([string]::IsNullOrWhiteSpace($err)) { '（大脑没有输出）' } else { "（大脑报错）$err" }
       $pet.ShowMessage($msg, [int]$cfg.showSeconds)
@@ -3097,6 +3136,8 @@ function Save-PetState {
         muted = -not [bool]$pet.TtsEnabled   # 静音开关也记住，重启后不变
         # 派活交给哪条 agent（'' = 每次新建）。在「更多 → Agent 列表」里选。
         dispatchAgent = [string]$script:dispatchAgent
+        # 暂停状态也记住：暂停着的时候重启，别又自己爬起来观察（那会顺手花钱）
+        paused = [bool]$script:paused
       } |
       ConvertTo-Json -Compress) | Set-Content -LiteralPath $petStatePath -Encoding UTF8
   } catch { }
@@ -3119,7 +3160,16 @@ function Get-BubbleFooter {
     if ($l -and $l.Source -ne 'none') {
       $bits += "余额 $(Format-Money $l.Balance $l.Currency)"
       if ($script:lastCallCost -ne $null) { $bits += "上次调用 $(Format-Money ([double]$script:lastCallCost) $l.Currency)" }
-      if ($l.TodayUsage -gt 0) { $bits += "今天 $(Format-Money $l.TodayUsage $l.Currency)" }
+      if ($l.TodayUsage -gt 0) {
+        $today = "今天 $(Format-Money $l.TodayUsage $l.Currency)"
+        # 设了消费上限就把上限一起显示出来 —— 快到线时用户得看得见（到线会自动暂停）
+        $cap = [double]$(if ($cfg.dailySpendCapYuan) { $cfg.dailySpendCapYuan } else { 0 })
+        if ($cap -gt 0) {
+          $today += " / 上限 $(Format-Money $cap $l.Currency)"
+          if ($l.TodayUsage -ge $cap) { $today += '（已到上限）' }
+        }
+        $bits += $today
+      }
     }
   } catch { }
   if ($bits.Count -eq 0) { return '' }
@@ -3129,6 +3179,26 @@ function Get-BubbleFooter {
 function Update-BubbleFooter {
   <# 把页脚同步到窗口上（没变就不重画，省一次 Render）。 #>
   try { $pet.SetFooter((Get-BubbleFooter)) } catch { }
+}
+
+function Test-SpendCap {
+  <#
+    消费上限判据（抽成纯函数，自检里能直接喂数字）。
+    返回 '' = 不用管；返回一句话 = 到了上限，该自动暂停 + 播报。
+    参数：今天花了多少、上限多少（0 或负 = 没设上限）、这一天+这个上限是否已经触发过。
+  #>
+  param([double]$TodayUsage, [double]$CapYuan = 0, [bool]$AlreadyTripped = $false)
+  if ($CapYuan -le 0) { return '' }
+  if ($TodayUsage -lt $CapYuan) { return '' }
+  if ($AlreadyTripped) { return '' }
+  return ("今天的调用已经花到 {0:N2} 元，到上限了（{1:N2}）" -f $TodayUsage, $CapYuan)
+}
+
+function Get-SpendCapKey {
+  <# 「哪一天 + 哪个上限」= 触发记账的 key。跨天、或用户把上限调大，key 就变了 →
+     上限重新武装（否则改成 100 之后它再也不管了）。抽出来是为了自检能验它。 #>
+  param([string]$Day, [double]$CapYuan)
+  return ('{0}|{1:N2}' -f $Day, $CapYuan)
 }
 
 # 自检 / 导出（不需要界面）
@@ -3847,6 +3917,22 @@ $probe3 = New-Object DesktopGuide.PetForm -ArgumentList @([double]$script:UiScal
   $sprobe.Dispose()
   foreach ($k in $styleOk.Keys) { Write-Output ("  {0} {1}" -f $(if ($styleOk[$k]) { '✔' } else { '✘' }), $k) }
   Write-Output ("  5u {0}/{1} 项通过" -f @($styleOk.Values | Where-Object { $_ }).Count, $styleOk.Count)
+  Write-Output '=== 5v. 消费上限（到线自动暂停）==='
+  # 纯函数直接喂数字：① 没到线不管 ② 到线给理由 ③ 没设上限（0）永远不管
+  # ④ 已经为"今天+这个上限"触发过就不再重复（否则每 20 秒暂停一次刷屏）
+  # ⑤ 改了上限 / 跨天 → 重新武装
+  $capOk = @(
+    ((Test-SpendCap -TodayUsage 12.3 -CapYuan 50) -eq '')
+    ((Test-SpendCap -TodayUsage 50 -CapYuan 50) -ne '')
+    ((Test-SpendCap -TodayUsage 999 -CapYuan 0) -eq '')
+    ((Test-SpendCap -TodayUsage 60 -CapYuan 50 -AlreadyTripped $true) -eq '')
+    # 重新武装：key 里带"哪一天 + 哪个上限"，所以改上限或跨天都会让 AlreadyTripped 变回 false
+    ((Get-SpendCapKey -Day '2026-10-06' -CapYuan 50) -eq (Get-SpendCapKey -Day '2026-10-06' -CapYuan 50) -and
+     (Get-SpendCapKey -Day '2026-10-06' -CapYuan 50) -ne (Get-SpendCapKey -Day '2026-10-06' -CapYuan 80) -and
+     (Get-SpendCapKey -Day '2026-10-06' -CapYuan 50) -ne (Get-SpendCapKey -Day '2026-10-07' -CapYuan 50))
+  )
+  Write-Output '  12.3/50 → 不管｜50/50 → 停｜没设上限 → 不管｜已触发过 → 不重复｜改上限/跨天 → 重新武装'
+  Write-Output ("  5v {0}/5 项通过｜当前 config 的 dailySpendCapYuan = {1}" -f @($capOk | Where-Object { $_ }).Count, $cfg.dailySpendCapYuan)
   Write-Output '=== 6. 朗读（TTS）==='
   # -Check 只列音色，不出声（自检不该在半夜突然开口）。
   [void](Initialize-Tts -Config $cfg)
@@ -3952,6 +4038,8 @@ if ($saved -and $saved.x -ne $null) {
   if ($null -ne $saved.muted) { $pet.TtsEnabled = -not [bool]$saved.muted }
   # 上次选好的"派活给谁"也一起恢复（'' = 每次新建）
   if ($saved.PSObject.Properties.Name -contains 'dispatchAgent') { $script:dispatchAgent = [string]$saved.dispatchAgent }
+  # 上次是暂停着关掉的 → 起来之后仍然是暂停（在托盘那一段里真正生效，见 $script:pausedAtLoad）
+  if ($saved.PSObject.Properties.Name -contains 'paused') { $script:pausedAtLoad = [bool]$saved.paused }
 } else {
   $pet.PlaceBottomRight(40)
 }
@@ -5153,7 +5241,12 @@ $sampleTimer.Add_Tick({
         return
       }
       Sample-Once
-    } catch { }
+    } catch {
+      # 采样这一拍炸了：以前是静默 catch —— 出问题时桌宠"就是不动了"，日志里一个字都没有。
+      # 同类错误只记第一条，换了错误再记，免得把日志刷爆。
+      $m = $_.Exception.Message
+      if ($m -ne $script:lastTickError) { $script:lastTickError = $m; Add-Interaction 'tick_error' ("sample: $m") }
+    }
   })
 
 # ---- 焦点/前台切换 = 一次采样触发 ----
@@ -5177,7 +5270,10 @@ $focusTimer.Add_Tick({
       # （比等 30 秒那一拍快得多）。锁屏/显示器关时 Try-WakeFromStandby 会自己拒绝。
       if ($script:standby) { if (-not (Try-WakeFromStandby -Why '前台窗口换了')) { return } }
       Sample-Once -Force      # 换窗口立刻采一次，并且立刻截图
-    } catch { }
+    } catch {
+      $m = $_.Exception.Message
+      if ($m -ne $script:lastTickError) { $script:lastTickError = $m; Add-Interaction 'tick_error' ("focus: $m") }
+    }
   })
 $focusTimer.Start()
 
@@ -5202,12 +5298,48 @@ $ledgerTimer.Add_Tick({
           try { [void](Speak-Text $msg) } catch { }
         }
       }
+      # ---- 消费上限：到了就自动暂停（停掉采样 / 自动判断，不再花新钱）----
+      # 判据走 Test-SpendCap（纯函数，自检里钉着）；触发一次后按"哪一天 + 哪个上限"记 key，
+      # 跨天或用户把上限调大就会重新武装 —— 否则改成 100 之后它再也不管了。
+      if (-not $script:paused) {
+        $lc = Get-LedgerSnapshot
+        if ($lc -and $lc.Source -ne 'none') {
+          $cap = [double]$(if ($cfg.dailySpendCapYuan) { $cfg.dailySpendCapYuan } else { 0 })
+          $key = Get-SpendCapKey -Day ([string]$lc.Day) -CapYuan $cap
+          $capReason = Test-SpendCap -TodayUsage ([double]$lc.TodayUsage) -CapYuan $cap -AlreadyTripped ($script:spendCapTripKey -eq $key)
+          if ($capReason) {
+            $script:spendCapTripKey = $key
+            Add-Interaction 'spend_cap' "$capReason｜key=$key"
+            Set-PetPaused -Paused $true -Reason 'spend-cap'
+            $pet.ShowMessage("（$capReason。我先停下来，不再自己观察。`n想继续：托盘右键「继续」，或把上限调大）", 0)
+          }
+        }
+      }
     } catch { }
   })
 # 先读一次做基线：不然启动后第一拍会把"历史上那次充值"当成刚发生
 try { Update-Ledger -Quiet } catch { }
 $ledgerTimer.Start()
-$sampleTimer.Start()
+
+# 上次是暂停着关掉的（run\pet.json 里 paused=true）→ 起来之后仍然是暂停。
+# 为什么要恢复：暂停的语义是"别自己观察、别花钱"，重启就悄悄恢复观察会很意外。
+# ⚠️ 这里**不调 Set-PetPaused**：那个函数定义在文件更后面（托盘那一段），现在调用会抛
+# "不是 cmdlet" —— 被 catch 吞掉，表现就是"pause 没生效"（实测踩过）。所以这里只做它该做的事，
+# 而且必须在 sampleTimer.Start() **之前**：否则启动先采两拍、还记一条 task 和一条 judge_skip。
+if ($script:pausedAtLoad) {
+  $script:paused = $true
+  try { $pet.PausedNow = $true } catch { }
+  try { $focusTimer.Stop() } catch { }
+  try { $autoTimer.Stop() } catch { }
+  Add-Interaction 'pause' 'restored-from-pet.json'
+  try { Save-PetState } catch { }
+  try { $pet.ShowMessage('（上次是暂停状态，我继续暂停着。想让我看着：托盘右键「继续」）', 8) } catch { }
+}
+if (-not $script:paused) { $sampleTimer.Start() }
+# 启动时把这几个状态打出来（有 .cmd 启动器时会落进 run\pet-console.log）——
+# "它怎么不动了"这类问题，第一件要确认的就是"起来时是不是暂停/待机"。
+Write-Host ("[启动] 暂停={0}（pet.json 里记的={1}）｜自动发言={2}｜派活目标={3}" -f `
+  $script:paused, $script:pausedAtLoad, [bool]$pet.AutoEnabled, $(if ($script:dispatchAgent) { $script:dispatchAgent } else { '每次新建' }))
 
 # ---------------------------------------------------------------------------
 # 托盘图标 + 暂停
@@ -5220,11 +5352,10 @@ $sampleTimer.Start()
 #   · **不停**：应答器($askTimer)、派出去的 agent 的回报($agentTimer)、朗读、账本 ——
 #     那些是"你要它做的"，不是"它自己多事"。把 agent 回报也静音会让你以为活没跑。
 # ---------------------------------------------------------------------------
-$script:paused = $false
-try { $pet.PausedNow = $false } catch { }
+$script:spendCapTripKey = ''       # 消费上限已经触发过的"哪一天 + 哪个上限"（跨天/改上限后重新武装）
 
 function Set-PetPaused {
-  param([bool]$Paused)
+  param([bool]$Paused, [string]$Reason = 'tray')
   $script:paused = $Paused
   foreach ($t in @($sampleTimer, $focusTimer, $autoTimer)) {
     if (-not $t) { continue }
@@ -5241,6 +5372,11 @@ function Set-PetPaused {
   }
   # 头顶左上角画个暂停标 —— 托盘图标只有鼠标悬上去才看得出状态，桌面上得看得见
   try { $pet.PausedNow = $Paused } catch { }
+  # 暂停/继续**要留痕**：以前只改内存状态，于是"它怎么不动了"根本没法从日志分辨
+  # 是用户按了暂停、进了待机、还是真卡住（实测为这个查过一次）。存盘是为了重启后仍是暂停，
+  # 免得用户以为暂停过了、结果重启又开始自己观察（顺手还会花钱）。
+  Add-Interaction $(if ($Paused) { 'pause' } else { 'resume' }) $Reason
+  try { Save-PetState } catch { }
   try { Refresh-PetTray } catch { }
   try {
     $pet.ShowMessage($(if ($Paused) { '（已暂停：不再自己观察和开口。要我说话随时点我）' } else { '（继续了）' }), 6)

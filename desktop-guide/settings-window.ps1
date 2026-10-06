@@ -125,6 +125,8 @@ function Get-DgSettingsSchema {
       @{ Key='roastMinSeconds'; Label='损友模式最短间隔'; Kind='number'; Min=10; Max=600; Step=5; Decimals=0; Def=30; Unit='秒'
          Late='只在说话风格 = 损友时生效'
          Help='损友模式是「陪着说话」：画面没变也允许吐槽，所以间隔不走上面那条，而用这个。默认 30 秒；每轮都是一次真的模型调用（约 0.02–0.03 元），嫌吵或嫌贵就调大，连续被它判成「没什么可说」时还会自动放宽 2–3 倍。' }
+      @{ Key='dailySpendCapYuan'; Label='每日消费上限'; Kind='number'; Min=0; Max=10000; Step=5; Decimals=0; Def=50; Unit='元'
+         Help='今天的花费到线就自动暂停（停掉采样和自动判断，不再花新钱），气泡上会说明。0 = 不设上限。跨天或把上限调大会重新武装；暂停只挡自动观察，手动点它问一句仍会花钱。' }
       @{ Key='userQuietSeconds'; Label='用户优先，停手后补一次'; Kind='number'; Min=0; Max=600; Step=1; Decimals=0; Def=6; Unit='秒'
          Help='你一动桌宠，正在跑的**自动**判断立刻让位；停手这么久之后再把欠下的那次补上。' }
       @{ Key='logMinSeconds'; Label='观察日志最短间隔'; Kind='number'; Min=0; Max=600; Step=1; Decimals=0; Def=2; Unit='秒'

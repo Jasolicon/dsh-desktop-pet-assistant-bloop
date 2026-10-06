@@ -21,6 +21,8 @@
   "_speakStyleNote": "说话风格：presets\\<名字>.txt 会被复制成 system-prompt.txt 生效。coach = 陪练（每轮都给建议）；guard = 保守（只在明显问题时说）；roast = 损友（陪着你说话：画面没变也能吐槽两句，像直播解说，不骂人）。右键「设置 → 说话风格」或设置窗口都能换。",
   "roastMinSeconds": 30,
   "_roastMinSecondsNote": "损友模式专用：最短多少秒说一句。因为损友模式的定位是「陪着说话」，画面没变也允许开口，所以它的间隔不走 judgeMinSeconds，而走这一项（默认 30 秒）。每轮都是一次真的模型调用（约 0.02–0.03 元），嫌吵或嫌贵就调大；连着几次被判成「没什么可说」时会自动放宽 2–3 倍。其它风格不受影响。",
+  "dailySpendCapYuan": 50,
+  "_dailySpendCapYuanNote": "每天的消费上限（元）。账本轮询发现「今天花了」到线，就自动暂停（停掉采样 / 自动判断，不再花新钱），并在气泡上说明。0 = 不设上限。触发一次后按「哪一天 + 哪个上限」记账：跨天、或你把上限调大会重新武装；到线后手动点「继续」不会立刻又被暂停（那是你的明确选择），但下一次它到线仍会暂停。注意：暂停只挡自动观察，你手动点它问一句仍会花钱 —— 那是你主动要的。",
   "_ttsNote": "朗读 = 把结论句读出来。ttsEngine: auto/edge/speech —— edge 是微软神经音色（音质好、可爱，但要联网，约 3 秒才出声）；speech 是本机老音色（瞬时、离线）。ttsVoice 留空 = Edge 用默认的卡通女声 Xiaoyi。想挑音色跑：pwsh -File tts.ps1 -Audition（或调 Invoke-TtsAudition）。运行时的静音状态记在 run/pet.json。",
   "ttsEnabled": true,
   "ttsEngine": "auto",
