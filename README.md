@@ -211,6 +211,9 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\desktop-guide\DesktopGuide.ps1
   政府机构属于允许用途。可以修改和分发，但需随附该许可，且不得用于商业目的。
 - **它不是 OSI 开源许可**：PolyForm Noncommercial 属于源码公开（source-available）、非商业可用，
   没有"修改后必须开源"的义务。选择它而非 CC 系内容许可，是因为它专为软件撰写，含专利防御条款。
+- **文件头声明**：所有源码文件开头都带 `Copyright (c) 2026 Jasolicon` 与
+  `SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0`；分发时请连同署名与许可一起保留
+  （PolyForm 的 Required Notice 写在 [LICENSE](LICENSE) 开头）。
 - **角色形象不归本项目**：仓库自带的角色图（`desktop-guide/assets/pet.png` 与
   `desktop-pet/assets/pet.png`）**不在上述许可范围内**，作者不主张任何权利、不署名、不收费；
   来源不可考，按"网上流传的表情包"处理。权利人提出要求即替换或移除，
