@@ -4766,6 +4766,105 @@ try { Update-Ledger -Quiet } catch { }
 $ledgerTimer.Start()
 $sampleTimer.Start()
 
+# ---------------------------------------------------------------------------
+# 托盘图标 + 暂停
+#
+# 为什么要有：桌宠是**无边框、不在任务栏占位**的窗口，右键菜单里的「隐藏」一旦点下去
+# 就没有任何东西能把它叫回来（README 里一直把「托盘」列在待办里）。
+#
+# 暂停的边界和 Electron 版一致，刻意划清：
+#   · 停掉的是**它自己观察**的那三个定时器：采样 / 前台看门狗 / 自动判断
+#   · **不停**：应答器($askTimer)、派出去的 agent 的回报($agentTimer)、朗读、账本 ——
+#     那些是"你要它做的"，不是"它自己多事"。把 agent 回报也静音会让你以为活没跑。
+# ---------------------------------------------------------------------------
+$script:paused = $false
+
+function Set-PetPaused {
+  param([bool]$Paused)
+  $script:paused = $Paused
+  foreach ($t in @($sampleTimer, $focusTimer, $autoTimer)) {
+    if (-not $t) { continue }
+    try {
+      if ($Paused) {
+        $t.Stop()
+      } elseif ($t -eq $autoTimer) {
+        # 自动判断要尊重「自动发言」开关与待机状态（和启动时那句一样的条件）
+        if ($pet.AutoEnabled -and -not $script:standby) { $t.Start() }
+      } else {
+        $t.Start()
+      }
+    } catch { }
+  }
+  try { Refresh-PetTray } catch { }
+  try {
+    $pet.ShowMessage($(if ($Paused) { '（已暂停：不再自己观察和开口。要我说话随时点我）' } else { '（继续了）' }), 6)
+  } catch { }
+  Write-Host "[托盘] $(if ($Paused) { '已暂停：不采样 / 不判断 / 不自动发言' } else { '已继续' })"
+}
+
+function Refresh-PetTray {
+  if (-not $script:tray -or -not $script:trayMenu) { return }
+  $hidden = -not $pet.Visible
+  # NotifyIcon.Text 上限 63 字符，这句很短，够用
+  $script:tray.Text = "泡泡 · Bloop —— $(if ($script:paused) { '已暂停' } else { '在看着' })$(if ($hidden) { '（桌宠已隐藏）' } else { '' })"
+  # 菜单项文字要跟着状态改（点一次之后"隐藏桌宠"得变成"显示桌宠"）
+  $script:trayMenu.Items[0].Text = $(if ($hidden) { '显示桌宠' } else { '隐藏桌宠' })
+  $script:trayMenu.Items[1].Text = $(if ($script:paused) { '继续（恢复观察）' } else { '暂停（停止观察）' })
+}
+
+function Initialize-PetTray {
+  try {
+    $iconPath = Resolve-PetImage -Configured ([string]$cfg.petImage)
+    if (-not $iconPath) { Write-Host '[托盘] 没有可用图标（config.petImage 为空且没找到角色图），跳过'; return }
+
+    # NotifyIcon 要的是 Icon 不是 PNG：把角色图缩到 16×16 再转。
+    # ⚠️ Icon.FromHandle **不复制**像素，位图必须留着（$script:trayBmp）——
+    #    只留 Icon、让 Bitmap 被回收，托盘图标会变成一块空白（WinForms 的经典坑）。
+    $src = [System.Drawing.Image]::FromFile($iconPath)
+    $bmp = New-Object System.Drawing.Bitmap 16, 16
+    $g = [System.Drawing.Graphics]::FromImage($bmp)
+    $g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+    $g.DrawImage($src, 0, 0, 16, 16)
+    $g.Dispose(); $src.Dispose()
+    $script:trayBmp = $bmp
+    $script:trayHicon = $bmp.GetHicon()
+    $script:trayIcon = [System.Drawing.Icon]::FromHandle($script:trayHicon)
+
+    $menu = New-Object System.Windows.Forms.ContextMenuStrip
+    [void]$menu.Items.Add('隐藏桌宠', $null, {
+        if ($pet.Visible) { $pet.Hide() } else { $pet.Show() }
+        Refresh-PetTray
+      })
+    [void]$menu.Items.Add('暂停（停止观察）', $null, { Set-PetPaused (-not $script:paused) })
+    [void]$menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
+    [void]$menu.Items.Add('看它判过什么', $null, { try { Show-DecisionCard } catch { } })
+    [void]$menu.Items.Add('退出', $null, { [System.Windows.Forms.Application]::Exit() })
+    $script:trayMenu = $menu
+
+    $script:tray = New-Object System.Windows.Forms.NotifyIcon
+    $script:tray.Icon = $script:trayIcon
+    $script:tray.ContextMenuStrip = $menu
+    $script:tray.Visible = $true
+    # 左键 = 显示/隐藏（Windows 习惯；双击会连着触发两次，效果一样，无害）
+    $script:tray.Add_MouseClick({
+        param($sender, $e)
+        if ($e.Button -eq [System.Windows.Forms.MouseButtons]::Left) {
+          if ($pet.Visible) { $pet.Hide() } else { $pet.Show() }
+          Refresh-PetTray
+        }
+      })
+    # 宠物自己隐藏/显示（右键菜单里那段）时，托盘文字也要跟着变
+    $pet.Add_VisibleChanged({ try { Refresh-PetTray } catch { } })
+
+    Refresh-PetTray
+    Write-Host '[托盘] 图标已就位：左键显示/隐藏，右键可暂停'
+  } catch {
+    Write-Warning "托盘没建起来（不影响其它功能）：$($_.Exception.Message)"
+  }
+}
+
+Initialize-PetTray
+
 $pollTimer = New-Object System.Windows.Forms.Timer
 $pollTimer.Interval = 500
 $pollTimer.Add_Tick({ try { Complete-AdvisorIfDone } catch { } })
@@ -4780,6 +4879,8 @@ $ttsTimer.Start()
 
 $pet.Add_FormClosing({
     try { Stop-Tts | Out-Null } catch { }
+    # 托盘图标不显式收掉的话，进程没了它还会挂在通知区里，要等鼠标划过才消失
+    try { if ($script:tray) { $script:tray.Visible = $false; $script:tray.Dispose() } } catch { }
     # 退出时把常驻大脑收掉（它自己也有 pet.pid 看门狗，双保险）
     try { if ($cfg.brainTransport) { Stop-Brain -RunDir $runDir } } catch { }
     Save-PetState
