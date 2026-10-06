@@ -25,6 +25,8 @@ desktop-guide/run/
 desktop-guide/logs/
 */run/
 */logs/
+# 仓库根的临时目录（曾经因为只忽略 `*/run/` 而漏掉，里面塞过 README 插图的中间产物）
+/run/
 
 # ⚠️ 个人/财务数据：这些是"本机产生的真实数据"，不是代码，不能进仓库
 desktop-guide/ledger.json
