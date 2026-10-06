@@ -75,6 +75,27 @@
 | 常规 | 点菜单外面任意位置（`AutoClose`） |
 | 懒 | 鼠标**跑到菜单（含已经弹出的子菜单）范围之外、停 1.2 秒**，自动关 |
 
+### 开机启动：勾一下就行（不需要管理员）
+
+右键 →「设置 → 开机启动（跟 Windows 一起起）」勾上就写进
+`HKCU\Software\Microsoft\Windows\CurrentVersion\Run`，值名 `BloopPet`，内容是：
+
+```
+"<某个 pwsh.exe>" -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "<仓库>\desktop-guide\DesktopGuide.ps1"
+```
+
+为什么要这么实现（而不是在「启动」文件夹放快捷方式）：不用建 `.lnk`（那要调 WScript.Shell COM）、
+不用管理员权限、用户想手动检查或删掉，注册表编辑器里一眼就能看到。`-WindowStyle Hidden` 是为了
+开机不要弹一个黑窗口（桌宠自己有分层窗口）。勾的状态**以注册表为准**（回读），写不进去（组策略
+禁了 HKCU\Run 之类）会把勾弹回去并给出可手动粘贴的命令行 —— 不骗用户。
+
+> ⚠️ **pwsh 路径是有讲究的**：`Get-AutoStartExe` 优先挑系统安装的 PowerShell 7
+> （`Program Files`、`LOCALAPPDATA\Programs`、`WindowsApps`），找不到才退回**当前进程用的那个**。
+> 这台机器上没有系统版 PowerShell 7 —— 唯一的 pwsh 在 Codex 运行时的缓存里
+> （`.cache\codex-runtimes\...\pwsh.exe`），所以开机项是绑在那个缓存上的：**能用**，
+> 但缓存被清理或升级后会失效。想让它稳，装一个系统版（`winget install Microsoft.PowerShell`）
+> 再把这个开关取消再勾一次即可（会重新写入新路径）。自检 5w 节会把这条提醒打出来。
+
 > ⚠️ **"移开就自动关"踩过一次**：它一开始只拿主菜单的范围算（`ContextMenuStrip.Bounds` 再外扩 250px），
 > 可**子菜单是独立窗口**，Bounds 里没有它们 —— 桌宠贴在屏幕右缘时，「设置 → 说话风格」
 > 这种嵌套子菜单会一路往左铺开（实测：主菜单范围右边界 560，子菜单右边界已经 841），
@@ -1146,14 +1167,14 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File compare.ps1 -Advisor minimax -Fres
 | **只靠窗口标题时建议质量差** | 实测：轨迹显示"在同一个报错页和编辑器之间来回切 9 次"时，模型说的是"你可能在处理列表索引超出范围的错误"——**用户当时搜的就是这个报错**。信息量近乎为零。这就是必须接视觉模型的原因 |
 | 多显示器只抓主屏 | `Capture` 只取 `PrimaryScreen` |
 | 全屏独占程序抓不到 | GDI 截图的固有限制 |
-| ~~托盘未做~~ → 已做（开机自启仍未做） | 托盘图标：左键显示/隐藏，右键可暂停/继续；用自绘的角色图缩到 16×16 |
+| ~~托盘未做~~ → 已做｜~~开机自启未做~~ → 已做 | 托盘图标：左键显示/隐藏，右键可暂停/继续；开机启动勾在「设置」里，写 HKCU 的 Run 项 |
 | **语音输入只能"整句"** | 录完才识别（不是边说边出字）。SenseVoice 没流式接口，一次一句反而是它的用法 |
 
 ## 下一步（未做）
 
 1. **接视觉模型**（MiniMax-M3 或本机拉 `gemma3:4b`），让截图真正被用上——这是当前最大短板。
 2. 自动触发的策略——暂停用固定的"每 N 分钟问一次"，真正的"何时该说"要用真数据决定。
-3. ~~托盘图标~~ → 已做；**开机自启**仍未做。
+3. ~~托盘图标~~ → 已做；~~开机自启~~ → 已做（右键 →「设置 → 开机启动」）。
 4. **桌面应答器**：写一个 host 插件，注册 `user-questions/request` 与 `approval/request` 两个 waterfall
    应答者，把「要问人」的请求写成 `run\` 下的 JSON、由桌宠渲染成气泡按钮。一次投入同时点亮
    权限审批、`ask_user_question`、计划评审（`exit_plan_mode`）——它们本来都缺同一个应答者，

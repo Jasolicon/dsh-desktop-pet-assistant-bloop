@@ -431,6 +431,8 @@ namespace DesktopGuide {
     public event EventHandler AgentStartRequested;
     /** 用户说"我是醒着的"：立刻重新看一眼（待机卡住时的手动出口） */
     public event EventHandler WakeRequested;
+    /** 勾/取消「开机启动」（写 HKCU\...\Run，不需要管理员） */
+    public event EventHandler AutoStartChanged;
     public event EventHandler ModelSelected;
     public event EventHandler AccessSelected;
     public event EventHandler MainSessionRequested;
@@ -571,6 +573,8 @@ namespace DesktopGuide {
     }
     readonly ToolStripMenuItem autoItem;
     readonly ToolStripMenuItem ttsItem;
+    readonly ToolStripMenuItem autoStartItem;
+    bool suppressAutoStartEvent;
     /** 「朗读」子菜单（挂在「设置」下） */
     ToolStripMenuItem ttsMenu;
     readonly Timer anim;
@@ -593,6 +597,15 @@ namespace DesktopGuide {
     public bool AutoEnabled {
       get { return autoItem.Checked; }
       set { autoItem.Checked = value; }
+    }
+    /** 「开机启动」那个勾。外层读写它；写失败时外层会把它勾回去（用 suppress 避免递归触发事件）。 */
+    public bool AutoStartEnabled {
+      get { return autoStartItem.Checked; }
+      set {
+        if (autoStartItem.Checked == value) return;
+        suppressAutoStartEvent = true;
+        try { autoStartItem.Checked = value; } finally { suppressAutoStartEvent = false; }
+      }
     }
     /** 「自动发言」那一行的文案。周期来自 config.json，所以由外层填，别在窗体里写死。 */
     public string AutoItemText {
@@ -681,6 +694,12 @@ namespace DesktopGuide {
       ttsMenu.DropDownItems.Add(MakeMenuItem("停止朗读（打断）", InterruptRequested));
       ttsMenu.DropDownItems.Add(MakeMenuItem("重读上一句", ReplayRequested));
       settingsMenu.DropDownItems.Add(ttsMenu);
+      // 开机启动：勾了就写 HKCU\Software\Microsoft\Windows\CurrentVersion\Run，
+      // 不需要管理员权限，也不会去动任务计划那种重家伙。
+      autoStartItem = new ToolStripMenuItem("开机启动（跟 Windows 一起起）");
+      autoStartItem.CheckOnClick = true;
+      autoStartItem.CheckedChanged += (s, e) => { if (!suppressAutoStartEvent) Fire(AutoStartChanged); };
+      settingsMenu.DropDownItems.Add(autoStartItem);
 
       AllowDrop = true;   // 拖文件/文字/网址到宠物身上
 
@@ -825,6 +844,7 @@ namespace DesktopGuide {
       settingsMenu.DropDownItems.Add(styleMenu);
       settingsMenu.DropDownItems.Add(ttsMenu);
       settingsMenu.DropDownItems.Add(autoItem);
+      settingsMenu.DropDownItems.Add(autoStartItem);
 
       settingsMenu.DropDownItems.Add(new ToolStripSeparator());
       settingsMenu.DropDownItems.Add(MakeMenuItem("所有设置…（一个窗口改完）", SettingsRequested));
@@ -3201,6 +3221,77 @@ function Get-SpendCapKey {
   return ('{0}|{1:N2}' -f $Day, $CapYuan)
 }
 
+# ---------------------------------------------------------------------------
+# 开机启动（HKCU\Software\Microsoft\Windows\CurrentVersion\Run）
+#
+# 为什么写注册表而不是在「启动」文件夹放快捷方式：
+#   · 不用建 .lnk（那要调 WScript.Shell COM），一行 SetValue 就完事
+#   · 不需要管理员权限（HKCU 是当前用户自己的）
+#   · 用户想手动检查 / 删掉，注册表编辑器里一眼就能看到
+# 命令里带 -WindowStyle Hidden：开机弹一个黑窗口很难看，桌宠自己有分层窗口。
+# ---------------------------------------------------------------------------
+$script:autoStartSubKey = 'Software\Microsoft\Windows\CurrentVersion\Run'
+$script:autoStartName = 'BloopPet'
+
+function Get-AutoStartExe {
+  <# 挑一个**稳**的 pwsh 写进注册表：优先系统装的，其次当前进程正在用的那个。
+     为什么要挑：这台机器上根本没有系统版 PowerShell 7，唯一的 pwsh 在
+     `.cache\codex-runtimes\...\pwsh.exe`（Codex 运行时的缓存目录）—— 它能用，
+     但缓存被清理/升级就失效。所以优先标准安装位置，找不到才退回当前进程。 #>
+  $stable = @(
+    (Join-Path $env:ProgramFiles 'PowerShell\7\pwsh.exe')
+    (Join-Path ${env:ProgramFiles(x86)} 'PowerShell\7\pwsh.exe')
+    (Join-Path $env:LOCALAPPDATA 'Programs\PowerShell\7\pwsh.exe')
+    (Join-Path $env:LOCALAPPDATA 'Microsoft\WindowsApps\pwsh.exe')
+  )
+  foreach ($c in $stable) {
+    try { if ($c -and (Test-Path -LiteralPath $c)) { return $c } } catch { }
+  }
+  try { $me = (Get-Process -Id $PID).Path; if ($me) { return $me } } catch { }
+  return 'pwsh.exe'
+}
+
+function Get-AutoStartCommand {
+  <# 要写进注册表的那条命令行。用**当前正在跑的这个 pwsh** 的路径，而不是猜 "pwsh.exe" ——
+     这台机器上桌宠是用 Codex 运行时里的 pwsh 起的，开机时 PATH 里未必有同一个。 #>
+  param([string]$Root = '', [string]$Exe = '')
+  if (-not $Root) { $Root = $PSScriptRoot }
+  if (-not $Exe) { $Exe = Get-AutoStartExe }
+  return ('"{0}" -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "{1}"' -f $Exe, (Join-Path $Root 'DesktopGuide.ps1'))
+}
+
+function Get-AutoStartValue {
+  <# 读回注册表里那条命令（没有 = 空串）。SubKey / Name 可换，自检会在临时键上跑。 #>
+  param([string]$SubKey = '', [string]$Name = '')
+  if (-not $SubKey) { $SubKey = $script:autoStartSubKey }
+  if (-not $Name) { $Name = $script:autoStartName }
+  try {
+    $k = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($SubKey, $false)
+    if (-not $k) { return '' }
+    try { return [string]$k.GetValue($Name, '') } finally { $k.Close() }
+  } catch { return '' }
+}
+
+function Set-AutoStartValue {
+  <# 写 / 删那条命令，返回是否成功。删的时候只删**这个值**，不删整个键 ——
+     那个键是系统的，别的程序也在用。 #>
+  param([bool]$On, [string]$Command = '', [string]$SubKey = '', [string]$Name = '')
+  if (-not $SubKey) { $SubKey = $script:autoStartSubKey }
+  if (-not $Name) { $Name = $script:autoStartName }
+  try {
+    if ($On) {
+      $k = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($SubKey, $true)
+      if (-not $k) { return $false }
+      try { $k.SetValue($Name, [string]$Command, [Microsoft.Win32.RegistryValueKind]::String) } finally { $k.Close() }
+      return $true
+    }
+    $k = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($SubKey, $true)
+    if (-not $k) { return $true }      # 键都不在 = 本来就没设过
+    try { $k.DeleteValue($Name, $false) } finally { $k.Close() }
+    return $true
+  } catch { return $false }
+}
+
 # 自检 / 导出（不需要界面）
 # ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
@@ -3933,6 +4024,35 @@ $probe3 = New-Object DesktopGuide.PetForm -ArgumentList @([double]$script:UiScal
   )
   Write-Output '  12.3/50 → 不管｜50/50 → 停｜没设上限 → 不管｜已触发过 → 不重复｜改上限/跨天 → 重新武装'
   Write-Output ("  5v {0}/5 项通过｜当前 config 的 dailySpendCapYuan = {1}" -f @($capOk | Where-Object { $_ }).Count, $cfg.dailySpendCapYuan)
+  Write-Output '=== 5w. 开机启动（注册表 Run）==='
+  # ⚠️ 自检**绝不能**碰真的 HKCU\...\Run（那会把用户真正设的开机项改掉）——
+  # 所以这里在一个临时子键上跑"写 → 读回 → 删"的全流程，跑完把临时键删干净。
+  $wOk = @()
+  $testSub = 'Software\BloopSelfTest\' + [guid]::NewGuid().ToString('N').Substring(0, 8)
+  try {
+    $wOk += ((Get-AutoStartValue -SubKey $testSub -Name 'BloopPet') -eq '')
+    $wOk += ([bool](Set-AutoStartValue -On $true -Command 'TEST-CMD' -SubKey $testSub -Name 'BloopPet'))
+    $wOk += ((Get-AutoStartValue -SubKey $testSub -Name 'BloopPet') -eq 'TEST-CMD')
+    $wOk += ([bool](Set-AutoStartValue -On $false -SubKey $testSub -Name 'BloopPet'))
+    $wOk += ((Get-AutoStartValue -SubKey $testSub -Name 'BloopPet') -eq '')
+    # 删掉临时子键（这个键是我们自己造的，可以整条删）
+    [Microsoft.Win32.Registry]::CurrentUser.DeleteSubKeyTree($testSub, $false)
+  } catch { Write-Output "  ✘ 注册表往返失败：$($_.Exception.Message)" }
+  $cmdText = Get-AutoStartCommand -Root $PSScriptRoot
+  $wOk += ($cmdText -match 'DesktopGuide\.ps1')
+  $wOk += ($cmdText -match '^-?"' -or $cmdText.StartsWith('"'))
+  $wOk += ($cmdText -match '-WindowStyle Hidden')
+  # 真注册表当前是什么状态：只读，不动（开关本身由菜单驱动）
+  $realNow = Get-AutoStartValue
+  Write-Output ('  临时键往返：空 → 写入 → 读回 → 删除 → 空　' + $(if (@($wOk[0..4]) -notcontains $false) { '✔' } else { '✘' }))
+  Write-Output ("  要写的命令：{0}" -f $cmdText)
+  Write-Output ("  真实注册表现状：{0}" -f $(if ($realNow) { "已设置" } else { '未设置' }))
+  # 提醒一句：如果挑中的是 Codex 运行时缓存里的 pwsh，开机项就绑在缓存上（能用但不稳）
+  $x = Get-AutoStartExe
+  if ($x -match 'codex-runtimes') {
+    Write-Output '  ⚠ 这台机器没有系统版 PowerShell 7，用的是 Codex 运行时缓存里的 pwsh —— 能开机启动，但缓存被清理/升级后会失效；装一个系统版（winget install Microsoft.PowerShell）再勾一次就稳了。'
+  }
+  Write-Output ("  5w {0}/{1} 项通过" -f @($wOk | Where-Object { $_ }).Count, $wOk.Count)
   Write-Output '=== 6. 朗读（TTS）==='
   # -Check 只列音色，不出声（自检不该在半夜突然开口）。
   [void](Initialize-Tts -Config $cfg)
@@ -4715,6 +4835,8 @@ function Refresh-PetSettings {
     $pet.SetSettings(
       @($script:AgentCfg.models | ForEach-Object { $_.name }), [string]$script:AgentCfg.mainAgent.model,
       @($script:AgentCfg.access | ForEach-Object { $_.name }), [string]$script:AgentCfg.workAgent.access)
+    # 开机启动那个勾：以**注册表为准**（它是唯一真相，config 里不再另存一份，免得两边不一致）
+    $pet.AutoStartEnabled = [bool](Get-AutoStartValue)
   } catch { Write-Warning "刷新设置菜单失败：$($_.Exception.Message)" }
 }
 
@@ -4815,6 +4937,26 @@ $pet.Add_StandbyChanged({
 $pet.Add_AgentListRequested({
     Add-Interaction 'agents_list'
     try { Edit-DispatchTarget } catch { $pet.ShowMessage("打开失败了：$($_.Exception.Message)", [int]$cfg.showSeconds) }
+  })
+
+# 开机启动：勾了就写注册表，取消了就删掉那个值。
+# 写完**按注册表回读**来定勾的状态 —— 写失败（组策略挡住 HKCU\Run 之类）时不能骗用户。
+$pet.Add_AutoStartChanged({
+    try {
+      $want = [bool]$pet.AutoStartEnabled
+      $cmd = Get-AutoStartCommand -Root $PSScriptRoot
+      $ok = Set-AutoStartValue -On $want -Command $cmd
+      if ($ok) { $actual = [bool](Get-AutoStartValue) } else { $actual = -not $want }
+      $pet.AutoStartEnabled = $actual
+      Add-Interaction 'autostart' $(if ($actual) { 'on' } else { 'off' })
+      if ($actual -ne $want) {
+        $pet.ShowMessage("开机启动没设置成功（这台机器可能禁了 HKCU\...\Run）。`n可以手动加这一行：`n$cmd", 12)
+      } elseif ($actual) {
+        $pet.ShowMessage('好，开机就会自动起（写在注册表 Run 里，不需要管理员）。', 6)
+      } else {
+        $pet.ShowMessage('关了，开机不再自动起。', 5)
+      }
+    } catch { }
   })
 
 # 「我是醒着的」：待机卡住（系统通知漏发）时的手动出口 —— 不用重启进程
