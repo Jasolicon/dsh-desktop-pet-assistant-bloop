@@ -1,3 +1,7 @@
+// 泡泡 · Bloop —— 桌面常驻的主动式助手（原「随时指导」桌宠）
+// Copyright (c) 2026 Jasolicon · 许可：PolyForm Noncommercial License 1.0.0（仓库根目录 LICENSE）
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
 // dsh-ambient-guide 运行时验证器
 //
 // 回答一个问题：这个插件在真实会话里到底有没有把摘要注入进去？

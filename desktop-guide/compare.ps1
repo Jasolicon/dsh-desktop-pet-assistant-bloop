@@ -1,4 +1,8 @@
-﻿# compare —— 同一个 payload，跑两次：只看窗口轨迹 vs. 连截图一起看
+﻿# 泡泡 · Bloop —— 桌面常驻的主动式助手（原「随时指导」桌宠）
+# Copyright (c) 2026 Jasolicon · 许可：PolyForm Noncommercial License 1.0.0（仓库根目录 LICENSE）
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
+# compare —— 同一个 payload，跑两次：只看窗口轨迹 vs. 连截图一起看
 #
 # 这是判断「桌面随时指导成不成立」的关键实验：
 #   如果带上截图后它说的还是"你可能在处理某个报错"这种废话，产品形态就得重想；

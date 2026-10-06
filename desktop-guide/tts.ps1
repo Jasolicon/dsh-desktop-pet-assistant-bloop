@@ -1,3 +1,7 @@
+# 泡泡 · Bloop —— 桌面常驻的主动式助手（原「随时指导」桌宠）
+# Copyright (c) 2026 Jasolicon · 许可：PolyForm Noncommercial License 1.0.0（仓库根目录 LICENSE）
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
 # tts.ps1 —— 桌宠的朗读（TTS）：把「它想出来的那句结论」读出来
 #
 # 为什么单独一个文件：朗读逻辑不属于窗口，也不属于大脑，单独放一处以后好换引擎。

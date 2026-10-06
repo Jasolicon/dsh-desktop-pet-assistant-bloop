@@ -1,4 +1,8 @@
-﻿# dsh-agents.ps1 —— 把 DSH 的无头 agent 当引擎来驱动
+﻿# 泡泡 · Bloop —— 桌面常驻的主动式助手（原「随时指导」桌宠）
+# Copyright (c) 2026 Jasolicon · 许可：PolyForm Noncommercial License 1.0.0（仓库根目录 LICENSE）
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
+# dsh-agents.ps1 —— 把 DSH 的无头 agent 当引擎来驱动
 #
 # 为什么是「外壳 + 引擎」而不是重写一个 agent：
 #   `dsh --profile headless` 已经具备我们需要的全部能力，而且用的是**用户在 DSH 里已登录的账号**：

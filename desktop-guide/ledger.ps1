@@ -1,3 +1,7 @@
+# 泡泡 · Bloop —— 桌面常驻的主动式助手（原「随时指导」桌宠）
+# Copyright (c) 2026 Jasolicon · 许可：PolyForm Noncommercial License 1.0.0（仓库根目录 LICENSE）
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
 # ledger.ps1 —— 账本：查余额、记充值、看当天花销
 #
 # **完全自足**：不读任何别的插件的文件、不依赖别的软件在跑。

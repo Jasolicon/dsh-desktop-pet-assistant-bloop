@@ -1,4 +1,8 @@
-﻿# advisor-dsh —— 用 **DSH agent**（而不是裸模型调用）当桌宠的常驻主 agent
+﻿# 泡泡 · Bloop —— 桌面常驻的主动式助手（原「随时指导」桌宠）
+# Copyright (c) 2026 Jasolicon · 许可：PolyForm Noncommercial License 1.0.0（仓库根目录 LICENSE）
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
+# advisor-dsh —— 用 **DSH agent**（而不是裸模型调用）当桌宠的常驻主 agent
 #
 # 与 advisor-openai / advisor-minimax 的区别：
 #   那两个每次都是无状态的一次性调用；这个是 `dsh --session-id <主会话>`，

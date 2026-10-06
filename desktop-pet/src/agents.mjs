@@ -1,3 +1,7 @@
+// 泡泡 · Bloop —— 桌面常驻的主动式助手（原「随时指导」桌宠）
+// Copyright (c) 2026 Jasolicon · 许可：PolyForm Noncommercial License 1.0.0（仓库根目录 LICENSE）
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
 /**
  * agents.mjs —— 把「用哪个模型、给多大权限」变成一份 --patch 文件
  *

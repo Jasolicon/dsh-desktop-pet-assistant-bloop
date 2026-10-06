@@ -1,3 +1,7 @@
+# 泡泡 · Bloop —— 桌面常驻的主动式助手（原「随时指导」桌宠）
+# Copyright (c) 2026 Jasolicon · 许可：PolyForm Noncommercial License 1.0.0（仓库根目录 LICENSE）
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
 # web-ui.ps1 —— 把 **DSH 自己的聊天界面**拿来当桌宠的对话窗口
 #
 # 为什么要这样：桌宠原来的对话栏是自绘气泡（chat-panel.ps1），它只能自己画纯文本，

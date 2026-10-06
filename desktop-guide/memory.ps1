@@ -1,4 +1,8 @@
-﻿# memory.ps1 —— 把观察日志压成"长期记忆"
+﻿# 泡泡 · Bloop —— 桌面常驻的主动式助手（原「随时指导」桌宠）
+# Copyright (c) 2026 Jasolicon · 许可：PolyForm Noncommercial License 1.0.0（仓库根目录 LICENSE）
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
+# memory.ps1 —— 把观察日志压成"长期记忆"
 #
 # 为什么需要它：
 #   桌宠每 2 秒往 logs/observe-YYYYMMDD.jsonl 写一条（前台窗口 + 标题 + 停留秒数），

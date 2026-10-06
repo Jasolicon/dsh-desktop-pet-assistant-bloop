@@ -1,4 +1,8 @@
 #!/usr/bin/env node
+// 泡泡 · Bloop —— 桌面常驻的主动式助手（原「随时指导」桌宠）
+// Copyright (c) 2026 Jasolicon · 许可：PolyForm Noncommercial License 1.0.0（仓库根目录 LICENSE）
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
 /**
  * stt-sensevoice.cjs —— 用 **DSH 自带的 sherpa-onnx + SenseVoice** 把一段 WAV 转成文字
  *

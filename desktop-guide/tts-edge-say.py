@@ -1,3 +1,7 @@
+# 泡泡 · Bloop —— 桌面常驻的主动式助手（原「随时指导」桌宠）
+# Copyright (c) 2026 Jasolicon · 许可：PolyForm Noncommercial License 1.0.0（仓库根目录 LICENSE）
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
 """tts-edge-say.py —— 用 Edge 神经音色合成一句话，直接输出成 WAV。
 
 为什么要有这个文件（而不是让 PowerShell 自己调 edge-tts CLI）：

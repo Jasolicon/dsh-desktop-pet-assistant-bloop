@@ -1,3 +1,7 @@
+// 泡泡 · Bloop —— 桌面常驻的主动式助手（原「随时指导」桌宠）
+// Copyright (c) 2026 Jasolicon · 许可：PolyForm Noncommercial License 1.0.0（仓库根目录 LICENSE）
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
 /**
  * preload.cjs —— 渲染进程能看到的全部能力，就这些。
  * contextIsolation 开着，渲染进程拿不到 node，只能通过这里暴露的几个方法说话。

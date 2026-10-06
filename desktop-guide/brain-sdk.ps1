@@ -1,3 +1,7 @@
+# 泡泡 · Bloop —— 桌面常驻的主动式助手（原「随时指导」桌宠）
+# Copyright (c) 2026 Jasolicon · 许可：PolyForm Noncommercial License 1.0.0（仓库根目录 LICENSE）
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
 # brain-sdk.ps1 —— 常驻「大脑」：**一个进程**持有 DSH 运行时，长期服务桌宠的请求
 #
 # 它解决的问题（用户早期就提出、当时被否掉的那条）：

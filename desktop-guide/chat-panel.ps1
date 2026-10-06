@@ -1,4 +1,8 @@
-﻿# chat-panel.ps1 —— 桌宠左边的对话栏（自绘气泡版）
+﻿# 泡泡 · Bloop —— 桌面常驻的主动式助手（原「随时指导」桌宠）
+# Copyright (c) 2026 Jasolicon · 许可：PolyForm Noncommercial License 1.0.0（仓库根目录 LICENSE）
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
+# chat-panel.ps1 —— 桌宠左边的对话栏（自绘气泡版）
 #
 # 跟谁说话：**主 agent 的常驻会话**（run\main-agent.json）——它记得桌宠这一天看到过什么。
 #

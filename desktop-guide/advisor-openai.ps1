@@ -1,4 +1,8 @@
-﻿# advisor-openai —— 用任意 OpenAI 兼容端点当「随时指导」的大脑
+﻿# 泡泡 · Bloop —— 桌面常驻的主动式助手（原「随时指导」桌宠）
+# Copyright (c) 2026 Jasolicon · 许可：PolyForm Noncommercial License 1.0.0（仓库根目录 LICENSE）
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
+# advisor-openai —— 用任意 OpenAI 兼容端点当「随时指导」的大脑
 #
 # 默认指向 DeepSeek：它的 deepseek-flash 支持图像输入（[text+image]），
 # 也就是你 DSH 里已经在用的那个模型，价格 0.3 / 1.2 每百万 token。

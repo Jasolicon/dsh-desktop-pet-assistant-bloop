@@ -1,3 +1,7 @@
+// 泡泡 · Bloop —— 桌面常驻的主动式助手（原「随时指导」桌宠）
+// Copyright (c) 2026 Jasolicon · 许可：PolyForm Noncommercial License 1.0.0（仓库根目录 LICENSE）
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
 /**
  * 用真实会话事件流回放插件的折叠函数。
  * 这是对 index.js 的端到端验证——不mock,用真实数据。

@@ -1,4 +1,8 @@
-﻿# advisor-ollama —— 用本机 Ollama 当「随时指导」的大脑
+﻿# 泡泡 · Bloop —— 桌面常驻的主动式助手（原「随时指导」桌宠）
+# Copyright (c) 2026 Jasolicon · 许可：PolyForm Noncommercial License 1.0.0（仓库根目录 LICENSE）
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
+# advisor-ollama —— 用本机 Ollama 当「随时指导」的大脑
 #
 # 契约（由 DesktopGuide.ps1 调用）：
 #   参数 1 = payload.json 的路径

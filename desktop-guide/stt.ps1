@@ -1,3 +1,7 @@
+# 泡泡 · Bloop —— 桌面常驻的主动式助手（原「随时指导」桌宠）
+# Copyright (c) 2026 Jasolicon · 许可：PolyForm Noncommercial License 1.0.0（仓库根目录 LICENSE）
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
 # stt.ps1 —— 桌宠的语音输入（STT）：长按桌宠说一句话，松开就变成一行文字
 #
 # 为什么单独一个文件：和 tts.ps1 对称 —— 录音、识别、模型管理都不属于窗口，
