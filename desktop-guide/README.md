@@ -775,7 +775,7 @@ key 的查找顺序和项目里 `advisor-minimax` / `advisor-openai` 一致：**
 **关掉的是"工具行"，不是服务本身**：`tool-subagent` 关了不等于 subagent 服务没了。要恢复哪一项，
 把对应 id 从数组里删掉即可。
 
-## 四个踩过的坑（都很隐蔽，写下来免得重来）
+## 五个踩过的坑（都很隐蔽，写下来免得重来）
 
 ### 1. DPI：必须在第一行就设置感知
 
@@ -811,6 +811,21 @@ key 的查找顺序和项目里 `advisor-minimax` / `advisor-openai` 一致：**
 
 改法：`PetForm` 重写 `Dispose(bool)` 停掉并释放两个定时器，`Render()` 开头再挡一下
 `IsDisposed || Disposing`。两道都要——只停定时器挡不住已经在队列里的那一拍。
+
+### 5. 字号别再乘一遍 `uiScale`（第一次做设置窗口就踩了）
+
+点是**物理单位**：GDI+ 会自己按设备 DPI 把 pt 换成像素。192dpi（200% 缩放）下 9.5pt 已经是
+25px、行高约 32px —— 这**正是** Windows 缩放想要的效果。做设置窗口时我按仓库里其它对话框的
+写法把字号也乘了 `uiScale`，于是 9.5pt 变成 19pt：文本行高从 32px 涨到 74px，两行字挤在
+一行的高度里互相压住。用户的原话是「字体太大了都堆起来了」。
+
+顺带一个更隐蔽的：**别用 `TextRenderer.MeasureText` 量行高去设 Label 高度**。同一个 19pt 字体，
+它量出来 66、Label 的 `PreferredHeight` 是 74 —— 按 66 设高度会把字裁掉、还紧贴下一行。
+`settings-window.ps1` 的 `Get-DgLineHeight` 用的是后者。
+
+> 桌宠自己的气泡是**反着补偿**的：`SetTextFont` 里把字号乘了 `uiScale`，所以 `config.json` 的
+> `fontSize` 才写成 6.0（乘 2 之后约等于正常的 12pt）。设置窗口不跟进这个绕法 ——
+> **字号给"96dpi 视角"的值，位置和尺寸才乘 `uiScale`**。
 
 ## 大脑（可插拔）
 

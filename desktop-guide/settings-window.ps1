@@ -392,6 +392,21 @@ function Clear-DgMarkdown {
   return ($Text -replace '\*\*', '')
 }
 
+# 一个字体在「Label 里实际占多高」（像素）。
+# 用它而不是 TextRenderer.MeasureText：后者量出来偏小（实测 19pt：66 vs 74），
+# 按它设高度会把字裁掉、并且和下一行贴在一起 —— 用户看到的就是"字堆起来了"。
+function Get-DgLineHeight {
+  param($Font)
+  $probe = New-Object System.Windows.Forms.Label
+  $probe.AutoSize = $true
+  $probe.Font = $Font
+  $probe.Text = '汉字Ag'
+  $h = [int]$probe.PreferredHeight
+  $probe.Dispose()
+  if ($h -le 0) { $h = [int][math]::Ceiling($Font.GetHeight()) + 4 }
+  return $h
+}
+
 # 自己截断 + 加省略号。
 # 为什么不用 Label.AutoEllipsis：它会把控件切到另一条绘制路径，WM_PRINT / DrawToBitmap
 # 下**整块都不画**（实测标签列全消失，排查了半天）。自己截断则两条路径都正常。
@@ -687,7 +702,8 @@ function New-DgSectionPanel {
   # 说明要整段显示（有几段话比较长），所以按实际折行数算高度，别写死两行
   $noteSize = [System.Windows.Forms.TextRenderer]::MeasureText($noteText, $Ctx.FontSmall,
     ([System.Drawing.Size]::new($noteW, 1000)), ([System.Windows.Forms.TextFormatFlags]::WordBreak))
-  $note.Height = [Math]::Max([int]$Ctx.HSmall, [int]$noteSize.Height)
+  # 多给几像素：TextRenderer 量折行高度也偏紧，这里宁可多留一点也别把说明裁掉
+  $note.Height = [Math]::Max([int]$Ctx.HSmall, [int]$noteSize.Height + 6)
   $panel.Controls.Add($note)
 
   # 「本页恢复默认」：只把这一页的值改回仓库里带的那份，仍然要点「保存」才写盘
@@ -783,10 +799,10 @@ function Build-DgTaskRules {
   }
   $Ctx.RuleSets = $rules
 
-  $listW = [int](230 * $s)
-  # 编辑区高度要装得下**全部**字段：6 个字段（其中一个是多行）加起来约 470 逻辑 px。
-  # 之前给 300 —— 后两个字段被面板裁掉、还看不到（面板不滚动，裁剪是静默的）。
-  $boxH = [int](472 * $s)
+  $listW = [int](190 * $s)
+  # 编辑区高度要装得下**全部**字段（6 个，其中一个是多行）：字变小之后约 650 物理 px。
+  # 也不能太高 —— 下面的「新增/删除/上移/下移」得留在卡片可视区内，不然要滚动才点得到。
+  $boxH = [int](350 * $s)
   $list = New-Object System.Windows.Forms.ListBox
   $list.Left = [int](18 * $s); $list.Top = $Top
   $list.Width = $listW; $list.Height = $boxH
@@ -1170,18 +1186,28 @@ function Show-DgSettings {
   $s = [double]$Ctx.S
   $c = $Ctx.Colors
   $site = 'Microsoft YaHei UI'
-  $Ctx.FontItem = New-Object System.Drawing.Font $site, ([float](9.5 * $s))
-  $Ctx.FontItemBold = New-Object System.Drawing.Font $site, ([float](9.5 * $s)), ([System.Drawing.FontStyle]::Bold)
-  $Ctx.FontSmall = New-Object System.Drawing.Font $site, ([float](8.75 * $s))
-  $Ctx.FontH1 = New-Object System.Drawing.Font $site, ([float](12.5 * $s)), ([System.Drawing.FontStyle]::Bold)
-  # 行高一律用 GDI 实测（Label 内部也是这条路径量的），别用「字号 × 系数」猜：
-  # 200% 缩放下 19pt 的行高比 18*2 大，猜小了就会把标签裁掉。
-  $Ctx.HMain = [System.Windows.Forms.TextRenderer]::MeasureText('汉字Ag', $Ctx.FontItemBold).Height
-  $Ctx.HSmall = [System.Windows.Forms.TextRenderer]::MeasureText('汉字Ag', $Ctx.FontSmall).Height
-  $Ctx.HH1 = [System.Windows.Forms.TextRenderer]::MeasureText('汉字Ag', $Ctx.FontH1).Height
+  # ⚠️ 字号**不要**乘 $UiScale —— 这是踩过的坑，也是用户说的「字体太大、都堆起来了」的根。
+  #
+  # 点是物理单位：GDI+ 会自己按设备 DPI 把 pt 换成像素。192dpi（200% 缩放）下 9.5pt 已经是
+  # 25px，行高约 32px —— 这**正是** Windows 缩放想要的效果（和 96dpi 下 12.7px 一样大）。
+  # 再乘一次 uiScale 就变成 19pt / 50px / 行高 74px：字比正常大一倍，行高从 32 涨到 74，
+  # 于是两行字挤在一行的高度里互相压住。
+  #
+  # （桌宠自己的气泡是反着补偿的：config 里 fontSize 写 6.0，乘 2 之后才约等于正常的 12pt。
+  #   这里不跟进那个绕法 —— 窗口直接用"96dpi 视角"的字号，位置尺寸才乘 uiScale。）
+  $Ctx.FontItem = New-Object System.Drawing.Font $site, ([float]9.5)
+  $Ctx.FontItemBold = New-Object System.Drawing.Font $site, ([float]9.5), ([System.Drawing.FontStyle]::Bold)
+  $Ctx.FontSmall = New-Object System.Drawing.Font $site, ([float]9.0)
+  $Ctx.FontH1 = New-Object System.Drawing.Font $site, ([float]12.0), ([System.Drawing.FontStyle]::Bold)
+  # 行高用 **Label 自己的 PreferredHeight**，不用 TextRenderer.MeasureText：
+  # 实测 19pt 下后者给 66、Label 实到 74 —— 按 66 设高度会把字裁掉、并且和下一行贴在一起。
+  # 行高本来就是像素值，所以也不乘 $s。
+  $Ctx.HMain = Get-DgLineHeight -Font $Ctx.FontItemBold
+  $Ctx.HSmall = Get-DgLineHeight -Font $Ctx.FontSmall
+  $Ctx.HH1 = Get-DgLineHeight -Font $Ctx.FontH1
   $Ctx.RowTop0 = [int](14 * $s) + [int]$Ctx.HH1 + [int](6 * $s) + (2 * [int]$Ctx.HSmall) + [int](10 * $s)
 
-  $W = [int](980 * $s); $H = [int](728 * $s)
+  $W = [int](920 * $s); $H = [int](700 * $s)
   $f = New-Object System.Windows.Forms.Form
   $f.Text = '泡泡 · 设置'
   $f.Font = $Ctx.FontItem
@@ -1206,10 +1232,12 @@ function Show-DgSettings {
   $f.Controls.Add($title)
 
   $sub = New-Object System.Windows.Forms.Label
-  $sub.Text = '左边选一类，右边改值；鼠标停在某一行，底下会显示这个键叫什么、干嘛用的。改完点「保存」——立刻能生效的会当场生效，需要重启的会标出来。'
+  # 单行 Label 必须一行放得下：字变小后这里原来那串太长，会折行然后被高度裁掉
+  $sub.Text = '左边选一类，右边改值；鼠标停某一行，底下显示这个键干什么用的。'
   $sub.Font = $Ctx.FontSmall
   $sub.ForeColor = $c.Muted
-  $sub.Left = [int](24 * $s); $sub.Top = [int](46 * $s); $sub.Width = [int](600 * $s); $sub.Height = [int](20 * $s)
+  $sub.AutoSize = $false
+  $sub.Left = [int](24 * $s); $sub.Top = [int](46 * $s); $sub.Width = [int](640 * $s); $sub.Height = [int]$Ctx.HSmall
   $f.Controls.Add($sub)
 
   $navW = [int](208 * $s)
@@ -1220,7 +1248,8 @@ function Show-DgSettings {
   $nav.BackColor = $c.Nav
   $nav.ForeColor = $c.Text
   $nav.Font = $Ctx.FontItem
-  $nav.ItemHeight = [int](32 * $s)
+  # 导航项高跟着字体走：字变小了还留 32 逻辑 px 会空得发虚，字变大又会裁
+  $nav.ItemHeight = [int]$Ctx.HMain + [int](10 * $s)
   $nav.DrawMode = 'OwnerDrawFixed'
   $nav.IntegralHeight = $false
   $nav.Tag = $Ctx
@@ -1335,7 +1364,7 @@ function Show-DgSettings {
   $openBtn.FlatStyle = 'Flat'
   $openBtn.Font = $Ctx.FontItem
   $openBtn.Width = [int](120 * $s); $openBtn.Height = [int](34 * $s)
-  $openBtn.Left = [int](($W - 24 * $s) - (120 + 100 + 100 + 20 + 16) * $s); $openBtn.Top = [int](662 * $s)
+  $openBtn.Left = [int](($W - 24 * $s) - (120 + 100 + 100 + 20 + 16) * $s); $openBtn.Top = [int](640 * $s)
   $openBtn.Add_Click({ param($sender, $e) Start-Process 'notepad.exe' -ArgumentList ('"' + $sender.Tag + '"') })
   $openBtn.Tag = $ConfigPath
   $f.Controls.Add($openBtn)
@@ -1345,7 +1374,7 @@ function Show-DgSettings {
   $cancel.FlatStyle = 'Flat'
   $cancel.Font = $Ctx.FontItem
   $cancel.Width = [int](100 * $s); $cancel.Height = [int](34 * $s)
-  $cancel.Left = [int](($W - 24 * $s) - (100 + 100 + 10) * $s); $cancel.Top = [int](662 * $s)
+  $cancel.Left = [int](($W - 24 * $s) - (100 + 100 + 10) * $s); $cancel.Top = [int](640 * $s)
   $cancel.DialogResult = 'Cancel'
   $f.Controls.Add($cancel)
 
@@ -1360,7 +1389,7 @@ function Show-DgSettings {
   $save.FlatAppearance.MouseDownBackColor = [System.Drawing.Color]::FromArgb(255, 33, 92, 205)
   $save.Font = $Ctx.FontItem
   $save.Width = [int](100 * $s); $save.Height = [int](34 * $s)
-  $save.Left = [int](($W - 24 * $s) - 100 * $s); $save.Top = [int](662 * $s)
+  $save.Left = [int](($W - 24 * $s) - 100 * $s); $save.Top = [int](640 * $s)
   $save.Add_Click({
       param($sender, $e)
       $ctx = $sender.Parent.Tag
