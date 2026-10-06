@@ -3565,6 +3565,11 @@ $probe3 = New-Object DesktopGuide.PetForm -ArgumentList @([double]$script:UiScal
   $swMissing = @($swCfgKeys | Where-Object { $swKeys -notcontains $_ -and $swSpecial -notcontains $_ })
   Write-Output ("  分组 {0} 个｜可改参数 {1} 个｜专用页 {2} 个（{3}）" -f $swSchema.Count, $swKeys.Count, $swSpecial.Count, ($swSpecial -join '、'))
   Write-Output ("  config.json 参数 {0} 个 → 没进界面的：{1}" -f $swCfgKeys.Count, $(if ($swMissing.Count -gt 0) { $swMissing -join '、' } else { '无 ✔' }))
+  # 接线检查：C# 那边的事件叫 SettingsRequested，PowerShell 这边必须能挂上 add_SettingsRequested。
+  # 自检在"注册菜单事件"那一段代码**之前**就 exit 了，所以单独验一下这个方法存在 ——
+  # 名字写错的话桌宠会直接起不来，而这种错只有到运行时才暴露。
+  $swEvt = [DesktopGuide.PetForm].GetMethod('add_SettingsRequested')
+  Write-Output ("  事件接线：add_SettingsRequested 存在 = {0}" -f ($null -ne $swEvt))
   Write-Output '=== 6. 朗读（TTS）==='
   # -Check 只列音色，不出声（自检不该在半夜突然开口）。
   [void](Initialize-Tts -Config $cfg)
