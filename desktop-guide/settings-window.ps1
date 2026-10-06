@@ -488,7 +488,15 @@ function New-DgRow {
   $c = $Ctx.Colors
   $labelW = [int](300 * $s)
   $ctlX = $Indent + $labelW
-  $ctlW = [int]($Width - $ctlX - 18 * $s)
+  # 右边那列"单位"标签（秒 / 毫秒 / 张 / px / 元…）也是内容的一部分 —— 以前没把它算进宽度，
+  # 于是行内容比面板宽几个像素，面板长出**横向滚动条**；一旦某个控件拿到焦点，
+  # WinForms 会横向滚动去把它露出来 → 整列标签左边被切掉（用户截图里"采样间隔"缺了半边）。
+  # 所以：先把单位标签量出来，再从控件宽度里扣掉。
+  $unitW = 0
+  if (($Item.PSObject.Properties.Name -contains 'Unit') -and $Item.Unit) {
+    $unitW = [int]([System.Windows.Forms.TextRenderer]::MeasureText([string]$Item.Unit, $Ctx.FontSmall).Width + 12 * $s)
+  }
+  $ctlW = [int]($Width - $ctlX - 18 * $s - $unitW)
   $multiline = ($Item.Kind -eq 'multiline')
   # 行高由**实测行高**算出来，不写死数字：19pt 字体在高 DPI 下比 "18*s" 高得多，写死会把字裁掉。
   $rowH = if ($multiline) { [int](92 * $s) } else { [int](8 * $s) + [int]$Ctx.HMain + [int]$Ctx.HSmall }
@@ -1263,19 +1271,16 @@ function Show-DgSettings {
 
   $title = New-Object System.Windows.Forms.Label
   $title.Text = '设置'
-  $title.Font = New-Object System.Drawing.Font $site, ([float](15 * $s)), ([System.Drawing.FontStyle]::Bold)
+  # ⚠️ 字号**不要**乘 $s：pt 是物理单位，GDI+ 会自己按设备 DPI 换算。乘了之后 200% 缩放下
+  # 变成 30pt（一行近 40px），而高度还写死 30px —— 结果是标题被**拦腰裁掉**（用户截图里那个"设置"）。
+  # 标题比正文大一档：正文 9.5pt，这里 15pt（和分组标题 12pt 拉开层次）。
+  $title.Font = New-Object System.Drawing.Font $site, ([float]15.0), ([System.Drawing.FontStyle]::Bold)
   $title.ForeColor = $c.Text
-  $title.Left = [int](24 * $s); $title.Top = [int](16 * $s); $title.Width = [int](200 * $s); $title.Height = [int](30 * $s)
+  $title.AutoSize = $false
+  # 高度按**字体实际行高**算，不写死数字（行高是像素量，不乘 $s）
+  $title.Height = Get-DgLineHeight -Font $title.Font
+  $title.Left = [int](24 * $s); $title.Top = [int](14 * $s); $title.Width = [int](260 * $s)
   $f.Controls.Add($title)
-
-  $sub = New-Object System.Windows.Forms.Label
-  # 单行 Label 必须一行放得下：字变小后这里原来那串太长，会折行然后被高度裁掉
-  $sub.Text = '左边选一类，右边改值；鼠标停某一行，底下显示这个键干什么用的。'
-  $sub.Font = $Ctx.FontSmall
-  $sub.ForeColor = $c.Muted
-  $sub.AutoSize = $false
-  $sub.Left = [int](24 * $s); $sub.Top = [int](46 * $s); $sub.Width = [int](640 * $s); $sub.Height = [int]$Ctx.HSmall
-  $f.Controls.Add($sub)
 
   $navW = [int](208 * $s)
   $nav = New-Object System.Windows.Forms.ListBox
@@ -1457,6 +1462,11 @@ function Show-DgSettings {
       if (-not $ent.Row.Controls.Contains($ent.Label)) { $bad += "$($ent.Key)：标签没加进行里" }
       if ($ent.Ctl.Right -gt $ent.Row.Width -or $ent.Ctl.Bottom -gt $ent.Row.Height) { $bad += "$($ent.Key)：控件超出行的范围" }
       if ($ent.Label.Bottom -gt $ent.Row.Height) { $bad += "$($ent.Key)：标签超出行的范围" }
+      # 行里**每一个**控件（含单位标签、浏览按钮）都不能探出行的右边界 ——
+      # 探出去就会让整个面板长出横向滚动条，一滚动左边标签就被切（用户报的排版遮挡就是这么来的）。
+      foreach ($ch in $ent.Row.Controls) {
+        if ($ch.Right -gt $ent.Row.Width + 1) { $bad += "$($ent.Key)：$($ch.GetType().Name) 探出行右边界（$($ch.Right) > $($ent.Row.Width)）" }
+      }
     }
     if ($bad.Count -gt 0) { Write-Host ('自检发现问题：' + ($bad -join '；')) }
     else { Write-Host ("自检：{0} 行全部就位（控件已加入行内、未越界）" -f $Ctx.Rows.Count) }
