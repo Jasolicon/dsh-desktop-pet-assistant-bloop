@@ -20,4 +20,10 @@ contextBridge.exposeInMainWorld('pet', {
   onState: (cb) => ipcRenderer.on('pet:state', (_e, s) => cb(s)),
   onSpeak: (cb) => ipcRenderer.on('pet:speak', (_e, text) => cb(text)),
   onShowDecisions: (cb) => ipcRenderer.on('pet:showDecisions', () => cb()),
+  // 选项问答 / 审批：主进程收到请求就推过来，用户在气泡上点选后回传
+  onAsk: (cb) => ipcRenderer.on('pet:ask', (_e, prompt) => cb(prompt)),
+  onAskClear: (cb) => ipcRenderer.on('pet:askClear', () => cb()),
+  answer: (choice) => ipcRenderer.invoke('pet:answer', choice),
+  // 子 agent 观察：它在跑的后台子任务（空串 = 跑完了）
+  onSubagents: (cb) => ipcRenderer.on('pet:subagents', (_e, line) => cb(line)),
 });

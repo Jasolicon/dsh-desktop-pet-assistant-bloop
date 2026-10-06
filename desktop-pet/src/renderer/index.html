@@ -33,6 +33,17 @@
         <input id="task" type="text" placeholder="说一句，它去做，做完报结论" autocomplete="off" spellcheck="false" />
         <button id="send" type="button">发送</button>
       </div>
+
+      <!-- 选项问答 / 审批：DSH 问过来的问题，直接在球上点选（和 PowerShell 版同一套协议） -->
+      <div id="ask" class="hidden">
+        <div id="askText"></div>
+        <div id="askOpts"></div>
+        <div id="askCustom">
+          <input id="askInput" type="text" placeholder="也可以自己写…" autocomplete="off" spellcheck="false" />
+          <button id="askSend" type="button">回答</button>
+        </div>
+        <div id="askBar"></div>
+      </div>
     </div>
     <script src="pet.js"></script>
   </body>

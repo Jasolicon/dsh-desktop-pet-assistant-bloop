@@ -42,9 +42,11 @@ function eventText(ev) {
 }
 
 export class DshSession {
-  constructor({ config = {}, logger = console, sessionId = '' } = {}) {
+  constructor({ config = {}, logger = console, sessionId = '', onEvent = null } = {}) {
     this.config = config;
     this.logger = logger;
+    /** 每个会话事件都过一遍这里（子 agent 观察用）。别在里面做重活。 */
+    this.onEvent = onEvent;
     this.proc = null;
     this.nextId = 1;
     this.pending = new Map();     // id -> { resolve, reject }
@@ -125,15 +127,18 @@ export class DshSession {
     }
 
     const w = this.promptWaiters;
-    if (!w) return;
     if (msg.method === 'session.event') {
       const ev = msg.params?.event;
+      // 会话事件先给观察者（子 agent 跟踪），再走本轮应答的收集
+      try { this.onEvent?.(ev); } catch { /* 观察者出错不该影响这一轮 */ }
+      if (!w) return;
       if (ev?.type === 'assistant/message') {
         const text = eventText(ev);
         if (text) w.answer = text;
       }
       return;
     }
+    if (!w) return;
     if (msg.method === 'session.status' && msg.params?.status === 'idle') w.finish();
   }
 

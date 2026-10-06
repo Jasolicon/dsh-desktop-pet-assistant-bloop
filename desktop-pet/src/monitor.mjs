@@ -28,7 +28,12 @@ const MAX_SHOTS = 6;
 /** 时间线里保留多少次窗口切换。 */
 const TIMELINE_SIZE = 40;
 
-export function createMonitor({ config = {}, onDecision, onState, logger = console } = {}) {
+/**
+ * @param {() => object|null} [context] 每轮判断时额外附加到 payload 上的字段
+ *        （子 agent 观察就是从这里塞 `agents` 进去的 —— 否则主 agent 会把
+ *         "屏幕很久没动"误读成"用户卡住了"，而真相是用户派了活出去正在跑）
+ */
+export function createMonitor({ config = {}, onDecision, onState, logger = console, context = null } = {}) {
   const sampleSeconds = Number(config.sampleSeconds) > 0 ? Number(config.sampleSeconds) : 2;
   const gateCfg = {
     judgeMinSeconds: config.judgeMinSeconds ?? GATE_DEFAULTS.judgeMinSeconds,
@@ -164,7 +169,7 @@ export function createMonitor({ config = {}, onDecision, onState, logger = conso
           quality: Number(config.jpegQuality) || 60,
         });
         if (hi) pushShot(now, hi.jpegBase64);
-        const payload = buildPayload(now, idleSeconds);
+        const payload = { ...buildPayload(now, idleSeconds), ...(context?.() || {}) };
         onState?.(snapshot());
         const result = await onDecision?.(payload);
         if (result === 'silent') {

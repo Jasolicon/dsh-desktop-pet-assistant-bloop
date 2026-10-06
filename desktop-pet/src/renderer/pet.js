@@ -17,13 +17,22 @@ const bar = document.getElementById('bar');
 const input = document.getElementById('task');
 const send = document.getElementById('send');
 const badge = document.getElementById('badge');
+const ask = document.getElementById('ask');
+const askText = document.getElementById('askText');
+const askOpts = document.getElementById('askOpts');
+const askInput = document.getElementById('askInput');
+const askSend = document.getElementById('askSend');
+const askBar = document.getElementById('askBar');
 
 /** 当前状态 → 光晕颜色由 CSS 管，这里只切 data-state。 */
 function setState(state) {
   petEl.dataset.state = state;
 }
 
-function showBubble(text, ms = 12000) {
+/** bubbleOwner：这条气泡是谁放的（子 agent 那条只在自己还握着气泡时才清掉它） */
+let bubbleOwner = null;
+function showBubble(text, ms = 12000, owner = null) {
+  bubbleOwner = owner;
   bubble.textContent = text;
   bubble.classList.remove('hidden');
   clearTimeout(showBubble.timer);
@@ -100,9 +109,83 @@ window.pet.onShowDecisions(async () => {
 });
 
 // ---------------------------------------------------------------------------
+// 选项问答 / 审批：DSH 问过来的问题，直接在球上点
+//
+// 三条语义照抄 PowerShell 版（写错会很难查）：
+//   · 「稍后」/倒计时走完 = **不写应答文件**，让 responder 自己超时后交给下一个应答者
+//   · 请求文件消失 = 对面已经超时或被别处回答了 → 把按钮一起收掉（只收文字会留下还能点的按钮）
+//   · 待回答时**不许**被进度播报之类的气泡盖掉（PowerShell 版踩过这个坑）
+// ---------------------------------------------------------------------------
+let askTimer = null;
+
+function hideAsk() {
+  if (askTimer) { clearInterval(askTimer); askTimer = null; }
+  ask.classList.add('hidden');
+  askOpts.replaceChildren();
+  askInput.value = '';
+  askBar.style.transform = 'scaleX(1)';
+}
+
+function submitAsk(choice) {
+  const text = String(choice ?? '').trim();
+  hideAsk();
+  window.pet.answer(text);          // 空字符串 = 不回答（由主进程写成"不写文件"）
+}
+
+window.pet.onAsk((prompt) => {
+  hideAsk();
+  setState('listening');            // 待回答用醒目色（红），和思考/说话区分开
+  askText.textContent = prompt.text || '';
+
+  for (const label of prompt.options || []) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = label;
+    if (label === '允许') b.className = 'primary';
+    b.addEventListener('click', () => submitAsk(label));
+    askOpts.appendChild(b);
+  }
+  // 「稍后」= 不回答；其余选项是真正要写回 DSH 的回答
+  askInput.placeholder = (prompt.options || []).length ? '也可以自己写…' : '写一句回答…';
+  ask.classList.remove('hidden');
+  askInput.focus();
+
+  const seconds = Number(prompt.seconds) > 0 ? Number(prompt.seconds) : 45;
+  const t0 = Date.now();
+  askTimer = setInterval(() => {
+    const left = 1 - (Date.now() - t0) / (seconds * 1000);
+    askBar.style.transform = `scaleX(${Math.max(0, left)})`;
+    if (left <= 0) { hideAsk(); window.pet.answer(''); }   // 超时 = 不回答
+  }, 200);
+});
+
+window.pet.onAskClear(() => {
+  // 对面超时/别处答了：请求文件没了，必须连按钮一起收掉
+  if (!ask.classList.contains('hidden')) hideAsk();
+});
+
+// 子 agent 观察：它派出去的活还在跑时，在气泡里说一声（跑完清掉）。
+// ⚠️ 不许盖住待回答的问题 —— PowerShell 版踩过这个坑：进度播报每秒把问题文字盖掉。
+window.pet.onSubagents((line) => {
+  if (!ask.classList.contains('hidden')) return;   // 有问答在等，别抢界面
+  if (line) {
+    showBubble(`（${line}）`, 0, 'subagents');
+  } else if (bubbleOwner === 'subagents') {
+    bubble.classList.add('hidden');
+    bubbleOwner = null;
+  }
+});
+
+askSend.addEventListener('click', () => submitAsk(askInput.value));
+askInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); submitAsk(askInput.value); }
+  if (e.key === 'Escape') { e.preventDefault(); submitAsk(''); }
+});
+
+// ---------------------------------------------------------------------------
 // 1) 鼠标穿透：只有指针落在真控件上才让窗口接收鼠标
 // ---------------------------------------------------------------------------
-const INTERACTIVE = [petEl, bubble, bar];
+const INTERACTIVE = [petEl, bubble, bar, ask];   // ask 也要拦鼠标，否则按钮点不到
 let hovering = false;
 function updateHover(target) {
   const on = INTERACTIVE.some((el) => !el.classList.contains('hidden') && (el === target || el.contains(target)));

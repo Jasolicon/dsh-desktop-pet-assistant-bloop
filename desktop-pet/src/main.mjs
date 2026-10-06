@@ -10,7 +10,7 @@
 import { app, BrowserWindow, ipcMain, Menu, powerMonitor, screen, shell } from 'electron';
 import { session as electronSession } from 'electron';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { ROOT, dshPaths, petImage } from './paths.mjs';
 import { loadConfig, saveConfig } from './config.mjs';
 import { askDsh } from './brain.mjs';
@@ -19,6 +19,8 @@ import { dataDir } from './dirs.mjs';
 import { DshSession } from './dsh-session.mjs';
 import { transcribe } from './stt.mjs';
 import { route } from './router.mjs';
+import { createAskWatcher } from './ask.mjs';
+import { createSubagentTracker, describeSubagents } from './subagents.mjs';
 
 let win = null;
 let cfg = loadConfig();
@@ -26,6 +28,18 @@ let busy = false;
 let monitor = null;
 /** 常驻 DSH 会话：一次 initialize（约 4.5s），之后每轮秒级。见 dsh-session.mjs。 */
 let session = null;
+/** 选项问答/审批应答的文件桥（与 pet-responder 对接）。 */
+let askWatcher = null;
+/** 子 agent 观察：它在跑的子任务（数据来自常驻会话的事件流）。 */
+let subagents = null;
+
+/**
+ * 问答请求目录。默认指向 desktop-guide 那个 —— pet-responder 的 `dir` 就是配在那儿的
+ * （见 desktop-guide/config.json 的 _askNote）。两边要指向同一个目录才能接上。
+ */
+function defaultAskDir() {
+  return join(ROOT, '..', 'desktop-guide', 'run', 'ask');
+}
 
 const log = (...a) => console.log('[pet]', ...a);
 
@@ -196,6 +210,14 @@ function registerIpc() {
 
   ipcMain.handle('pet:status', () => monitor?.snapshot() ?? null);
 
+  /** 用户在气泡上点了一个选项（或自己写了内容）。 */
+  ipcMain.handle('pet:answer', (_e, choice) => {
+    monitor?.noteUserAction(cfg.userQuietSeconds || 6);
+    const file = askWatcher?.answer(choice);
+    log('应答：', JSON.stringify(choice), file ? `→ ${file}` : '（不写文件，交给下一个应答者）');
+    return { ok: true, wrote: !!file };
+  });
+
   /** 语音输入：渲染进程录好的 PCM 拿过来识别。 */
   ipcMain.handle('pet:transcribe', async (_e, { samples, sampleRate }) => {
     monitor?.noteUserAction(cfg.userQuietSeconds || 6);
@@ -343,6 +365,11 @@ if (!app.requestSingleInstanceLock()) {
     // 观察循环：采样 → 本地闸门 →（值了才）叫模型
     monitor = createMonitor({
       config: cfg,
+      // 把"后台还有活在跑"塞进判断 payload
+      context: () => {
+        const list = subagents?.list() ?? [];
+        return list.length ? { agents: list } : null;
+      },
       onState: (s) => win?.webContents.send('pet:state', s),
       onDecision: async (payload) => {
         const r = await ask(buildLookPrompt(payload), { imagePaths: payload.shots || [] });
@@ -363,11 +390,41 @@ if (!app.requestSingleInstanceLock()) {
 
     // 预热常驻会话（约 4.5 秒，后台进行）：这样第一次判断不用再付进程启动的钱。
     // 起不来就退化成一次性调用，桌宠照常能用 —— 只是慢一点。
-    session = new DshSession({ config: cfg });
+    subagents = createSubagentTracker();
+    session = new DshSession({
+      config: cfg,
+      // 会话事件里挑 agent-start / agent-end（其余在跟踪器里就被丢掉了）
+      onEvent: (ev) => {
+        const before = subagents.count();
+        subagents.observe(ev);
+        const after = subagents.count();
+        if (before === after) return;
+        // 数量变了才动界面：从 0 → N、N → 0 各说一次，中间抖动不刷屏
+        if (before === 0 && after > 0) {
+          const line = describeSubagents(subagents.list());
+          log('子 agent：', line);
+          win?.webContents.send('pet:subagents', line);
+        } else if (after === 0) {
+          win?.webContents.send('pet:subagents', '');
+        }
+      },
+    });
     session.start().catch((err) => {
       log('常驻会话起不来，退回一次性调用：', err.message);
       session = null;
     });
+
+    // 选项问答 / 审批应答：盯 run/ask 目录，把按钮画到气泡上
+    askWatcher = createAskWatcher({
+      dir: cfg.askDir ? resolve(String(cfg.askDir)) : defaultAskDir(),
+      logger: console,
+      onPrompt: (prompt) => {
+        log('收到请求：', prompt.kind, JSON.stringify(prompt.text).slice(0, 60));
+        win?.webContents.send('pet:ask', { ...prompt, seconds: Number(cfg.askSeconds) > 0 ? Number(cfg.askSeconds) : 45 });
+      },
+      onClear: () => win?.webContents.send('pet:askClear'),
+    });
+    askWatcher.start();
 
     // 黑屏/锁屏时不看屏幕（省一次截图 + 一轮模型调用）
     powerMonitor.on('suspend', () => monitor?.setStandby(true));
@@ -376,6 +433,6 @@ if (!app.requestSingleInstanceLock()) {
     powerMonitor.on('unlock-screen', () => monitor?.setStandby(false));
   });
 
-  app.on('will-quit', () => session?.stop());
+  app.on('will-quit', () => { askWatcher?.stop(); session?.stop(); });
   app.on('window-all-closed', () => app.quit());
 }

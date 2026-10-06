@@ -51,6 +51,14 @@ export const DEFAULTS = {
   // 行为
   userQuietSeconds: 6,
   /**
+   * 选项问答 / 审批应答。
+   * askDir 留空 = 用 desktop-guide/run/ask（pet-responder 的 dir 就配在那儿）；
+   * 两边必须指向同一个目录才接得上。askSeconds 是等多久算放弃 ——
+   * 放弃 = **不写应答文件**，让 responder 自己超时后交给下一个应答者（不伪造答案）。
+   */
+  askSeconds: 45,
+  askDir: '',
+  /**
    * 打字派活要不要也先判一次意图。
    * 默认 false：那个输入框本来就写着"派活"，用户敲进去就是明确要做事 —— 不判更省一轮。
    * 打开后打字也走 router.mjs：只是说话就地回一句、不动手（代价是"要做的事"多一轮判定）。

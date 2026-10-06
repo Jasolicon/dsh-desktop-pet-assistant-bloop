@@ -204,3 +204,73 @@ html, body {
   box-shadow: 0 2px 6px rgba(20, 26, 38, 0.3);
   pointer-events: none;
 }
+
+/* ---------- 选项问答 / 审批 ---------- */
+#ask {
+  pointer-events: auto;
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 14px;
+  background: var(--surface);
+  border: 1px solid rgba(208, 74, 74, 0.45);   /* 待回答 = 红边，和"思考"的琥珀区分开 */
+  box-shadow: 0 4px 14px rgba(20, 26, 38, 0.2);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+#askText {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ink);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+#askOpts { display: flex; flex-wrap: wrap; gap: 6px; }
+
+#askOpts button {
+  flex: 1 1 auto;
+  min-width: 64px;
+  padding: 6px 10px;
+  border: 1px solid rgba(30, 40, 60, 0.18);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--ink);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+}
+#askOpts button:hover { background: #eef3fa; }
+#askOpts button.primary { background: var(--speak); border-color: var(--speak); color: #fff; }
+
+#askCustom { display: flex; align-items: center; gap: 6px; }
+#askInput {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid rgba(30, 40, 60, 0.16);
+  border-radius: 8px;
+  padding: 5px 8px;
+  font-size: 12px;
+  font-family: inherit;
+  outline: 0;
+}
+#askSend {
+  flex: none;
+  border: 0;
+  border-radius: 999px;
+  padding: 6px 12px;
+  background: var(--speak);
+  color: #fff;
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+/* 倒计时条：走完 = 没回答，交给下一个应答者（不写假答案） */
+#askBar {
+  height: 3px;
+  border-radius: 2px;
+  background: var(--listen);
+  transform-origin: left center;
+}

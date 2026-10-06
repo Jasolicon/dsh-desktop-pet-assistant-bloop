@@ -136,17 +136,21 @@
 | **主 agent 常驻** | `src/dsh-session.mjs`（stdio JSON-RPC） | initialize 4.5s 一次性；之后每轮 **0.897s**（对比一次性起的 4.66s） |
 | 语音输入（STT） | `src/stt.mjs` + 渲染进程 `getUserMedia` | 识别链路实测：1 秒静音 → `{ok:true,text:""}`（3.1s，含模型加载）。**长按录音 → 派活这一段没端到端验过**（得真人按住说话），代码路径与打字派活共用 `dispatchTask` |
 | 语音意图分流 | `src/router.mjs` | 识别完先判 TASK/CHAT，**聊天不起 agent**。真实模型实测 4 例全对（0.7–1.6s/次） |
+| 选项问答 / 审批应答 | `src/ask.mjs` | 与 pet-responder 同一套文件协议；16 项单测 + 合成请求在真应用里跑通（日志打出完整提示词） |
+| 子 agent 观察 | `src/subagents.mjs` | 从常驻会话事件流跟踪 `agent-start/end`；7 项单测 |
 
 **常驻会话带来的一个额外好处**：`session/prompt` 的 `contentBlocks` **支持内联图片**
 （TypeScript 版那边 headless CLI 没有附件入口，只能让模型用 `read_image` 读路径、多花一轮）。
 所以自动判断现在是**截图直接随消息给模型**，省掉那一轮往返。
 
-### 还没搬的（2 项）
+### 清单已清空
 
-| # | 能力 | 现状 | 说明 |
-|---|---|---|---|
-| 7 | 选项问答 / 审批应答 | ⬜ | `run/ask/` 那套协议在（见 DesktopGuide 的 AskTimer），但 **`pet-responder` 目前没装、`run/ask` 目录也不存在**，所以还没有对话方 |
-| 8 | 子 agent 观察 | ⬜ | 后台 agent 的进度显示 + 把 agents 字段塞进判断 payload |
+十项全部搬完。**还没验过的只有两处，而且都只能靠人手**：
+
+1. **语音**：长按录音 → 识别那条线要真人按住说一句话（识别器单独验过、分类器用真实模型验过，
+   中间那根线没验）。
+2. **问答/审批**：要 `pet-responder` 装进 desktop profile、且它的 `dir` 与 Electron 版的
+   `askDir` 指向同一个目录，才会真的有请求进来。桥本身的正确性用合成请求验过了。
 
 ### 两处**有意**与 PowerShell 版不同，别当成 bug
 
