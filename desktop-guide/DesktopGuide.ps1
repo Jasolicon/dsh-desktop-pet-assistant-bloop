@@ -418,6 +418,8 @@ namespace DesktopGuide {
     public event EventHandler PickRegionRequested;
     public event EventHandler ClearRegionRequested;
     public event EventHandler FontRequested;
+    /** 要开「所有设置」窗口（settings-window.ps1，一个窗口改完 config.json） */
+    public event EventHandler SettingsRequested;
     public event EventHandler PromptRequested;
     public event EventHandler StyleGuardRequested;
     public event EventHandler StyleCoachRequested;
@@ -656,6 +658,8 @@ namespace DesktopGuide {
       anim = new Timer();
       anim.Interval = 90;
       anim.Tick += (s, e) => {
+        // 自检 / 收摊时会先 Dispose 再泵消息，这时还可能有最后一拍到 —— 先停掉再走
+        if (IsDisposed || Disposing) { try { anim.Stop(); } catch { } return; }
         tick++;
         // 菜单开着时鼠标跑远 → 自动关。小屏上菜单会盖住一大片，
         // 不该逼用户去精确点那块空白。子菜单通常紧贴主菜单，所以判定范围放宽了 250px。
@@ -753,6 +757,7 @@ namespace DesktopGuide {
       settingsMenu.DropDownItems.Add(autoItem);
 
       settingsMenu.DropDownItems.Add(new ToolStripSeparator());
+      settingsMenu.DropDownItems.Add(MakeMenuItem("所有设置…（一个窗口改完）", SettingsRequested));
       settingsMenu.DropDownItems.Add(MakeMenuItem("字体字号…", FontRequested));
       settingsMenu.DropDownItems.Add(MakeMenuItem("改 system prompt…", PromptRequested));
       settingsMenu.DropDownItems.Add(MakeMenuItem("填 API key…", ApiKeyRequested));
@@ -1130,9 +1135,26 @@ namespace DesktopGuide {
     }
 
     // ---- 自绘：渲染到 ARGB 位图，再推给分层窗口（这样边缘才是真 alpha，不会有色键紫边）----
+    /// 释放时必须把两个定时器停掉。它们是 **WinForms 定时器**（靠窗口消息驱动），
+    /// Dispose 之后消息队列里还压着的那一拍照样会到，然后对着已释放的窗体渲染 →
+    /// ObjectDisposedException 弹"未处理异常"（实测：自检里一泵消息就中）。
+    protected override void Dispose(bool disposing) {
+      if (disposing) {
+        try { if (anim != null) { anim.Stop(); anim.Dispose(); } } catch { }
+        try { if (pressTimer != null) { pressTimer.Stop(); pressTimer.Dispose(); } } catch { }
+      }
+      base.Dispose(disposing);
+    }
+
     protected override void OnPaint(PaintEventArgs e) { Render(); }
 
     public void Render() {
+      // 窗体已经释放就直接返回。**必须挡这一下**：anim / pressTimer 是 WinForms 定时器，
+      // 它们是**窗口消息**驱动的 —— Dispose 之后消息队列里可能还压着一拍 Tick，
+      // 谁在这时候泵一下消息（DoEvents），就会对已释放的窗体 CreateHandle →
+      // ObjectDisposedException 直接弹"未处理异常"对话框（实测在自检里踩到）。
+      // 同一个原因也要求在 Dispose 里把定时器停掉，见下面的 Dispose 重写。
+      if (IsDisposed || Disposing) return;
       RenderCount++;
       if (surface == null || surface.Width != Width || surface.Height != Height) {
         if (surface != null) surface.Dispose();
@@ -1825,6 +1847,8 @@ $logPath = Join-Path $logDir ("observe-{0}.jsonl" -f (Get-Date -Format 'yyyyMMdd
 . (Join-Path $PSScriptRoot 'tts.ps1')
 # 账本（充值播报）：自己查余额、自己记账，不依赖任何别的插件。见 ledger.ps1 头部。
 . (Join-Path $PSScriptRoot 'ledger.ps1')
+# 设置窗口：schema 驱动的图形界面，一个窗口改完 config.json 里的每个参数。见 settings-window.ps1 头部。
+. (Join-Path $PSScriptRoot 'settings-window.ps1')
 
 # ---------------------------------------------------------------------------
 # 采集
@@ -3527,6 +3551,20 @@ $probe3 = New-Object DesktopGuide.PetForm -ArgumentList @([double]$script:UiScal
   Write-Output ("  前台窗口句柄           → {0}（0 = 拿不到）" -f $h1)
   $script:sampleTimer = $null
   $script:appliedSampleMs = 0
+  Write-Output '=== 5r. 设置窗口（一个窗口改完 config.json）==='
+  # 这一块盯两件事：(1) 界面自己的机械自检 + 存盘往返（见 settings-window.ps1 的 -SelfTest）；
+  # (2) config.json 里的参数**一个都没漏** —— 需求原话是"能改的参数都提供给用户"，
+  # 所以这里做的是集合比对，不是靠眼睛看。
+  [void](Show-DgSettings -ConfigPath $Config -Root $PSScriptRoot -UiScale $script:UiScale -SelfTest)
+  $swSchema = @(Get-DgSettingsSchema -Root $PSScriptRoot -ModelNames @())
+  $swKeys = @()
+  foreach ($swSec in $swSchema) { foreach ($swIt in $swSec.Items) { $swKeys += [string]$swIt.Key } }
+  $swSpecial = @('region', 'taskRules')     # 这两项有专用页（区域选择器 / 规则表编辑器），不在 Items 里
+  $swCfg = Get-Content -LiteralPath $Config -Raw -Encoding UTF8 | ConvertFrom-Json
+  $swCfgKeys = @($swCfg.PSObject.Properties.Name | Where-Object { $_ -notlike '_*' })
+  $swMissing = @($swCfgKeys | Where-Object { $swKeys -notcontains $_ -and $swSpecial -notcontains $_ })
+  Write-Output ("  分组 {0} 个｜可改参数 {1} 个｜专用页 {2} 个（{3}）" -f $swSchema.Count, $swKeys.Count, $swSpecial.Count, ($swSpecial -join '、'))
+  Write-Output ("  config.json 参数 {0} 个 → 没进界面的：{1}" -f $swCfgKeys.Count, $(if ($swMissing.Count -gt 0) { $swMissing -join '、' } else { '无 ✔' }))
   Write-Output '=== 6. 朗读（TTS）==='
   # -Check 只列音色，不出声（自检不该在半夜突然开口）。
   [void](Initialize-Tts -Config $cfg)
@@ -4037,6 +4075,47 @@ function Edit-PetFont {
   $fd.Dispose()
 }
 
+# 「所有设置」：一个窗口改完 config.json 的每个参数（schema 与界面都在 settings-window.ps1）。
+# 为什么还留着上面那个「字体字号…」小对话框：换字体是高频操作，FontDialog 一步到位；
+# 这个窗口是给「我想把整台机器从头调一遍」用的。
+function Edit-AllSettings {
+  $values = Show-DgSettings -ConfigPath $Config -Root $PSScriptRoot -UiScale $script:UiScale -OwnerForm $pet
+  if (-not $values) { return }                       # 取消（$null）
+  foreach ($k in $values.Keys) { $cfg[$k] = $values[$k] }
+  $keys = @($values.Keys)
+  Apply-PetConfigLive -Changed $keys
+  Add-Interaction 'settings' ("{0} 项：{1}" -f $keys.Count, ($keys -join ','))
+  if ($keys.Count -eq 0) { $pet.ShowMessage('设置窗口关掉了，没有改动。', [int]$cfg.showSeconds) }
+  else { $pet.ShowMessage("设置已保存（$($keys.Count) 项）。", [int]$cfg.showSeconds) }
+}
+
+# 把刚保存的改动**当场落地**。多数键是每轮现读 $cfg 的，改了自然就生效；
+# 这里要补的是"启动时读过一次、之后不再读"的那几个模块。
+function Apply-PetConfigLive {
+  param([string[]]$Changed = @())
+  if ($Changed -contains 'fontFamily' -or $Changed -contains 'fontSize') {
+    try { $pet.SetTextFont([string]$cfg.fontFamily, [double]$cfg.fontSize) } catch { }
+  }
+  # 采样节奏：不补这一步要等下次换任务档才生效（"调了但当时不生效"就是这么来的）
+  if ($Changed -contains 'sampleSeconds' -or $Changed -contains 'minSampleSeconds' -or $Changed -contains 'maxSampleSeconds') {
+    try { [void](Sync-SampleCadence -Sample ([double]$cfg.sampleSeconds)) } catch { }
+  }
+  if (@($Changed | Where-Object { $_ -like 'tts*' }).Count -gt 0) {
+    try { [void](Initialize-Tts -Config $cfg) } catch { }
+  }
+  if (@($Changed | Where-Object { $_ -like 'stt*' }).Count -gt 0) {
+    try { $script:sttReady = [bool](Initialize-Stt -Config $cfg).Ready } catch { }
+  }
+  if ($Changed -contains 'speakStyle') {
+    try {
+      $src = Join-Path $PSScriptRoot ("presets\$($cfg.speakStyle).txt")
+      if (Test-Path -LiteralPath $src) { Copy-Item -LiteralPath $src -Destination (Join-Path $PSScriptRoot 'system-prompt.txt') -Force }
+    } catch { }
+  }
+  # 监控区域或任务规则表变了 → 之前攒的截图/任务档判据都过期了
+  if ($Changed -contains 'region' -or $Changed -contains 'taskRules') { try { $script:shots.Clear() } catch { } }
+}
+
 # 供应商表：key 写到哪里、有什么用。参考那类"路径 + 供应商表"的做法，但只留我们真会读的三个。
 $script:ApiKeyProviders = @(
   [pscustomobject]@{ Name = 'DeepSeek（余额 / 充值播报）'; File = 'deepseek.key'; Hint = '查余额：api.deepseek.com/user/balance（没填这里时，会自动用 run\openai.key）' }
@@ -4457,6 +4536,11 @@ $pet.Add_ClearRegionRequested({
 
 $pet.Add_FontRequested({
     try { Edit-PetFont } catch { $pet.ShowMessage("改字体失败：$($_.Exception.Message)", [int]$cfg.showSeconds) }
+  })
+
+$pet.Add_SettingsRequested({
+    Note-UserAction 'settings'
+    try { Edit-AllSettings } catch { $pet.ShowMessage("打开设置失败：$($_.Exception.Message)", [int]$cfg.showSeconds) }
   })
 
 $pet.Add_PromptRequested({

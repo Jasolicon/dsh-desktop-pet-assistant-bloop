@@ -583,6 +583,45 @@ web UI 里由 `dsh-client-ui-approval` / `dsh-client-ui-user-questions` 当应�
 > 实现上有个 WinForms 的坑写在注释里了：`Icon.FromHandle` **不复制**像素，
 > 位图必须留着（`$script:trayBmp`），只留 Icon 让 Bitmap 被回收，托盘会变成一块空白。
 
+## 设置窗口：一个窗口改完 config.json
+
+`config.json` 里现在有 74 个参数。想调「多久看一眼屏幕」，得先知道键名是 `sampleSeconds`、
+还得记得单位是秒不是毫秒 —— 而且 JSON 少一个逗号整份配置就废了。所以有了这个：
+
+**右键 →「设置 ▸ 所有设置…（一个窗口改完）」**
+
+- 左边 11 个分组（外观 / 采集 / 判断闸门 / 对话窗口 / 语音 / 朗读 / 大脑与任务 / 记忆与日志 /
+  待机与应答 / 任务规则表 / 监控区域），顶上还有搜索框 —— 打「采样」「token」都能直接滤到那几行。
+- 每行都是「标签 + 行内速览 + 对得上的控件」：数字给数字框（范围**夹好**）、开关给勾选框、
+  固定几档给下拉。**鼠标停在哪一行，底部就把那个键名和完整说明显示出来**（行内那条是省略过的）。
+- 「本页恢复默认」只把这一页改回仓库里带的那份，而且仍然要点「保存」才写盘。
+- 保存时**只覆盖改过的键**：`_xxxNote` 那些说明、以及以后新加的键都不会被这个窗口吃掉。
+- 「任务规则表」是列表 + 字段编辑器（可以增删、上下移）；「监控区域」只能清除，
+  重新框选还是走菜单里那个全屏选择器。
+
+> ⚠️ 为什么参数表写在 `settings-window.ps1` 的 schema 里，而不是从 `config.json` 反推：
+> JSON 里没有「这个键是什么类型 / 范围 / 单位」的信息，而**夹子**恰恰是最值钱的部分
+> （比如采样下限 0.3 秒，防的是学出 0.05 秒把机器烧了）。schema 里还记了每项的默认值，
+> 「本页恢复默认」靠的就是它。
+
+自检（**不弹窗**，也不动真的 config.json）：
+
+```
+pwsh -File settings-window.ps1 -DgsSelfTest
+```
+
+它会核对「每行的控件真的加进了那一行、而且没越界」，再拿 `config.json` 的**副本**跑一次存盘
+往返（不改任何东西 → 文件必须字节不变；改一个开关 → 只该动那一个键、`_note` 必须原样还在）。
+`DesktopGuide.ps1 -SelfTest` 的第 5r 节也会跑一遍，并顺带断言「config.json 里的参数一个都没漏」。
+
+想直接看每个分组长什么样（离屏渲染成 PNG，一样**不弹窗**）：
+
+```
+pwsh -File settings-window.ps1 -DgsRenderTo run\settings-render
+```
+
+也可以单独开：`pwsh -File settings-window.ps1`（改的是同一份 `config.json`）。
+
 ## 采样节奏：换窗口立刻看一眼，多久看一次跟着任务走
 
 「采样」= 看一眼前台窗口 + 抓一张缩图 + 算一次画面指纹。这里其实有**两个独立的量**，别混：
@@ -736,7 +775,7 @@ key 的查找顺序和项目里 `advisor-minimax` / `advisor-openai` 一致：**
 **关掉的是"工具行"，不是服务本身**：`tool-subagent` 关了不等于 subagent 服务没了。要恢复哪一项，
 把对应 id 从数组里删掉即可。
 
-## 两个踩过的坑（都很隐蔽，写下来免得重来）
+## 四个踩过的坑（都很隐蔽，写下来免得重来）
 
 ### 1. DPI：必须在第一行就设置感知
 
@@ -754,6 +793,24 @@ key 的查找顺序和项目里 `advisor-minimax` / `advisor-openai` 一致：**
 
 分层窗口下 `Invalidate()` **不会**再触发 `OnPaint`（实测 10 秒内 `RenderCount` 一直是 1），
 所以内容只被推送过一次。改成在动画定时器里**直接调用 `Render()`** 主动推送。
+
+### 3. `Label.AutoEllipsis` 会让这个控件在 WM_PRINT 下**整块不画**
+
+做设置窗口时踩到的：标签开了 `AutoEllipsis = $true`，屏幕上一切正常，但 `DrawToBitmap`
+（以及任何走 WM_PRINT 的截图/打印路径）里**标签列整个消失**——同一行里的 TextBox、按钮都好好的，
+于是很容易误判成"布局算错了"。排查到最后是 `AutoEllipsis` 把 Label 切到了另一条绘制路径。
+
+改法：**自己截断 + 自己加 `…`**（`settings-window.ps1` 的 `Limit-DgText`），
+顺手还能收在标点处（裁成半个词看着像坏了）。自检那套离屏渲染就是靠这个才看得见内容。
+
+### 4. 窗体 Dispose 之后，WinForms 定时器还会再跳一拍
+
+`Timer` 是**窗口消息**驱动的：窗体 Dispose 了，消息队列里压着的那一拍照样会到，
+然后在 `Render()` 里对已释放的窗体 `CreateHandle()` → `ObjectDisposedException` 直接弹
+「未处理异常」对话框（实测：自检里一 `DoEvents` 就中）。
+
+改法：`PetForm` 重写 `Dispose(bool)` 停掉并释放两个定时器，`Render()` 开头再挡一下
+`IsDisposed || Disposing`。两道都要——只停定时器挡不住已经在队列里的那一拍。
 
 ## 大脑（可插拔）
 
