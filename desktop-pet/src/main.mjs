@@ -183,6 +183,31 @@ function createWindow() {
     });
   }
 
+  // 开发用：设了 PET_DEBUG_TOGGLE=1 就在页面里真跑一遍"打字派活"输入条的开关序列，
+  // 把每步之后 hidden 的状态打出来再退出。用途：这类纯前端交互没有单测，
+  // 光看代码容易漏（双击写死成"只开不关"就是这么漏过去的）。
+  if (process.env.PET_DEBUG_TOGGLE) {
+    win.webContents.once('did-finish-load', async () => {
+      try {
+        const states = await win.webContents.executeJavaScript(`(() => {
+          const bar = document.getElementById('bar');
+          const pet = document.getElementById('pet');
+          const hidden = () => bar.classList.contains('hidden');
+          const dbl = () => pet.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+          const out = { 初始: hidden() };
+          dbl(); out['双击一次'] = hidden();
+          dbl(); out['再双击一次'] = hidden();
+          dbl(); document.getElementById('close').click(); out['点×'] = hidden();
+          return out;
+        })()`);
+        log('[debug] 输入条开关序列（true = 收起）:', JSON.stringify(states, null, 0));
+      } catch (err) {
+        console.error('[pet][debug] 开关序列失败', err);
+      }
+      app.quit();
+    });
+  }
+
   // 初始整窗穿透；渲染进程在鼠标移到宠物身上时打开
   win.setIgnoreMouseEvents(true, { forward: true });
 

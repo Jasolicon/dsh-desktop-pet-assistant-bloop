@@ -20,6 +20,7 @@ const bubble = document.getElementById('bubble');
 const bar = document.getElementById('bar');
 const input = document.getElementById('task');
 const send = document.getElementById('send');
+const closeBtn = document.getElementById('close');
 const badge = document.getElementById('badge');
 const ask = document.getElementById('ask');
 const askText = document.getElementById('askText');
@@ -331,7 +332,9 @@ async function finishRecording() {
 
 petEl.addEventListener('dblclick', (e) => {
   e.preventDefault();
-  toggleBar(true);
+  // 双击 = 开 / 关。原来是写死的 toggleBar(true)，于是再双击一次关不掉 ——
+  // 唯一能收起来的路是 Esc，而那个没人猜得到。
+  toggleBar();
 });
 
 petEl.addEventListener('contextmenu', (e) => {
@@ -402,6 +405,7 @@ async function dispatchTask(overrideText) {
 }
 
 send.addEventListener('click', dispatchTask);
+closeBtn.addEventListener('click', () => toggleBar(false));
 input.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') { e.preventDefault(); dispatchTask(); }
   if (e.key === 'Escape') { e.preventDefault(); toggleBar(false); }
