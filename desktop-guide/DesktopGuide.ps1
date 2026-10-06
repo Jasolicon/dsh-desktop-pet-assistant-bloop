@@ -218,6 +218,17 @@ namespace DesktopGuide {
       return (int)pid;
     }
 
+    /// <summary>
+    /// 前台**窗口**句柄（不是进程）。为什么需要它：同一个进程里换窗口（两个资源管理器窗口、
+    /// 两个浏览器窗口、VS Code 换工作区）pid 完全相同，只看 pid 会把这类切换整个漏掉 ——
+    /// 而它对用户就是"换了个窗口"，同样值得立刻看一眼。返回 long 而不是 IntPtr：
+    /// PowerShell 那侧要拿它做数值比较，IntPtr 的 -eq 语义容易出意外。
+    /// </summary>
+    public static long ForegroundHwnd() {
+      IntPtr h = GetForegroundWindow();
+      return h == IntPtr.Zero ? 0L : h.ToInt64();
+    }
+
     // 列出可见的顶层窗口（标题 + 矩形），用来把 agent 说的"盯这个窗口"解析成真实坐标。
     [StructLayout(LayoutKind.Sequential)] public struct RECT { public int L, T, R, B; }
     [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc cb, IntPtr p);
@@ -1751,6 +1762,10 @@ $defaults = [ordered]@{
   # 学习出来的采样率会被夹在这个区间里（防止学出 0.05 秒把机器烧了）
   minSampleSeconds      = 0.3
   maxSampleSeconds      = 60
+  # 前台窗口看门狗的轮询间隔（毫秒）。注意这**不是**屏幕采样率本身，只是"多久发现一次换窗口"：
+  # 越小，切过去的一瞬间越早被看见（游戏开局那种立刻要建议的场景）。开销是一次
+  # GetForegroundWindow + 数值比较，测不出占用。默认 400。
+  focusWatchMs          = 400
   # 定时播报余额（分钟；0 = 不播）。余额/上次调用/今天的数字另外**一直**显示在气泡最下方那行小字里。
   balanceBroadcastMinutes = 30
   # 两次采样之间画面指纹跳变超过这个值就算"漏掉了东西"（指纹总差上限 960）
@@ -1841,6 +1856,7 @@ $script:lastSkipReason = ''
 $script:curProfile = $null          # 当前任务档（由 config.taskRules 判定）
 $script:curTaskName = ''
 $script:curTaskKey = ''
+$script:appliedSampleMs = 0         # 上次**真正写进** $sampleTimer.Interval 的毫秒值（见 Sync-SampleCadence）
 $script:lastObserveLogAt = [datetime]::MinValue
 $script:silentTotal = 0   # 沉默总次数（从日志全量读出 + 运行时累加，不受内存缓冲上限影响）
 $interactionPath = Join-Path $logDir 'interactions.jsonl'
@@ -2430,6 +2446,33 @@ function Get-TaskProfile {
   return $prof
 }
 
+function Sync-SampleCadence {
+  <#
+    把"当前任务档"的采样节奏**真正落到定时器上**，每次采样都调。
+
+    为什么单独抽出来：这段原来写在 Sample-Once 的 `if ($prof.name -ne $script:curTaskName)`
+    里面，于是只有"换了一个**档名**"才会重设 Interval。两种情况下节奏是错的：
+
+      1. 同一条规则下的两个进程（balatro → hearthstone 都命中「卡牌/回合制游戏」）：
+         档名一样，不走重设 → 前一个进程的学习值（比如 0.42s）会被后一个继续沿用，
+         而后者本该是规则里的 0.6s。反过来（0.3 → 0.6）也一样。
+      2. 模型给了 `SAMPLE: <秒>`、或 Note-SampleJump 的跳变学习改了表之后：
+         当前档的 Interval 不会刷新，要等下次换档才生效 —— 表现就是"调了但当时不生效"。
+
+    做法：每次都算一遍目标毫秒值，和**上次真正应用的值**比，不同才写。
+    写 Interval 会重排计时器，没必要每拍都写；比较是纯内存操作，可以不心疼地每拍做。
+    返回值 = 本次生效的秒数（-1 = 这档不限制采样，保持原样）。
+  #>
+  param([double]$Sample)
+  if ($Sample -le 0) { return -1 }
+  # 下限 300ms 和原来一致：防的是"学出 0.05 秒把机器烧了"（config 里还有一层夹子）
+  $ms = [int]([math]::Max(300, $Sample * 1000))
+  if ($ms -eq $script:appliedSampleMs) { return $Sample }
+  if ($sampleTimer) { try { $sampleTimer.Interval = $ms } catch { } }
+  $script:appliedSampleMs = $ms
+  return $Sample
+}
+
 function Enter-Standby {
   param([string]$Why = '信号', [string]$Kind = 'signal', [string]$Display = '')
   if ($script:standby) { return }
@@ -2491,15 +2534,14 @@ function Sample-Once {
   # ---- 任务档：决定"多久看一眼"，以及"这类任务该怎么帮" ----
   $script:curTaskKey = Get-TaskKey -Process $proc -Title $title
   $prof = Get-TaskProfile -Process $proc -Title $title
+  # curProfile **每次采样都刷新**：原来只在档名变化时刷，于是 Note-SampleJump 会拿
+  # 上一个环境的 sample 当基准去乘 0.7（基准本身是旧的 → 越调越偏）。
+  $script:curProfile = $prof
+  # 采样节奏**每次都对账**，不是只在换档名时重设（理由见 Sync-SampleCadence 的注释）
+  [void](Sync-SampleCadence -Sample ([double]$prof.sample))
   if ($prof.name -ne $script:curTaskName) {
     $script:curTaskName = $prof.name
-    $script:curProfile = $prof
     Add-Interaction 'task' ("$($prof.name)|采样 $($prof.sample)s|截图 $($prof.shot)s")
-    # 采样节奏跟着任务走：游戏快、视频/桌面慢
-    if ($sampleTimer -and $prof.sample -gt 0) {
-      $ms = [int]([math]::Max(300, $prof.sample * 1000))
-      if ($ms -ne $sampleTimer.Interval) { try { $sampleTimer.Interval = $ms } catch { } }
-    }
   }
 
   $now = Get-Date
@@ -3462,6 +3504,29 @@ $probe3 = New-Object DesktopGuide.PetForm -ArgumentList @([double]$script:UiScal
   $pBad = @($pathChecks.Keys | Where-Object { -not $pathChecks[$_] })
   foreach ($k in $pathChecks.Keys) { Write-Output ("  {0} {1}" -f $(if ($pathChecks[$k]) { '✔' } else { '✘' }), $k) }
   Write-Output ("  配置里的机器字面量：config.json $cfgHard 处，agents.json $agHard 处；{0}/{1} 项通过" -f ($pathChecks.Count - $pBad.Count), $pathChecks.Count)
+  Write-Output '=== 5q. 采样节奏落地（"只在换档名时重设"是不够的）==='
+  # 自检跑在定时器创建之前，所以这里装一个**假定时器**，看 Interval 有没有被真的写进去。
+  # 用 pscustomobject 而不是真的 WinForms Timer：自检不该改真实节奏、也不该起消息循环。
+  # 变量用 $script: 前缀，函数里读的就是它（PowerShell 的变量查找会走到脚本作用域）。
+  $fakeTimer = [pscustomobject]@{ Interval = 0 }
+  $script:sampleTimer = $fakeTimer
+  $script:appliedSampleMs = 0
+  [void](Sync-SampleCadence -Sample 0.6)       # 卡牌档（balatro）
+  Write-Output ("  卡牌档 0.6s            → Interval={0}ms" -f $fakeTimer.Interval)
+  [void](Sync-SampleCadence -Sample 0.42)      # 跳变学习把 balatro 调快 → 必须当场生效
+  Write-Output ("  学习值热更新 → 0.42s   → Interval={0}ms（调了当场生效，不用等换档）" -f $fakeTimer.Interval)
+  $keep = $fakeTimer.Interval
+  [void](Sync-SampleCadence -Sample 0.42)      # 同值重复：不该重复写（写 Interval 会重排计时器）
+  Write-Output ("  同一个值再算一遍       → Interval={0}ms（{1}）" -f $fakeTimer.Interval, $(if ($fakeTimer.Interval -eq $keep) { '没重复写' } else { '重复写了 —— 不该' }))
+  [void](Sync-SampleCadence -Sample 0.6)       # 同规则、无学习值的另一个进程（hearthstone）
+  Write-Output ("  换到同档另一个进程     → Interval={0}ms（老逻辑会停在 420）" -f $fakeTimer.Interval)
+  [void](Sync-SampleCadence -Sample 0.05)      # 异常学习值：下限 300ms 必须兜住
+  Write-Output ("  被学出 0.05s（异常）   → Interval={0}ms（下限 300）" -f $fakeTimer.Interval)
+  # 判据是**窗口句柄**：同一个进程的两个窗口 pid 相同、句柄不同，所以能区分换窗口。
+  $h1 = [DesktopGuide.Native]::ForegroundHwnd()
+  Write-Output ("  前台窗口句柄           → {0}（0 = 拿不到）" -f $h1)
+  $script:sampleTimer = $null
+  $script:appliedSampleMs = 0
   Write-Output '=== 6. 朗读（TTS）==='
   # -Check 只列音色，不出声（自检不该在半夜突然开口）。
   [void](Initialize-Tts -Config $cfg)
@@ -4653,17 +4718,21 @@ $sampleTimer.Add_Tick({
 # ---- 焦点/前台切换 = 一次采样触发 ----
 # 为什么要它：定时采样最坏要等一整个采样周期才知道"用户换程序了"，
 # 而换程序恰恰是最值得立刻看一眼的时刻（新窗口可能要立刻给建议，例如牌局开始）。
-# 这个看门狗只做一件极便宜的事：比较前台进程是否变了；变了才真正采样。
-$script:lastFocusPid = -1
+# 判据用**窗口句柄**而不是进程 pid：同一个进程里换窗口（两个资源管理器窗口、两个浏览器
+# 窗口、VS Code 换工作区）pid 完全一样，只看 pid 会把这类切换整个漏掉 ——
+# 而它对用户就是"换了个窗口"，同样值得立刻看一眼。
+# **标题不参与比较**：浏览器/播放器的标题一直在变（进度、歌名），那不是切换，
+# 跟着它触发只会把采样刷成噪声，而采样每次都带一张截图。
+$script:lastFocusHwnd = [long]0
 $focusTimer = New-Object System.Windows.Forms.Timer
-$focusTimer.Interval = 400
+$focusTimer.Interval = [int]([double]$(if ($cfg.focusWatchMs) { $cfg.focusWatchMs } else { 400 }))
 $focusTimer.Add_Tick({
     try {
       if ($script:standby) { return }
-      $fp = [DesktopGuide.Native]::ForegroundPid()
-      if ($fp -le 0) { return }
-      if ($fp -eq $script:lastFocusPid) { return }
-      $script:lastFocusPid = $fp
+      $h = [DesktopGuide.Native]::ForegroundHwnd()
+      if ($h -le 0) { return }
+      if ($h -eq $script:lastFocusHwnd) { return }
+      $script:lastFocusHwnd = $h
       Sample-Once -Force      # 换窗口立刻采一次，并且立刻截图
     } catch { }
   })
