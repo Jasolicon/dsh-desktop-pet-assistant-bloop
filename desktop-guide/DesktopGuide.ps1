@@ -443,6 +443,8 @@ namespace DesktopGuide {
     public event EventHandler PromptRequested;
     public event EventHandler StyleGuardRequested;
     public event EventHandler StyleCoachRequested;
+    /** 损友模式：吐槽一句 + 一句有用的（风格文件 presets\roast.txt） */
+    public event EventHandler StyleRoastRequested;
     public event EventHandler OptionChosen;
     /** 长按开始（该开麦了） / 长按结束（该停止录音并识别了） */
     public event EventHandler LongPressStarted;
@@ -793,6 +795,7 @@ namespace DesktopGuide {
       var styleMenu = new ToolStripMenuItem("说话风格");
       styleMenu.DropDownItems.Add(MakeMenuItem("保守（只在明显问题时说）", StyleGuardRequested));
       styleMenu.DropDownItems.Add(MakeMenuItem("陪练（每次都给建议）", StyleCoachRequested));
+      styleMenu.DropDownItems.Add(MakeMenuItem("损友（先吐槽再给建议）", StyleRoastRequested));
       settingsMenu.DropDownItems.Add(styleMenu);
       settingsMenu.DropDownItems.Add(ttsMenu);
       settingsMenu.DropDownItems.Add(autoItem);
@@ -3723,6 +3726,30 @@ $probe3 = New-Object DesktopGuide.PetForm -ArgumentList @([double]$script:UiScal
   $evtA = [DesktopGuide.PetForm].GetMethod('add_AgentListRequested')
   $evtW = [DesktopGuide.PetForm].GetMethod('add_WakeRequested')
   Write-Output ("  事件接线：add_AgentListRequested = {0}｜add_WakeRequested = {1}" -f ($null -ne $evtA), ($null -ne $evtW))
+  Write-Output '=== 5u. 说话风格（保守 / 陪练 / 损友）==='
+  # 四件事一起盯：① 三份风格文件都在 ② 每份都带着「纯文本、不要 Markdown」那条硬约束
+  # （自己写风格文件最容易漏的就是它 —— 漏了气泡里会原样显示一堆星号和井号）
+  # ③ 设置窗口的下拉里有三档 ④ 右键「设置 → 说话风格」里也有三条。
+  $styleOk = [ordered]@{}
+  foreach ($st in @('guard', 'coach', 'roast')) {
+    $sp = Join-Path $PSScriptRoot "presets\$st.txt"
+    $body = if (Test-Path $sp) { Get-Content -LiteralPath $sp -Raw -Encoding UTF8 } else { '' }
+    $styleOk["$st 文件存在"] = ($body.Length -gt 120)
+    $styleOk["$st 带纯文本约束"] = ($body -match '不要用 Markdown')
+  }
+  $swStyle = $null
+  foreach ($sec in $swSchema) { foreach ($it in $sec.Items) { if ($it.Key -eq 'speakStyle') { $swStyle = $it } } }
+  $styleOk['设置窗口有三档'] = ($null -ne $swStyle -and @($swStyle.Choices).Count -eq 3)
+  $styleOk['设置窗口含损友'] = ($null -ne $swStyle -and @($swStyle.Choices | Where-Object { $_.Value -eq 'roast' }).Count -eq 1)
+  $sprobe = New-Object DesktopGuide.PetForm -ArgumentList @([double]$script:UiScale, [string]$cfg.fontFamily, [double]$cfg.fontSize)
+  $null = $sprobe.Handle
+  $sprobe.SetSettings(@('DeepSeek Flash'), 'DeepSeek Flash', @('只读'), '只读')
+  $setMenu = $sprobe.ContextMenuStrip.Items | Where-Object { $_.Text -eq '设置' } | Select-Object -First 1
+  $styleMenu = if ($setMenu) { $setMenu.DropDownItems | Where-Object { $_.Text -eq '说话风格' } | Select-Object -First 1 } else { $null }
+  $styleOk['右键菜单有三条'] = ($null -ne $styleMenu -and $styleMenu.DropDownItems.Count -eq 3)
+  $sprobe.Dispose()
+  foreach ($k in $styleOk.Keys) { Write-Output ("  {0} {1}" -f $(if ($styleOk[$k]) { '✔' } else { '✘' }), $k) }
+  Write-Output ("  5u {0}/{1} 项通过" -f @($styleOk.Values | Where-Object { $_ }).Count, $styleOk.Count)
   Write-Output '=== 6. 朗读（TTS）==='
   # -Check 只列音色，不出声（自检不该在半夜突然开口）。
   [void](Initialize-Tts -Config $cfg)
@@ -4240,7 +4267,7 @@ function Clear-MonitorRegion {
 # agent 说"盯这个窗口"，我们把它解析成真实矩形。
 # 让模型做语义判断（该盯什么），我们做几何测量（它在哪）—— 比让它猜像素坐标可靠得多。
 function Set-SpeakStyle {
-  param([ValidateSet('guard', 'coach')][string]$Style)
+  param([ValidateSet('guard', 'coach', 'roast')][string]$Style)
   $src = Join-Path $PSScriptRoot "presets\$Style.txt"
   $dst = Join-Path $PSScriptRoot 'system-prompt.txt'
   if (Test-Path $src) {
@@ -4250,11 +4277,11 @@ function Set-SpeakStyle {
   $cfg.speakStyle = $Style
   Save-PetConfig
   Add-Interaction 'speak_style' $Style
-  if ($Style -eq 'coach') {
-    $autoHint = if ($pet.AutoEnabled) { '自动检查已开着，它会连续陪练。' } else { '但自动检查目前是关的 —— 右键开「自动发言」才会连续陪练，否则还是只在你问的时候给建议。' }
-    $pet.ShowMessage("已切到陪练模式：每次判断都会给出建议。`n$autoHint", [int]$cfg.showSeconds)
-  } else {
-    $pet.ShowMessage('已切回保守模式：只在明显的问题、反复失败、或与目标冲突时开口。', [int]$cfg.showSeconds)
+  $autoHint = if ($pet.AutoEnabled) { '自动检查已开着，它会自己找机会开口。' } else { '但自动检查目前是关的 —— 右键开「自动发言」才会自己找机会，否则只在你问的时候给建议。' }
+  switch ($Style) {
+    'coach' { $pet.ShowMessage("已切到陪练模式：每次判断都会给出建议。`n$autoHint", [int]$cfg.showSeconds) }
+    'roast' { $pet.ShowMessage("已切到损友模式：先吐槽一句再给建议 —— 只吐槽屏幕上那件事，不骂人。`n$autoHint", [int]$cfg.showSeconds) }
+    default { $pet.ShowMessage('已切回保守模式：只在明显的问题、反复失败、或与目标冲突时开口。', [int]$cfg.showSeconds) }
   }
 }
 
@@ -4783,6 +4810,7 @@ $pet.Add_PromptRequested({
 
 $pet.Add_StyleGuardRequested({ try { Set-SpeakStyle -Style 'guard' } catch { } })
 $pet.Add_StyleCoachRequested({ try { Set-SpeakStyle -Style 'coach' } catch { } })
+$pet.Add_StyleRoastRequested({ try { Set-SpeakStyle -Style 'roast' } catch { } })
 
 # 拖东西到宠物身上 = 发给 agent（打开对话栏并把内容填进去，直接发）
 $pet.Add_Dropped({

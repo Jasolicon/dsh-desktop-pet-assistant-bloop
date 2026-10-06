@@ -18,6 +18,7 @@
   "fontFamily": "黑体",
   "fontSize": 6.0,
   "speakStyle": "coach",
+  "_speakStyleNote": "说话风格：presets\\<名字>.txt 会被复制成 system-prompt.txt 生效。coach = 陪练（每轮都给建议）；guard = 保守（只在明显问题时说）；roast = 损友（先吐槽屏幕上的事、再给一句建议，不骂人）。右键「设置 → 说话风格」或设置窗口都能换。",
   "_ttsNote": "朗读 = 把结论句读出来。ttsEngine: auto/edge/speech —— edge 是微软神经音色（音质好、可爱，但要联网，约 3 秒才出声）；speech 是本机老音色（瞬时、离线）。ttsVoice 留空 = Edge 用默认的卡通女声 Xiaoyi。想挑音色跑：pwsh -File tts.ps1 -Audition（或调 Invoke-TtsAudition）。运行时的静音状态记在 run/pet.json。",
   "ttsEnabled": true,
   "ttsEngine": "auto",
