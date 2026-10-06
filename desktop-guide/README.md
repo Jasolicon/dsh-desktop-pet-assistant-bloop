@@ -289,7 +289,7 @@ pwsh -NoProfile -Command ". .\stt.ps1; [void](Initialize-Stt -Config (Get-Conten
 所以默认改成**直接把 DSH 的界面拿过来**：
 
 ```
-dsh --profile web --port 4319 --no-open        ← 就是 `dsh web`，发行包里现成的
+dsh --profile web --patch run\webui-model.patch.yml --port 4319 --no-open   ← 就是 `dsh web`，发行包里现成的
 ```
 
 由 [`web-ui.ps1`](web-ui.ps1) 起服务（幂等；pid 记在 `run\webui.json`），再用 **Edge 的 `--app=` 模式**
@@ -298,6 +298,17 @@ dsh --profile web --port 4319 --no-open        ← 就是 `dsh web`，发行包�
 - 点桌宠的「**对话**」= 开这个窗口。
 - 想换回旧的自绘气泡栏：`config.json` 里 `chatUi` 改成 `"bubbles"`（保留作兜底）。
 - **拖拽到桌宠**现在也走"派一个 agent 去做"（和语音同一条路），见下一节。
+
+> ⚠️ **对话窗口为什么要带 `--patch`**：DSH 装完自带的 `web` profile 把 `agent-default-model`
+> 指向 **`deepseek-official`**，那个 provider 要 `DEEPSEEK_API_KEY` 环境变量 —— 没设的话
+> 「对话」里问什么都是 `MISSING_CREDENTIAL`（`no API key for provider route "deepseek-official"`）。
+> 桌宠自己的 headless 侧一直是靠 `--patch` 改用**账号登录**的（见 `dsh-agents.ps1` 的 `Write-AgentPatch`），
+> 唯独对话窗口直接开的是 `dsh web`、没走那条路，所以漏了。现在启动时补同一份 patch，
+> 覆盖成 `agents.json` 里的模型（`deepseek-account`，不用 key）。
+>
+> 两点实测细节：`--patch` 是**启动器**参数，必须排在 `--port` / `--no-open` 这些**应用**参数前面，
+> 否则会被 web 应用接管、报 `error: unknown option '--patch'` 起不来；换模型改 `config.json` 的
+> `webModel`（填 `agents.json` 里 models 的 `name`，留空 = 第一个），下次点「对话」会自动重启那个服务。
 
 ## 拖进来的文件：会真的被读掉
 

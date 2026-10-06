@@ -60,7 +60,9 @@
   "webPort": 4319,
   "webWindowWidth": 560,
   "webWindowHeight": 780,
-  "webEdge": ""
+  "webEdge": "",
+  "_webModelNote": "「对话」窗口用哪个模型：填 agents.json 里 models 的 name（例如 \"DeepSeek V4 Pro\"）；留空 = 列表第一个。**必须指向用 DSH 已登录账号的 provider（deepseek-account）** —— DSH 装完自带的 web profile 默认是 deepseek-official，那要 DEEPSEEK_API_KEY 环境变量，没设的话对话一问就报 MISSING_CREDENTIAL；桌宠启动 dsh web 时会用这一项生成 --patch 覆盖掉它。改了这项，下次点「对话」会自动重启那个服务。",
+  "webModel": ""
   ,
   "_petTaskNote": "语音输入识别出的那句话不是拿去聊天，而是**派一个后台 agent 去做**（做完桌宠把最后一行结论念给你听）。petTaskModel 留空 = 用 agents.json 的第一个模型；petTaskEffort 默认 low —— 语音派的多半是短活，压到 low 能明显快一截，想跟 agents.json 一致就留空。",
   "petTaskModel": "",

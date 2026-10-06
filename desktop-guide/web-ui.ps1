@@ -50,10 +50,59 @@ function Get-WebUiPlan {
     Profile      = 'web'
     RunDir       = Join-Path $script:WebUiRoot 'run'
     StateFile    = Join-Path $script:WebUiRoot 'run\webui.json'
+    ModelPatch   = Join-Path $script:WebUiRoot 'run\webui-model.patch.yml'
     BrowserData  = Join-Path $script:WebUiRoot '.webui-profile'
     Width        = [int](& $get 'webWindowWidth' 560)
     Height       = [int](& $get 'webWindowHeight' 780)
   }
+}
+
+function Get-WebUiModel {
+  <#
+    对话窗口用哪个模型：cfg.webModel 填 agents.json 里的名字；留空 = 列表第一个。
+    为什么要它：DSH 装完自带的 web profile 把 agent-default-model 指向 deepseek-official，
+    那要 DEEPSEEK_API_KEY 环境变量 —— 没设的话「对话」一问就报 MISSING_CREDENTIAL。
+    桌宠自己的 headless 侧一直靠 --patch 改成账号登录（见 dsh-agents.ps1 的 Write-AgentPatch），
+    这里让「对话」窗口走同一套账号/模型。
+  #>
+  param($Config)
+  $models = @()
+  $agentsFile = Join-Path $script:WebUiRoot 'agents.json'
+  if (Test-Path -LiteralPath $agentsFile) {
+    try {
+      $parsed = Get-Content -LiteralPath $agentsFile -Raw -Encoding UTF8 | ConvertFrom-Json
+      if ($parsed.models) { $models = @($parsed.models) }
+    } catch { }
+  }
+  if (-not $models.Count) { return $null }
+  $want = ''
+  if ($Config -and ($Config.PSObject.Properties.Name -contains 'webModel') -and $Config.webModel) {
+    $want = [string]$Config.webModel
+  }
+  if ($want) {
+    $hit = $models | Where-Object { [string]$_.name -eq $want } | Select-Object -First 1
+    if ($hit) { return $hit }
+  }
+  return $models[0]
+}
+
+function Write-WebUiModelPatch {
+  <# 把选中的模型写成一份 --patch 覆盖文件（启动 dsh web 时用）。 #>
+  param($Plan, $Model)
+  if (-not $Model) { return $null }
+  $lines = @(
+    '- id: agent-default-model'
+    '  name: "@deepseek-ai/dsh-agent-default-model"'
+    '  config:'
+    "    provider: $($Model.provider)"
+    "    model: $($Model.model)"
+  )
+  if ($Model.effort) { $lines += "    reasoningEffort: $($Model.effort)" }
+  # 用 WriteAllText 而不是 Set-Content：Windows PowerShell 5.1 的 -Encoding UTF8 会加 BOM，
+  # YAML 解析器对着 BOM 会翻车；这里强制无 BOM。
+  if (-not (Test-Path -LiteralPath $Plan.RunDir)) { New-Item -ItemType Directory -Force -Path $Plan.RunDir | Out-Null }
+  [System.IO.File]::WriteAllText($Plan.ModelPatch, (($lines -join "`n") + "`n"), (New-Object System.Text.UTF8Encoding($false)))
+  return $Plan.ModelPatch
 }
 
 function Get-WebUiUrl {
@@ -70,7 +119,8 @@ function Get-WebUiUrl {
   $announced = Read-WebUiAnnouncedUrl -Plan $Plan -TimeoutSeconds 2
   if ($announced) {
     if ($state -and $state.pid) {
-      ([pscustomobject]@{ pid = $state.pid; port = $Plan.Port; startedAt = $state.startedAt; url = $announced } |
+      # 注意带上 model：漏掉它的话 Start-WebUi 会以为"模型变过"，把好好的服务重启一遍。
+      ([pscustomobject]@{ pid = $state.pid; port = $Plan.Port; startedAt = $state.startedAt; url = $announced; model = $state.model } |
         ConvertTo-Json -Compress) | Set-Content -LiteralPath $Plan.StateFile -Encoding UTF8
     }
     return $announced
@@ -127,10 +177,28 @@ function Start-WebUi {
   $plan = Get-WebUiPlan -Config $Config
   if (-not (Test-Path -LiteralPath $plan.RunDir)) { New-Item -ItemType Directory -Force -Path $plan.RunDir | Out-Null }
 
-  if (Test-WebUiServing -Plan $plan) { return (Get-WebUiUrl $plan) }   # 已经有人在服务（不管是谁起的）
-  if (-not $plan.Edge) { Write-Warning '没找到 msedge.exe —— 服务能起，但窗口开不了' }
+  # 模型/账号走 --patch 注入（dsh web 自己没有 --patch 参数，但启动器 dsh 有）。
+  # 这样「对话」窗口用的是 DSH 里已登录的账号，而不是发行包默认的 deepseek-official
+  # （后者要 DEEPSEEK_API_KEY，没设就是一问就 MISSING_CREDENTIAL）。
+  $model = Get-WebUiModel -Config $Config
+  $patch = Write-WebUiModelPatch -Plan $plan -Model $model
+  $modelTag = if ($model) { "$($model.provider)/$($model.model)" } else { '' }
 
   $state = Get-WebUiState -Plan $plan
+
+  if (Test-WebUiServing -Plan $plan) {
+    # 已经在服务（不管是谁起的）。只有一种情况要动手：这个服务是**桌宠自己起的**
+    # （状态里有 pid），而且它启动时的模型和现在要的不一样 —— 那是旧配置，重启它。
+    $ours = $state -and $state.pid -and (Get-Process -Id ([int]$state.pid) -ErrorAction SilentlyContinue)
+    if ($ours -and [string]$state.model -ne $modelTag) {
+      Stop-WebUi -Config $Config
+      $state = $null
+    } else {
+      return (Get-WebUiUrl $plan)
+    }
+  }
+  if (-not $plan.Edge) { Write-Warning '没找到 msedge.exe —— 服务能起，但窗口开不了' }
+
   if ($state -and $state.pid) {
     $alive = Get-Process -Id ([int]$state.pid) -ErrorAction SilentlyContinue
     if ($alive) {
@@ -143,11 +211,16 @@ function Start-WebUi {
   if (-not $state -or -not $state.pid -or -not (Get-Process -Id ([int]$state.pid) -ErrorAction SilentlyContinue)) {
     $outLog = Join-Path $plan.RunDir 'webui.out.txt'
     $errLog = Join-Path $plan.RunDir 'webui.err.txt'
+    # ⚠️ --patch 是**启动器**的参数，必须排在 --port/--no-open 这些**应用**参数前面 ——
+    # 放到后面会被 web 应用接管，报 `error: unknown option '--patch'`，然后服务起不来（踩过）。
+    $launchArgs = @('--expose-internals', $plan.Cli, '--profile', $plan.Profile)
+    if ($patch) { $launchArgs += @('--patch', $patch) }
+    $launchArgs += @('--port', "$($plan.Port)", '--no-open')
     $old = $env:ELECTRON_RUN_AS_NODE
     $env:ELECTRON_RUN_AS_NODE = '1'
     try {
       $p = Start-Process -FilePath $plan.Exe `
-        -ArgumentList @('--expose-internals', $plan.Cli, '--profile', $plan.Profile, '--port', "$($plan.Port)", '--no-open') `
+        -ArgumentList $launchArgs `
         -RedirectStandardOutput $outLog -RedirectStandardError $errLog `
         -WindowStyle Hidden -PassThru
     } finally {
@@ -155,7 +228,7 @@ function Start-WebUi {
     }
     $announced = Read-WebUiAnnouncedUrl -Plan $plan -TimeoutSeconds $(if ($Wait) { $WaitSeconds } else { 20 })
     if (-not $announced) { $announced = "http://127.0.0.1:$($plan.Port)/" }
-    ([pscustomobject]@{ pid = $p.Id; port = $plan.Port; startedAt = (Get-Date).ToString('o'); url = $announced } |
+    ([pscustomobject]@{ pid = $p.Id; port = $plan.Port; startedAt = (Get-Date).ToString('o'); url = $announced; model = $modelTag } |
       ConvertTo-Json -Compress) | Set-Content -LiteralPath $plan.StateFile -Encoding UTF8
   }
 
