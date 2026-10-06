@@ -91,6 +91,8 @@ html, body {
 #pet[data-state="speaking"]  { color: var(--speak); }
 #pet[data-state="silent"]    { color: var(--silent); }
 #pet[data-state="listening"] { color: var(--listen); }
+/* 暂停：灰掉 + 半透明，一眼看出"它现在不管事"（和沉默的灰区分在透明度上） */
+#pet[data-state="paused"]    { color: var(--silent); opacity: 0.5; }
 #pet[data-state="thinking"]::before { animation: pulse 1.4s ease-in-out infinite; }
 
 @keyframes pulse {

@@ -30,4 +30,6 @@ contextBridge.exposeInMainWorld('pet', {
   answer: (choice) => ipcRenderer.invoke('pet:answer', choice),
   // 子 agent 观察：它在跑的后台子任务（空串 = 跑完了）
   onSubagents: (cb) => ipcRenderer.on('pet:subagents', (_e, line) => cb(line)),
+  // 暂停状态（托盘或右键菜单里切的）
+  onPaused: (cb) => ipcRenderer.on('pet:paused', (_e, paused) => cb(!!paused)),
 });

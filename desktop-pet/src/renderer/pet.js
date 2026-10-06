@@ -180,6 +180,17 @@ window.pet.onSubagents((line) => {
   }
 });
 
+// 暂停状态：托盘或右键菜单里切的。桌宠还在，只是不再自己观察/开口。
+window.pet.onPaused((pausedNow) => {
+  if (pausedNow) {
+    setState('paused');
+    showBubble('（已暂停：不再自己观察和开口。点我仍然能让我说一句）', 6000);
+  } else {
+    setState('idle');
+    showBubble('（继续了）', 3000);
+  }
+});
+
 askSend.addEventListener('click', () => submitAsk(askInput.value));
 askInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') { e.preventDefault(); submitAsk(askInput.value); }

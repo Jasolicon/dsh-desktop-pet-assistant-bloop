@@ -11,7 +11,7 @@
  *   还没搬的    ：屏幕采样与本地闸门、语音（STT）、朗读（TTS）、选项问答、子 agent 观察
  * 没搬的那些在 desktop-guide/ 里仍然可用；两边的路径解析是**同一套规则**（paths.ps1 / paths.mjs）。
  */
-import { app, BrowserWindow, ipcMain, Menu, powerMonitor, screen, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, Menu, nativeImage, powerMonitor, screen, shell, Tray } from 'electron';
 import { session as electronSession } from 'electron';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -36,6 +36,12 @@ let session = null;
 let askWatcher = null;
 /** 子 agent 观察：它在跑的子任务（数据来自常驻会话的事件流）。 */
 let subagents = null;
+/** 托盘图标。桌宠窗口 skipTaskbar + 可以隐藏，没有它"隐藏"就等于找不回来了。 */
+let tray = null;
+/** 暂停 = 关掉观察循环（不采样、不判断、不自动开口）。手动点它"说一句"仍然有效。 */
+let paused = false;
+/** 观察循环这次启动到底开没开（PET_NO_AUTO=1 时不启动，“继续”也不该把它拉起来）。 */
+const autoEnabled = !process.env.PET_NO_AUTO;
 
 /**
  * 问答请求目录。默认指向 desktop-guide 那个 —— pet-responder 的 `dir` 就是配在那儿的
@@ -43,6 +49,60 @@ let subagents = null;
  */
 function defaultAskDir() {
   return join(ROOT, '..', 'desktop-guide', 'run', 'ask');
+}
+
+/**
+ * 托盘菜单。每次状态变化都重建一遍 —— 菜单项的文字（暂停 / 继续）要跟着状态走，
+ * 而 Electron 的 Menu 一旦 build 出来就不会自己更新。
+ */
+function refreshTray() {
+  if (!tray) return;
+  const visible = !!win?.isVisible();
+  tray.setToolTip(`泡泡 · Bloop —— ${paused ? '已暂停' : '在看着'}${visible ? '' : '（桌宠已隐藏）'}`);
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: visible ? '隐藏桌宠' : '显示桌宠', click: toggleVisible },
+    { label: paused ? '继续（恢复观察）' : '暂停（停止观察）', click: () => setPaused(!paused) },
+    { type: 'separator' },
+    { label: '看它判过什么', click: () => { showPet(); win?.webContents.send('pet:showDecisions'); } },
+    { label: '打开配置目录', click: () => shell.openPath(dataDir()) },
+    { type: 'separator' },
+    { label: '退出', click: () => app.quit() },
+  ]));
+}
+
+function showPet() {
+  if (!win) return;
+  if (!win.isVisible()) win.show();
+  win.focus();
+}
+
+function toggleVisible() {
+  if (!win) return;
+  if (win.isVisible()) win.hide(); else showPet();
+}
+
+function setPaused(v) {
+  paused = !!v;
+  // 暂停就真的停掉循环：不采样、不判断、不自动开口。手动点它"说一句"不受影响。
+  // 注意：PET_NO_AUTO=1（只开窗口不开观察循环）时不要借"继续"把循环启动起来。
+  if (autoEnabled) { if (paused) monitor?.stop(); else monitor?.start(); }
+  win?.webContents.send('pet:paused', paused);
+  refreshTray();
+  log(paused ? '已暂停：不再采样 / 判断 / 自动发言（点它仍然可以手动说一句）' : '已继续');
+}
+
+function createTray() {
+  try {
+    const icon = nativeImage.createFromPath(join(ROOT, 'assets', 'pet.png')).resize({ width: 32, height: 32 });
+    tray = new Tray(icon);
+    tray.on('click', toggleVisible);          // Windows 上左键点托盘 = 显示/隐藏
+    tray.on('double-click', showPet);
+    refreshTray();
+    log('托盘图标已就位');
+  } catch (err) {
+    // 没有托盘不该让桌宠起不来（比如某些精简桌面环境）
+    log('托盘没建起来（不影响其它功能）：', err.message);
+  }
 }
 
 const log = (...a) => console.log('[pet]', ...a);
@@ -133,6 +193,9 @@ function createWindow() {
   });
 
   win.on('closed', () => { win = null; });
+  // 显示/隐藏后托盘菜单的文字要跟着变（"隐藏桌宠" ↔ "显示桌宠"）
+  win.on('show', refreshTray);
+  win.on('hide', refreshTray);
 }
 
 /** 渲染进程问"现在轮到谁说话"时用的一段提示词。等屏幕采样搬过来后，这里换成真正的 payload。 */
@@ -340,7 +403,8 @@ function registerIpc() {
       { label: `资源：${p.root ? '已找到 DSH' : '未找到 DSH'}`, enabled: false },
       { type: 'separator' },
       { label: '看它判过什么', click: () => win.webContents.send('pet:showDecisions') },
-      { label: '显示/隐藏', click: () => (win.isVisible() ? win.hide() : win.show()) },
+      { label: paused ? '继续（恢复观察）' : '暂停（停止观察）', click: () => setPaused(!paused) },
+      { label: '隐藏桌宠（托盘里能叫回来）', click: () => win.hide() },
       {
         label: '打开配置目录',
         // 打包后 ROOT 在 app.asar 里，打开它没意义；打开真正放数据的地方（见 dirs.mjs）
@@ -365,6 +429,7 @@ if (!app.requestSingleInstanceLock()) {
     log('dsh  =', JSON.stringify(dshPaths(cfg)));
     createWindow();
     registerIpc();
+    createTray();
 
     // 观察循环：采样 → 本地闸门 →（值了才）叫模型
     monitor = createMonitor({
@@ -389,7 +454,7 @@ if (!app.requestSingleInstanceLock()) {
       },
     });
     // PET_NO_AUTO=1 只起窗口、不开观察循环（冒烟测试用，免得每次都真叫一次模型）
-    if (!process.env.PET_NO_AUTO) monitor.start();
+    if (autoEnabled) monitor.start();
     else log('PET_NO_AUTO=1：观察循环未启动');
 
     // 预热常驻会话（约 4.5 秒，后台进行）：这样第一次判断不用再付进程启动的钱。
@@ -437,6 +502,6 @@ if (!app.requestSingleInstanceLock()) {
     powerMonitor.on('unlock-screen', () => monitor?.setStandby(false));
   });
 
-  app.on('will-quit', () => { askWatcher?.stop(); session?.stop(); });
+  app.on('will-quit', () => { tray?.destroy(); askWatcher?.stop(); session?.stop(); });
   app.on('window-all-closed', () => app.quit());
 }
