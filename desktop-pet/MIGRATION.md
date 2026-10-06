@@ -89,7 +89,7 @@
 | THIRD_PARTY_NOTICES（含"鲸鱼素材不可分发"） | ✅ 根目录 |
 | 不复制 AGPL 代码（Coopanion） | ✅ 只借思路 |
 | `.gitignore`（node_modules / .stt / .tts / run / logs） | ✅ |
-| 自绘角色素材 `assets/pet.png` | ⬜ **待补** —— 目前自用兜底仍指向鲸鱼；对外分发前必须换成自绘的 |
+| 自绘角色素材 `assets/pet.png` | ✅ 已补（`desktop-pet/assets/pet.png` + `PROVENANCE.md` 声明不主张所有权）；角色图不再依赖鲸鱼插件 |
 | 远端仓库（GitHub） | ⬜ 仓库现在没有 remote |
 | CI（跑 `npm test` + `node --test`） | ⬜ |
 
