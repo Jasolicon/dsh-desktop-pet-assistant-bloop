@@ -403,32 +403,60 @@ function Start-DshAgent {
     [string]$LogDir,
     [string]$Config,
     [int]$MaxConcurrent = 3,
-    [switch]$UseBrain
+    [switch]$UseBrain,
+    # 指定会话 id → 这一轮接着那条会话的上下文跑（"派活给某个 agent"用的就是它）
+    [string]$SessionId = '',
+    # 复用已有的 agent 记录（不新建一条）：任务会更新在那条记录上，列表里不会越堆越长
+    [string]$ReuseId = ''
   )
 
   $cfg = Get-AgentConfig -Path $Config
   if (-not $Model) { $Model = $cfg.models[0] }
   if (-not $Access) { $Access = $cfg.access[1] }
 
-  $running = @(Update-AgentStatus -RunDir $RunDir | Where-Object { $_.status -eq 'running' })
+  $existing = @(Update-AgentStatus -RunDir $RunDir)
+  $reuse = $null
+  if ($ReuseId) {
+    $reuse = $existing | Where-Object { $_.id -eq $ReuseId } | Select-Object -First 1
+    if (-not $reuse) { $ReuseId = '' }   # 记录没了（被清理过）就当没指定，照常新建
+  }
+  $running = @($existing | Where-Object { $_.status -eq 'running' })
   if ($running.Count -ge $MaxConcurrent) {
     throw "同时最多 $MaxConcurrent 个 agent（当前 $($running.Count) 个在跑）"
   }
 
-  $id = 'agent-' + ([guid]::NewGuid().ToString('N').Substring(0, 8))
-  $logFile = Join-Path $LogDir ("$id.jsonl")
+  $id = if ($reuse) { [string]$reuse.id } else { 'agent-' + ([guid]::NewGuid().ToString('N').Substring(0, 8)) }
+  $logFile = if ($reuse) { [string]$reuse.logFile } else { Join-Path $LogDir ("$id.jsonl") }
   $errFile = Join-Path $LogDir ("$id.err.txt")
 
   # ---- 常驻大脑路径：不起新进程，只投一个请求（每轮省掉"起 pwsh + 起 DSH"）----
   if ($UseBrain) {
     $brain = Get-BrainState -RunDir $RunDir
     if ($brain) {
-      $brainId = Send-BrainRequest -RunDir $RunDir -Text $Task -LogFile $logFile -TimeoutSeconds 900
+      $brainId = Send-BrainRequest -RunDir $RunDir -Text $Task -LogFile $logFile -SessionId $SessionId -TimeoutSeconds 900
+      if ($reuse) {
+        # "派活给这个 agent"：不新建记录，直接把它更新成正在跑这一轮
+        Set-AgentField $reuse 'task' $Task
+        Set-AgentField $reuse 'model' $Model.name
+        Set-AgentField $reuse 'access' $Access.name
+        Set-AgentField $reuse 'brainId' $brainId
+        Set-AgentField $reuse 'via' 'brain'
+        Set-AgentField $reuse 'startedAt' (Get-Date).ToString('o')
+        Set-AgentField $reuse 'endedAt' $null
+        Set-AgentField $reuse 'status' 'running'
+        Set-AgentField $reuse 'exitCode' $null
+        Set-AgentField $reuse 'seconds' $null
+        if ($SessionId) { Set-AgentField $reuse 'sessionId' $SessionId }
+        Save-Agents -RunDir $RunDir -Agents $existing
+        return $reuse
+      }
       $rec = [pscustomobject]@{
         id = $id; task = $Task; model = $Model.name; access = $Access.name
         pid = $null; brainId = $brainId; via = 'brain'
         startedAt = (Get-Date).ToString('o'); endedAt = $null; status = 'running'
         exitCode = $null; logFile = $logFile; patch = ''
+        # 记下这一轮用的会话：下次"派活给这个 agent"就接着这条会话（空 = 大脑的默认会话）
+        sessionId = $SessionId
         # seconds 必须**一开始就有**这个字段：PSCustomObject 的属性集是固定的，
         # Update-AgentStatus 里再 `$a.seconds = ...` 就会抛
         #   Exception setting "seconds": The property 'seconds' cannot be found on this object
@@ -468,6 +496,22 @@ function Start-DshAgent {
     else { $env:DSH_PERMISSION_MODE = $oldMode }
   }
 
+  if ($reuse) {
+    # 复用已有记录（没有常驻大脑时的退路）：进程信息写回原来那条
+    Set-AgentField $reuse 'task' $Task
+    Set-AgentField $reuse 'model' $Model.name
+    Set-AgentField $reuse 'access' $Access.name
+    Set-AgentField $reuse 'pid' $proc.Id
+    Set-AgentField $reuse 'via' 'process'
+    Set-AgentField $reuse 'patch' $patchPath
+    Set-AgentField $reuse 'startedAt' (Get-Date).ToString('o')
+    Set-AgentField $reuse 'endedAt' $null
+    Set-AgentField $reuse 'status' 'running'
+    Set-AgentField $reuse 'exitCode' $null
+    Save-Agents -RunDir $RunDir -Agents $existing
+    return $reuse
+  }
+
   $record = [pscustomobject]@{
     id        = $id
     task      = $Task
@@ -480,6 +524,7 @@ function Start-DshAgent {
     exitCode  = $null
     logFile   = $logFile
     patch     = $patchPath
+    sessionId = $SessionId
   }
 
   $agents = @(Get-Agents -RunDir $RunDir)

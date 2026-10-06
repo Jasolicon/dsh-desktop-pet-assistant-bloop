@@ -428,7 +428,11 @@ namespace DesktopGuide {
     public event EventHandler CollapseRequested;
     public event EventHandler Moved;
     public event EventHandler AgentListRequested;
+    /** 在「Agent 列表」里点了一条 → 把它设为后续派活的目标（LastAgentPicked = '' 表示每次新建） */
+    public event EventHandler AgentPickRequested;
     public event EventHandler AgentStartRequested;
+    /** 用户说"我是醒着的"：立刻重新看一眼（待机卡住时的手动出口） */
+    public event EventHandler WakeRequested;
     public event EventHandler ModelSelected;
     public event EventHandler AccessSelected;
     public event EventHandler MainSessionRequested;
@@ -502,6 +506,8 @@ namespace DesktopGuide {
     bool longPressFired;
     /** 长按判定阈值（毫秒）。低于这个时长的按住仍然算普通点击。 */
     public int LongPressMs = 400;
+    /** 在「Agent 列表」里选中的那条 agent（'' = 每次新建） */
+    public string LastAgentPicked = "";
 
     // 逻辑尺寸（96 DPI 下的像素），实际使用时会乘 uiScale
     readonly double uiScale;
@@ -560,6 +566,8 @@ namespace DesktopGuide {
     readonly ToolStripMenuItem ttsItem;
     /** 「朗读」子菜单（挂在「设置」下） */
     ToolStripMenuItem ttsMenu;
+    /** 「更多 → Agent 列表」那个子菜单（派活给谁） */
+    ToolStripMenuItem agentListMenu;
     readonly Timer anim;
     string message = "";
     DateTime messageUntil = DateTime.MinValue;
@@ -636,6 +644,8 @@ namespace DesktopGuide {
       moreMenu.DropDownItems.Add(new ToolStripSeparator());
       moreMenu.DropDownItems.Add(MakeMenuItem("框选监控区域…", PickRegionRequested));
       moreMenu.DropDownItems.Add(MakeMenuItem("取消监控区域", ClearRegionRequested));
+      // 待机卡住时的手动出口：系统通知漏发会让它一直以为在待机，菜单点这一下就重新看一眼。
+      moreMenu.DropDownItems.Add(MakeMenuItem("我是醒着的（现在就看一眼）", WakeRequested));
       menu.Items.Add(moreMenu);
 
       settingsMenu = new ToolStripMenuItem("设置");
@@ -744,7 +754,55 @@ namespace DesktopGuide {
         agentMenu.DropDownItems.Add(item);
       }
       moreMenu.DropDownItems.Add(agentMenu);
-      moreMenu.DropDownItems.Add(MakeMenuItem("Agent 列表", AgentListRequested));
+      // 「Agent 列表」现在是**子菜单**：点其中一条 = 之后的派活都交给它（接着它的会话跑）。
+      // 内容由 SetAgentList 填 —— 每次菜单弹出前刷新一次，因为 agent 一直在变。
+      agentListMenu = new ToolStripMenuItem("Agent 列表（派活给谁）");
+      moreMenu.DropDownItems.Add(agentListMenu);
+      SetAgentList(new string[0], new string[0], "");
+    }
+
+    /// 填「Agent 列表」子菜单。ids 为空 = 只剩「每次新建」那一条（原来的行为）。
+    public void SetAgentList(string[] ids, string[] labels, string current) {
+      if (agentListMenu == null) return;
+      // 先搬到临时数组再清空 —— 直接边遍历边 Dispose/Clear 会报
+      // "Collection was modified; enumeration operation may not execute"（实测踩过）
+      var old = new System.Collections.ArrayList();
+      foreach (ToolStripItem it in agentListMenu.DropDownItems) old.Add(it);
+      agentListMenu.DropDownItems.Clear();
+      foreach (ToolStripItem it in old) it.Dispose();
+
+      var fresh = new ToolStripMenuItem("每次新建（默认）");
+      fresh.Checked = string.IsNullOrEmpty(current);
+      fresh.Click += (s, e) => { LastAgentPicked = ""; Fire(AgentPickRequested); };
+      agentListMenu.DropDownItems.Add(fresh);
+
+      if (ids != null && ids.Length > 0) {
+        agentListMenu.DropDownItems.Add(new ToolStripSeparator());
+        for (int i = 0; i < ids.Length; i++) {
+          string label = (labels != null && i < labels.Length) ? labels[i] : ids[i];
+          var item = new ToolStripMenuItem(label);
+          item.Checked = (ids[i] == current);
+          string captured = ids[i];
+          item.Click += (s, e) => { LastAgentPicked = captured; Fire(AgentPickRequested); };
+          agentListMenu.DropDownItems.Add(item);
+        }
+      }
+      agentListMenu.DropDownItems.Add(new ToolStripSeparator());
+      agentListMenu.DropDownItems.Add(MakeMenuItem("在气泡里看进度…", AgentListRequested));
+    }
+
+    /** 自检用：当前「Agent 列表」子菜单里有什么（[x] 前缀 = 当前派活目标，--- = 分隔线） */
+    public string[] AgentMenuLabels() {
+      if (agentListMenu == null) return new string[0];
+      // 只能用 ArrayList：Add-Type 会把 System.Private.CoreLib 从引用集里剔除，
+      // 泛型 List<> 编译不过（这条硬限制文件里别处也踩过）。
+      var list = new System.Collections.ArrayList();
+      foreach (ToolStripItem it in agentListMenu.DropDownItems) {
+        if (it is ToolStripSeparator) { list.Add("---"); continue; }
+        var mi = it as ToolStripMenuItem;
+        list.Add((mi != null && mi.Checked ? "[x] " : "") + it.Text);
+      }
+      return (string[])list.ToArray(typeof(string));
     }
 
     /// 「设置」子菜单：主 agent 用哪个模型、工作 agent 用哪档权限。
@@ -1886,6 +1944,10 @@ $script:currentSince = Get-Date
 $script:lastShotAt = [datetime]::MinValue
 $script:advisorProc = $null
 $script:lastUserAt = [datetime]::MinValue   # 用户最后一次动桌宠的时间（点击/长按/拖/菜单/选项…）
+# 「派活给谁」：'' = 每次新建（默认）；否则是 agent 列表里选中的那条 ——
+# 之后的语音 / 打字 / 拖文件派活都更新在这条记录上，并且接着它的会话跑（见 Start-PetTask）。
+# 存在 run\pet.json 的 dispatchAgent 字段里，重启后还在。
+$script:dispatchAgent = ''
 $script:pendingAutoResume = $false          # 自动判断被用户打断过 → 等用户停手后再补一次
 $script:thinking = $false
 $script:suppressShow = $false
@@ -2572,6 +2634,39 @@ function Sync-Standby {
   else { Exit-Standby -Display '信号恢复' }
 }
 
+function Try-WakeFromStandby {
+  <#
+    待机**自愈**：现场核一遍，不再信那三个缓存标志位。
+    为什么要它：待机是消息驱动的，漏一条就会一直以为在待机 —— 实测踩过，锁屏通知进来、
+    解锁通知没到，桌宠连着两小时没看过屏幕，用户点它时手上连一张截图都没有，
+    模型只能照窗口标题"脑补"出具体操作步骤。
+
+    三条都成立才醒：
+      ① 最近有人动键鼠（离屏待机期间不可能有输入，所以有输入 = 机器在用）
+      ② 现在不是锁屏（OpenInputDesktop 现场问，锁屏时普通进程打不开输入桌面）
+      ③ 真的能抓到一张图
+    醒来时把 Suspended / SessionLocked / PowerDisplayOn 一并校准 —— 不校准的话，
+    下一个任意待机事件会立刻把它按回待机。
+  #>
+  param([string]$Why = '自检')
+  if (-not $script:standby) { return $false }
+  $idleS = [int]([DesktopGuide.Native]::IdleMs() / 1000)
+  $probeIdle = [int]$(if ($cfg.standbyProbeIdleSeconds) { $cfg.standbyProbeIdleSeconds } else { 60 })
+  if ($idleS -lt 0 -or $idleS -ge $probeIdle) { return $false }
+  $lockedNow = $true
+  try { $lockedNow = [DesktopGuide.Native]::IsLockedNow() } catch { }
+  if ($lockedNow) { return $false }
+  try {
+    $probe = [DesktopGuide.Capture]::GrabJpegBase64([int]$cfg.screenshotMaxWidth, [long]$cfg.jpegQuality)
+    if (-not $probe) { return $false }
+  } catch { return $false }
+  $pet.Suspended = $false
+  $pet.SessionLocked = $false
+  $pet.PowerDisplayOn = $true
+  Exit-Standby -Display "自愈（$Why；距上次输入 ${idleS}s、未锁屏）"
+  return $true
+}
+
 function Sample-Once {
   param([switch]$Force)   # -Force：焦点刚换过，立刻采（并且立刻截图）
   # 待机就什么都别做：不抓屏、不记轨迹、不涨"停留时间"。
@@ -2964,6 +3059,8 @@ function Save-PetState {
         y     = $pet.Location.Y
         auto  = [bool]$pet.AutoEnabled
         muted = -not [bool]$pet.TtsEnabled   # 静音开关也记住，重启后不变
+        # 派活交给哪条 agent（'' = 每次新建）。在「更多 → Agent 列表」里选。
+        dispatchAgent = [string]$script:dispatchAgent
       } |
       ConvertTo-Json -Compress) | Set-Content -LiteralPath $petStatePath -Encoding UTF8
   } catch { }
@@ -3348,6 +3445,22 @@ $probe3 = New-Object DesktopGuide.PetForm -ArgumentList @([double]$script:UiScal
   if ($more) { Write-Output ("  「更多」{0} 项" -f $more.DropDownItems.Count) }
   if ($setm) { Write-Output ("  「设置」{0} 项" -f $setm.DropDownItems.Count) }
   Write-Output ("  顶层文字：" + (($cm.Items | ForEach-Object { if ($_.Text) { $_.Text } else { '—' } }) -join ' / '))
+  Write-Output '=== 5q. Agent 列表（派活给谁）==='
+  # 子菜单：第一条永远是「每次新建」，最后一条是「在气泡里看进度…」，中间是按状态标好的 agent。
+  $mprobe.SetAgentList(@('agent-aaaa', 'agent-bbbb'), @('● agent-aaaa · 改 docx', '✓ agent-bbbb · 查余额'), 'agent-bbbb')
+  $labels = $mprobe.AgentMenuLabels()
+  foreach ($l in $labels) { Write-Output "  $l" }
+  $okAgent = @(
+    ($labels.Count -eq 6)                                   # 每次新建 + 分隔 + 两条 + 分隔 + 看进度
+    ($labels[0] -eq '每次新建（默认）')
+    ($labels[2] -eq '● agent-aaaa · 改 docx')
+    ($labels[3] -eq '[x] ✓ agent-bbbb · 查余额')            # 当前派活目标带对勾
+    ($labels[5] -eq '在气泡里看进度…')
+  )
+  Write-Output ("  5q {0}/5 项通过（选了 agent-bbbb → 菜单里 [x] 落在它身上）" -f @($okAgent | Where-Object { $_ }).Count)
+  $mprobe.SetAgentList(@(), @(), '')
+  $labels2 = $mprobe.AgentMenuLabels()
+  Write-Output ("  清空后：{0} 条（{1}）；「每次新建」被勾上 = {2}" -f $labels2.Count, ($labels2 -join ' / '), ($labels2[0] -eq '[x] 每次新建（默认）'))
   $mprobe.Dispose()
   Write-Output '=== 5o. 气泡页脚（余额 / 上次调用 / 今天）==='
   $fprobe = New-Object DesktopGuide.PetForm -ArgumentList @([double]$script:UiScale, [string]$cfg.fontFamily, [double]$cfg.fontSize)
@@ -3705,6 +3818,8 @@ if ($saved -and $saved.x -ne $null) {
   $pet.Location = New-Object System.Drawing.Point ([int]$saved.x), ([int]$saved.y)
   if ($saved.auto) { $pet.AutoEnabled = $true }
   if ($null -ne $saved.muted) { $pet.TtsEnabled = -not [bool]$saved.muted }
+  # 上次选好的"派活给谁"也一起恢复（'' = 每次新建）
+  if ($saved.PSObject.Properties.Name -contains 'dispatchAgent') { $script:dispatchAgent = [string]$saved.dispatchAgent }
 } else {
   $pet.PlaceBottomRight(40)
 }
@@ -3930,18 +4045,53 @@ function Start-PetTask {
       if ($want) { $Model = $script:AgentCfg.models | Where-Object { $_.name -eq $want } | Select-Object -First 1 }
       if (-not $Model) { $Model = $script:AgentCfg.models[0] }
     }
+    $access = $script:AgentCfg.access | Where-Object { $_.name -eq $script:AgentCfg.workAgent.access } | Select-Object -First 1
+    if (-not $access) { $access = $script:AgentCfg.access[1] }
+
+    # ---- 派活给指定的 agent？（更多 → Agent 列表 里选的那条）----
+    # 选了一条就：① 更新它那条记录（列表里不再每次新增）② 沿用它的模型 / 权限
+    # ③ 接着它的 sessionId 跑 —— 上下文不断，"刚才那个文件"这种指代才有意义。
+    $reuseId = ''; $sid = ''; $reusing = $false
+    if ($script:dispatchAgent) {
+      $target = @(Update-AgentStatus -RunDir $runDir) | Where-Object { $_.id -eq $script:dispatchAgent } | Select-Object -First 1
+      if (-not $target) {
+        # 目标被清理掉了（只保留最近 keepFinished 条）→ 退回"每次新建"，并把指针清掉
+        $script:dispatchAgent = ''
+        Save-PetState
+      } elseif ($target.status -eq 'running') {
+        # 目标正忙：这次先照常新建一条（别把用户刚说的话丢了），并说明原因
+        $pet.ShowMessage("$($target.id) 还在跑，这次先新建一个 agent 去做。`n（想让后来的也排队等它：等它做完再派）", 8)
+      } else {
+        $reuseId = [string]$target.id
+        $reusing = $true
+        if (($target.PSObject.Properties.Name -contains 'model') -and $target.model) {
+          $m2 = $script:AgentCfg.models | Where-Object { $_.name -eq $target.model } | Select-Object -First 1
+          if ($m2) { $Model = $m2 }
+        }
+        if (($target.PSObject.Properties.Name -contains 'access') -and $target.access) {
+          $a2 = $script:AgentCfg.access | Where-Object { $_.name -eq $target.access } | Select-Object -First 1
+          if ($a2) { $access = $a2 }
+        }
+        $sid = if (($target.PSObject.Properties.Name -contains 'sessionId') -and $target.sessionId) {
+          [string]$target.sessionId
+        } else {
+          # 老记录没有会话字段：给它生成一个稳定的会话名，第一次派活时由 DSH 建出来
+          'pet-task-' + ([string]$target.id -replace '^agent-', '')
+        }
+      }
+    }
+
     # 语音派出去的多半是"查一下/改一下"这种短活，把推理强度压到 low 能明显快一截；
     # 想跟 agents.json 里配的一致就把 petTaskEffort 留空。
-    if ($cfg.petTaskEffort) {
+    # 指定了 agent 就不压 —— 那条 agent 的身份包括模型，替它改推理强度会让人意外。
+    if ($cfg.petTaskEffort -and -not $reusing) {
       $Model = $Model.PSObject.Copy()
       $Model.effort = [string]$cfg.petTaskEffort
     }
-    $access = $script:AgentCfg.access | Where-Object { $_.name -eq $script:AgentCfg.workAgent.access } | Select-Object -First 1
-    if (-not $access) { $access = $script:AgentCfg.access[1] }
     $rec = Start-DshAgent -Task $Task -Model $Model -Access $access `
       -RunDir $runDir -LogDir $logDir -Config $agentsConfig -MaxConcurrent ([int]$script:AgentCfg.maxConcurrent) `
-      -UseBrain:$([bool]$cfg.brainTransport)
-    Add-Interaction 'task_start' "$($rec.id)|$($Model.name)"
+      -UseBrain:$([bool]$cfg.brainTransport) -SessionId $sid -ReuseId $reuseId
+    Add-Interaction 'task_start' "$($rec.id)|$($Model.name)$(if ($reusing) { '|reuse' } else { '' })"
     $script:watchedAgents[$rec.id] = (Get-Date).ToString('o')
     # 记下调用前的余额：跑完再读一次，差值就是"这次调用花了多少"
     try {
@@ -4362,6 +4512,27 @@ function Show-MainAgentSession {
   $pet.ShowMessage(($lines -join "`n"), 0)
 }
 
+# ---- 「更多 → Agent 列表」子菜单（派活给谁）----
+# 以前这一项只在气泡里列个清单（只读）。现在它是**子菜单**：点其中一条，
+# 之后的语音 / 打字 / 拖文件派活都交给它 —— 并且接着它的会话跑，上下文不断。
+function Update-AgentMenu {
+  <# 菜单每次弹出前刷新：agent 一直在变，子菜单得跟着变。
+      标签里的 ●/✓/✗ 是状态，前面带对勾的那条就是当前派活目标。 #>
+  try {
+    $agents = @(Update-AgentStatus -RunDir $runDir)
+    $recent = @($agents | Select-Object -Last 6)
+    $ids = @(); $labels = @()
+    foreach ($a in $recent) {
+      $mark = switch ($a.status) { 'running' { '●' } 'done' { '✓' } 'failed' { '✗' } default { '○' } }
+      $ids += [string]$a.id
+      $labels += ("{0} {1} · {2}" -f $mark, $a.id, (Shorten-Text $a.task 14))
+    }
+    $pet.SetAgentList([string[]]$ids, [string[]]$labels, [string]$script:dispatchAgent)
+  } catch {
+    try { $pet.SetAgentList([string[]]@(), [string[]]@(), [string]$script:dispatchAgent) } catch { }
+  }
+}
+
 function Show-AgentList {
   Set-PetWidth 480
   try {
@@ -4386,6 +4557,9 @@ function Show-AgentList {
 }
 
 $pet.Add_AskRequested({
+    # 用户点了它 = 人一定在电脑前。如果它还停在待机里（系统通知漏了），先自愈再看，
+    # 否则这一轮又会是"没有截图、只能照窗口标题猜"。
+    if ($script:standby) { [void](Try-WakeFromStandby -Why '用户点了它') }
     # 它正在朗读时，这一下不是「再问一句」，而是「别说了」—— 打断优先，不再叠一次判断。
     # 为什么不做成"先停再问"：Edge 合成要 3–5 秒，用户点下去就是想让它闭嘴，
     # 这时再起一轮判断只会在几秒后冒出第二段话，等于没打断。
@@ -4412,6 +4586,7 @@ $pet.Add_Moved({
 
 $pet.Add_MenuOpened({
     Note-UserAction 'menu'
+    Update-AgentMenu   # agent 列表是动态的，每次弹菜单前刷一遍
   })
 
 # 屏幕开关 / 锁屏 / 睡眠 → 进待机；恢复 → 醒过来重新看一眼
@@ -4422,6 +4597,38 @@ $pet.Add_StandbyChanged({
 $pet.Add_AgentListRequested({
     Add-Interaction 'agents_list'
     Show-AgentList
+  })
+
+# 「派活给谁」：在 Agent 列表里点一条（或点「每次新建」）
+$pet.Add_AgentPickRequested({
+    try {
+      $script:dispatchAgent = [string]$pet.LastAgentPicked
+      Save-PetState
+      Update-AgentMenu
+      if ($script:dispatchAgent) {
+        Add-Interaction 'dispatch_target' $script:dispatchAgent
+        $pet.ShowMessage("好，之后的派活都交给 $($script:dispatchAgent)`n（接着它的会话跑，上下文不断）", [int]$cfg.showSeconds)
+      } else {
+        Add-Interaction 'dispatch_target' 'new'
+        $pet.ShowMessage('好，之后每次都新建一个 agent。', [int]$cfg.showSeconds)
+      }
+    } catch { }
+  })
+
+# 「我是醒着的」：待机卡住（系统通知漏发）时的手动出口 —— 不用重启进程
+$pet.Add_WakeRequested({
+    try {
+      Add-Interaction 'wake' 'manual'
+      if ($script:standby) {
+        $pet.Suspended = $false
+        $pet.SessionLocked = $false
+        $pet.PowerDisplayOn = $true
+        Exit-Standby -Display '用户手动唤醒'
+      } else {
+        try { Sample-Once -Force } catch { }
+        $pet.ShowMessage('好，我再看一眼。', 4)
+      }
+    } catch { }
   })
 
 $pet.Add_AgentStartRequested({
@@ -4821,33 +5028,12 @@ $sampleTimer.Interval = [int]([double]$cfg.sampleSeconds * 1000)
 $sampleTimer.Add_Tick({
     try {
       if ($script:standby) {
-        # 待机期间不采样。但要留一条**自愈**通道：待机是消息驱动的（锁屏 / 显示器关 / 睡眠），
-        # 消息漏一条就会一直以为在待机 —— 用户明明坐在电脑前，桌宠却再也没看过一眼屏幕，
-        # 手动点它时手上没有截图，模型只能靠窗口标题猜（实测踩过：连着两小时给的是
-        # "把采集方式改成 Windows 10"这类凭标题脑补的建议）。
-        # 所以每隔 standbyProbeSeconds 秒自己核一遍**实时状态**，不再信缓存的那三个标志位：
-        #   ① 最近有人动键鼠（sleep 之前一定发生过输入）② 现在不是锁屏（OpenInputDesktop 现场问）
-        #   ③ 能抓到屏 —— 三条都成立就醒过来，并把标志位一起校准。
+        # 待机期间不采样，但每 standbyProbeSeconds 秒做一次**自愈探测**（见 Try-WakeFromStandby）：
+        # 系统通知漏一条就会一直以为在待机，用户明明坐在电脑前却再没被看过一眼。
         $gap = [double]$(if ($cfg.standbyProbeSeconds) { $cfg.standbyProbeSeconds } else { 30 })
         if (((Get-Date) - $script:lastStandbyProbe).TotalSeconds -ge $gap) {
           $script:lastStandbyProbe = Get-Date
-          $idleS = [int]([DesktopGuide.Native]::IdleMs() / 1000)
-          $probeIdle = [int]$(if ($cfg.standbyProbeIdleSeconds) { $cfg.standbyProbeIdleSeconds } else { 60 })
-          $looksBusy = ($idleS -ge 0 -and $idleS -lt $probeIdle)
-          $lockedNow = $true
-          try { $lockedNow = [DesktopGuide.Native]::IsLockedNow() } catch { }
-          if ($looksBusy -and -not $lockedNow) {
-            try {
-              $probe = [DesktopGuide.Capture]::GrabJpegBase64([int]$cfg.screenshotMaxWidth, [long]$cfg.jpegQuality)
-              if ($probe) {
-                # 先把缓存标志位校准，否则下一次任意待机事件会立刻把它按回待机
-                $pet.Suspended = $false
-                $pet.SessionLocked = $false
-                $pet.PowerDisplayOn = $true
-                Exit-Standby -Display "探测恢复（距上次输入 ${idleS}s、未锁屏）"
-              }
-            } catch { }
-          }
+          [void](Try-WakeFromStandby -Why '每 30 秒自检')
         }
         return
       }
@@ -4868,11 +5054,13 @@ $focusTimer = New-Object System.Windows.Forms.Timer
 $focusTimer.Interval = [int]([double]$(if ($cfg.focusWatchMs) { $cfg.focusWatchMs } else { 400 }))
 $focusTimer.Add_Tick({
     try {
-      if ($script:standby) { return }
       $h = [DesktopGuide.Native]::ForegroundHwnd()
       if ($h -le 0) { return }
       if ($h -eq $script:lastFocusHwnd) { return }
       $script:lastFocusHwnd = $h
+      # 待机中照样盯着前台窗口：窗口一换就是"人回来了"的强信号，顺手试一次自愈
+      # （比等 30 秒那一拍快得多）。锁屏/显示器关时 Try-WakeFromStandby 会自己拒绝。
+      if ($script:standby) { if (-not (Try-WakeFromStandby -Why '前台窗口换了')) { return } }
       Sample-Once -Force      # 换窗口立刻采一次，并且立刻截图
     } catch { }
   })
