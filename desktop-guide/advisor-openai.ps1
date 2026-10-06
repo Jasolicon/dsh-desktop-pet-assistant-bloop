@@ -115,6 +115,27 @@ if (Test-Path $petCfgFile) {
 }
 $memoryText = Get-ContextMemory -LogDir (Join-Path $PSScriptRoot 'logs') -Hours $memHours -Since $memSince
 if ($memoryText) { [void]$lines.Add(''); [void]$lines.Add($memoryText) }
+
+# ---- 没有截图时，禁止"照标题脑补"（与 advisor-dsh.ps1 同一套口径）----
+# 实测踩过：待机期间截图缓冲空的，模型只看到窗口标题，却给出"把采集方式改成 Windows 10"这类
+# 具体操作建议 —— 看着专业，其实全是猜的。宁可只说一句"看不到画面"。
+$shotCount = 0
+$shotAge = -1
+try {
+  if ($payload.screen) {
+    if ($null -ne $payload.screen.shotCount) { $shotCount = [int]$payload.screen.shotCount }
+    if ($null -ne $payload.screen.shotAgeSeconds) { $shotAge = [int]$payload.screen.shotAgeSeconds }
+  }
+} catch { }
+if ($shotCount -eq 0 -and @($payload.shots).Count -gt 0) { $shotCount = @($payload.shots).Count }
+$shotStaleSeconds = [int]$(if ($pc -and $pc.shotStaleSeconds) { $pc.shotStaleSeconds } else { 30 })
+if ($shotCount -eq 0 -or $shotAge -gt $shotStaleSeconds) {
+  [void]$lines.Add('')
+  [void]$lines.Add('【⚠ 这一轮没有可用的屏幕截图】' + $(if ($shotAge -ge 0) { "（最新一张是 $shotAge 秒前的）" } else { '（截图缓冲是空的）' }))
+  [void]$lines.Add('此时**禁止**根据窗口标题推断画面内容，也**禁止**给出任何具体操作步骤（改哪个选项、点哪个按钮、选哪一项）。')
+  [void]$lines.Add('只能说"现在看不到画面"，或者直接保持沉默。')
+}
+
 $content = New-Object System.Collections.ArrayList
 [void]$content.Add(@{ type = 'text'; text = ($lines -join "`n") })
 $imageCount = 0

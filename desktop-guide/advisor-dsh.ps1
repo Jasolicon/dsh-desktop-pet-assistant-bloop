@@ -130,6 +130,27 @@ if ($payload.screen -or $payload.human) {
   if ($bits.Count -gt 0) { [void]$lines.Add(('机器与人的状态：' + ($bits -join '、') + '。')) }
 }
 
+# ---- 没有截图时，禁止"照标题脑补" ----
+# 实测踩过：待机期间截图缓冲是空的，模型只拿到窗口标题「设置 "窗口采集 2"」，
+# 却像真看见了一样给出"把采集方式改成 Windows 10 (1903 以上)、勾选允许透明度"这种
+# 具体操作建议 —— 用户点几次就给几次，看着很专业，其实全是猜的。
+$shotCount = 0
+$shotAge = -1
+try {
+  if ($payload.screen) {
+    if ($null -ne $payload.screen.shotCount) { $shotCount = [int]$payload.screen.shotCount }
+    if ($null -ne $payload.screen.shotAgeSeconds) { $shotAge = [int]$payload.screen.shotAgeSeconds }
+  }
+} catch { }
+if ($shotCount -eq 0 -and @($payload.shots).Count -gt 0) { $shotCount = @($payload.shots).Count }
+$shotStaleSeconds = [int]$(if ($cfg -and $cfg.shotStaleSeconds) { $cfg.shotStaleSeconds } else { 30 })
+if ($shotCount -eq 0 -or $shotAge -gt $shotStaleSeconds) {
+  [void]$lines.Add('')
+  [void]$lines.Add('【⚠ 这一轮没有可用的屏幕截图】' + $(if ($shotAge -ge 0) { "（最新一张是 $shotAge 秒前的）" } else { '（截图缓冲是空的）' }))
+  [void]$lines.Add('此时**禁止**根据窗口标题推断画面内容，也**禁止**给出任何具体操作步骤（改哪个选项、点哪个按钮、选哪一项）。')
+  [void]$lines.Add('只能说"现在看不到画面"，或者直接保持沉默（以 REASON 说明缺图即可）。')
+}
+
 [void]$lines.Add('')
 [void]$lines.Add('你是常驻在用户电脑上的「随时指导」主 agent。以上是这一轮观察到的桌面活动，可能还附有屏幕截图。')
 [void]$lines.Add('你是**观察者，不是执行者**：除了用 read_image 看截图，不要调用任何工具 —— 不要读文件、不要写文件、不要执行命令、不要修改任何东西。')

@@ -247,6 +247,24 @@ namespace DesktopGuide {
       return (int)((uint)Environment.TickCount - li.dwTime);
     }
 
+    // 现场问一次"现在是不是锁屏"：工作站锁上时输入桌面换成 Winlogon，普通进程打不开它。
+    // 为什么需要这条**主动查询**：锁屏/显示器关是**消息**驱动的（WM_WTSSESSION_CHANGE /
+    // PBT_POWERSETTINGCHANGE），消息漏一条，桌宠就会一直以为自己在待机。
+    // 实测踩过：18:09 "锁屏 + 显示器已关"进来之后，解锁的通知没到，桌宠连着两小时没再看一眼屏幕，
+    // 期间用户每次点它，模型只能拿到"窗口标题 + 时间线"、没有截图 —— 于是照标题脑补出
+    // 一堆"把采集方式改成 Windows 10"之类的具体操作建议。
+    [DllImport("user32.dll", SetLastError = true)]
+    static extern IntPtr OpenInputDesktop(uint dwFlags, [MarshalAs(UnmanagedType.Bool)] bool fInherit, uint dwDesiredAccess);
+    [DllImport("user32.dll", SetLastError = true)]
+    static extern bool CloseDesktop(IntPtr hDesktop);
+    public static bool IsLockedNow() {
+      // 0x0100 = DESKTOP_SWITCHDESKTOP（切回输入桌面所需的权限）
+      IntPtr h = OpenInputDesktop(0, false, 0x0100);
+      if (h == IntPtr.Zero) return true;    // 打不开 = 锁屏或安全桌面（保守：当作在待机）
+      CloseDesktop(h);
+      return false;
+    }
+
     public static string[] ListWindows() {
       var list = new System.Collections.ArrayList();
       EnumWindows((h, p) => {
@@ -563,6 +581,11 @@ namespace DesktopGuide {
       get { return autoItem.Checked; }
       set { autoItem.Checked = value; }
     }
+    /** 「自动发言」那一行的文案。周期来自 config.json，所以由外层填，别在窗体里写死。 */
+    public string AutoItemText {
+      get { return autoItem.Text; }
+      set { autoItem.Text = value; }
+    }
 
     /** 「出声朗读」开关（菜单里的勾）。true = 会朗读，false = 静音。 */
     public bool TtsEnabled {
@@ -626,7 +649,10 @@ namespace DesktopGuide {
 
       // 朗读 / 自动发言这两项先建出来（AutoEnabled / TtsEnabled 属性靠它们存状态），
       // 挂在「设置」下；SetSettings 刷新时会连同其它项一起重建。
-      autoItem = new ToolStripMenuItem("自动发言（每 5 分钟问一次）");
+      // 周期由配置决定（config.json 的 autoMinutes），所以文案不写死在这里 ——
+      // 外层启动时会用 AutoItemText 把真实周期填进来（以前写死"每 5 分钟"，
+      // 配置改成 1 分钟后菜单还在说 5 分钟，等于骗用户）。
+      autoItem = new ToolStripMenuItem("自动发言");
       autoItem.CheckOnClick = true;
       autoItem.CheckedChanged += (s, e) => Fire(AutoChanged);
       settingsMenu.DropDownItems.Add(autoItem);
@@ -2653,6 +2679,12 @@ function Build-Payload {
     screen    = [pscustomobject]@{
       stillSeconds = [int]((Get-Date) - $script:stillSince).TotalSeconds
       fingerprint  = $script:lastFp
+      # 截图缓冲是不是空的 / 最新一张有多旧。没有截图时模型只能看到窗口标题，
+      # 那条路上它特别容易"脑补"出具体操作步骤 —— 所以这两个数字要如实交给提示词。
+      shotCount    = [int]$script:shots.Count
+      shotAgeSeconds = $(if ($script:shots.Count -gt 0) {
+          try { [int]((Get-Date) - [datetime]$script:shots[$script:shots.Count - 1].at).TotalSeconds } catch { -1 }
+        } else { -1 })
     }
     shots     = @($script:shots | ForEach-Object { $_.jpegBase64 })
     shotTimes = @($script:shots | ForEach-Object { $_.at })
@@ -4717,6 +4749,9 @@ $pet.Add_CollapseRequested({
     try { Set-PetWidth 292; if (-not $pet.PromptPending) { $pet.ClearMessage() } } catch { }
   })
 
+# 菜单里「自动发言」的文案跟着真实周期走（周期来自 config.json 的 autoMinutes）
+try { $pet.AutoItemText = "自动发言（每 $([double]$cfg.autoMinutes) 分钟问一次）" } catch { }
+
 $autoTimer = New-Object System.Windows.Forms.Timer
 $autoTimer.Interval = [int]([double]$cfg.autoMinutes * 60 * 1000)
 $autoTimer.Add_Tick({ try { Start-Advisor -Auto } catch { } })
@@ -4786,15 +4821,31 @@ $sampleTimer.Interval = [int]([double]$cfg.sampleSeconds * 1000)
 $sampleTimer.Add_Tick({
     try {
       if ($script:standby) {
-        # 待机期间不采样。但如果是"信号没来、只是抓不到屏"这一类（远程会话断开最典型），
-        # 就每隔 standbyProbeSeconds 秒探一次，能抓到了自己醒 —— 否则会一直待机下去。
-        if ($script:standbyReason -eq 'capture') {
-          $gap = [double]$(if ($cfg.standbyProbeSeconds) { $cfg.standbyProbeSeconds } else { 30 })
-          if (((Get-Date) - $script:lastStandbyProbe).TotalSeconds -ge $gap) {
-            $script:lastStandbyProbe = Get-Date
+        # 待机期间不采样。但要留一条**自愈**通道：待机是消息驱动的（锁屏 / 显示器关 / 睡眠），
+        # 消息漏一条就会一直以为在待机 —— 用户明明坐在电脑前，桌宠却再也没看过一眼屏幕，
+        # 手动点它时手上没有截图，模型只能靠窗口标题猜（实测踩过：连着两小时给的是
+        # "把采集方式改成 Windows 10"这类凭标题脑补的建议）。
+        # 所以每隔 standbyProbeSeconds 秒自己核一遍**实时状态**，不再信缓存的那三个标志位：
+        #   ① 最近有人动键鼠（sleep 之前一定发生过输入）② 现在不是锁屏（OpenInputDesktop 现场问）
+        #   ③ 能抓到屏 —— 三条都成立就醒过来，并把标志位一起校准。
+        $gap = [double]$(if ($cfg.standbyProbeSeconds) { $cfg.standbyProbeSeconds } else { 30 })
+        if (((Get-Date) - $script:lastStandbyProbe).TotalSeconds -ge $gap) {
+          $script:lastStandbyProbe = Get-Date
+          $idleS = [int]([DesktopGuide.Native]::IdleMs() / 1000)
+          $probeIdle = [int]$(if ($cfg.standbyProbeIdleSeconds) { $cfg.standbyProbeIdleSeconds } else { 60 })
+          $looksBusy = ($idleS -ge 0 -and $idleS -lt $probeIdle)
+          $lockedNow = $true
+          try { $lockedNow = [DesktopGuide.Native]::IsLockedNow() } catch { }
+          if ($looksBusy -and -not $lockedNow) {
             try {
               $probe = [DesktopGuide.Capture]::GrabJpegBase64([int]$cfg.screenshotMaxWidth, [long]$cfg.jpegQuality)
-              if ($probe) { Exit-Standby -Display '抓屏恢复了' }
+              if ($probe) {
+                # 先把缓存标志位校准，否则下一次任意待机事件会立刻把它按回待机
+                $pet.Suspended = $false
+                $pet.SessionLocked = $false
+                $pet.PowerDisplayOn = $true
+                Exit-Standby -Display "探测恢复（距上次输入 ${idleS}s、未锁屏）"
+              }
             } catch { }
           }
         }

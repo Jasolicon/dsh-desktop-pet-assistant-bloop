@@ -73,9 +73,11 @@
   "_observeAgentsNote": "子 agent 观察：后台 agent 跑的时候在气泡里显示它此刻在干什么，并把 agents 字段塞进主 agent 的 payload（否则它会把'屏幕没动'误判成'用户卡住了'）。",
   "observeAgents": true
   ,
-  "_standbyNote": "待机（黑屏/锁屏/睡眠）：桌宠直接读系统信号（显示器电源 GUID_CONSOLE_DISPLAY_STATE / 会话锁屏通知 / 睡眠唤醒），进待机后不抓屏、不自动判断、不打扰；醒来会作废过期观测并重新看一眼。captureFailLimit 是「信号没来但连续抓不到屏」几次后自动进待机（防远程会话断开时刷警告）。standbyProbeSeconds 是那种情况下每隔多久试探一次能否恢复。",
+  "_standbyNote": "待机（黑屏/锁屏/睡眠）：桌宠直接读系统信号（显示器电源 GUID_CONSOLE_DISPLAY_STATE / 会话锁屏通知 / 睡眠唤醒），进待机后不抓屏、不自动判断、不打扰；醒来会作废过期观测并重新看一眼。captureFailLimit 是「信号没来但连续抓不到屏」几次后自动进待机（防远程会话断开时刷警告）。standbyProbeSeconds 是待机期间每隔多久**自愈探测**一次：距上次键鼠输入小于 standbyProbeIdleSeconds 秒、且 OpenInputDesktop 说明没锁屏、且能抓到屏 —— 三条都成立就自己醒（防的是系统通知漏发后桌宠一直以为在待机、手里一张截图都没有）。shotStaleSeconds 是「截图太旧就当没有」的阈值，超过它提示词会禁止模型照窗口标题脑补操作步骤。",
   "captureFailLimit": 3,
-  "standbyProbeSeconds": 30
+  "standbyProbeSeconds": 30,
+  "standbyProbeIdleSeconds": 60,
+  "shotStaleSeconds": 30
   ,
   "_judgeNote": "本地闸门：自动判断要不要起一次模型调用，由本地代码决定（画面指纹差异 + 前台窗口是否换了 + 距上次多久 + 人还在不在）。judgeMinSeconds 是两次判断的最小间隔；judgeMinFpDelta 是画面指纹差异阈值（0..960，指纹是 64 格 16 级灰度）；silentBackoffMax 是连续'决定不说'时间隔最多放宽的倍数；judgeIdleSkipSeconds 是'人不在'的判定（无键鼠输入且窗口没换就不打扰）。手动问一句不走这道闸门。",
   "judgeMinSeconds": 60,
