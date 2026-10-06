@@ -2843,6 +2843,26 @@ function Test-WorthAutoJudge {
   # 闸门会一直跳过 —— 省是省了，但桌宠等于停了。
   $maxGap = [double]$(if ($cfg.judgeMaxGapSeconds) { $cfg.judgeMaxGapSeconds } else { 300 })
   if ($since -ge $maxGap) { return '' }
+
+  # ---- 损友模式（直播感）：门控放宽两处 ----
+  #   ① 间隔不看任务档的 judgeMinSeconds（默认 60s），改看 roastMinSeconds（默认 30s）
+  #   ② **画面没变也允许开口** —— 直播里"又在刷同一个页面""挂机二十分钟了"本身就是内容
+  # 代价是真的花钱：每轮都是一次模型调用（约 0.02–0.03 元）。所以留两个刹车：
+  #   · 用户长时间不动键鼠 → 不开口（直播间里没人了还解说就很傻）
+  #   · 连着几次都判成"没什么可说" → 间隔按 2x/3x 放宽（别对着一个无聊画面一直付费）
+  if ($cfg.speakStyle -eq 'roast') {
+    $roastGap = [double]$(if ($cfg.roastMinSeconds) { $cfg.roastMinSeconds } else { 30 })
+    $roastNeed = $roastGap * (1 + [math]::Min($script:silentStreak, 2))
+    if ($since -lt $roastNeed) {
+      return "距上次开口只有 $([int]$since)s（损友模式最短 $([int]$roastNeed)s 一句）"
+    }
+    $roastIdle = [int]([DesktopGuide.Native]::IdleMs() / 1000)
+    if ($roastIdle -ge [int]$cfg.judgeIdleSkipSeconds) {
+      return "人不在（$($roastIdle)s 没有键鼠输入）—— 吐槽也得有人在看"
+    }
+    return ''   # 画面没变也放行：这就是损友模式要的"直播效果"
+  }
+
   if ((-not $winChanged) -and ($fpDist -lt $delta)) {
     return "画面几乎没变（差异 $fpDist < $delta），前台窗口也没换"
   }
@@ -3514,6 +3534,10 @@ $probe3 = New-Object DesktopGuide.PetForm -ArgumentList @([double]$script:UiScal
   # 注意指纹的字符范围是 '0'(48) 到 '?'(63)，不是十六进制 —— 别拿 'F' 当"最大"
   $zeroFp = '0' * 64
   $fullFp = '?' * 64
+  # 闸门第一条判据就是"有没有画面"。自检里先塞一张假截图 ——
+  # 不塞的话后面每一条都撞在同一次早退上，等于整段没测（实测踩过）。
+  $script:shots.Clear()
+  [void]$script:shots.Add([pscustomobject]@{ at = (Get-Date).ToString('o'); jpegBase64 = 'fake' })
   $script:standby = $false
   $script:silentStreak = 0
   $script:lastFp = $zeroFp
@@ -3535,6 +3559,25 @@ $probe3 = New-Object DesktopGuide.PetForm -ArgumentList @([double]$script:UiScal
   $script:lastJudgedKey = $script:currentKey
   $script:lastJudgedAt = (Get-Date).AddMinutes(-6)
   Write-Output ("  画面没变但已 6 分钟    → '" + (Test-WorthAutoJudge) + "'  （保险丝：不能一直不看）")
+  # ---- 损友模式：同一套假状态，只换 speakStyle，看闸门会不会放行 ----
+  # 损友模式的定位是"陪着说话"，所以它必须能在**画面没变**时开口（直播里"又在刷同一个页面"
+  # 本身就是内容）—— 这两行断言就是钉住这条：30 秒内拦住、40 秒放行。
+  $oldStyle = [string]$cfg.speakStyle
+  $cfg.speakStyle = 'roast'
+  $script:standby = $false
+  $script:silentStreak = 0
+  $script:lastFp = $zeroFp
+  $script:lastJudgedFp = $zeroFp
+  $script:lastJudgedKey = $script:currentKey
+  $script:lastJudgedAt = (Get-Date).AddSeconds(-15)
+  Write-Output ("  [损友] 画面没变、15 秒前 → '" + (Test-WorthAutoJudge) + "'  （该拦住：没到 30s）")
+  $script:lastJudgedAt = (Get-Date).AddSeconds(-40)
+  Write-Output ("  [损友] 画面没变、40 秒前 → '" + (Test-WorthAutoJudge) + "'  （空 = 放行，画面没变也能吐槽）")
+  $script:silentStreak = 2
+  Write-Output ("  [损友] 同上但连 2 次没说 → '" + (Test-WorthAutoJudge) + "'  （退避到 90s：别对着无聊画面一直付费）")
+  $script:silentStreak = 0
+  $cfg.speakStyle = $oldStyle
+  $script:shots.Clear()      # 假截图用完就撤，别影响后面几节
   $script:lastFp = $fullFp
   $script:standby = $true
   Write-Output ("  待机中                → " + (Test-WorthAutoJudge))
@@ -3736,7 +3779,12 @@ $probe3 = New-Object DesktopGuide.PetForm -ArgumentList @([double]$script:UiScal
     $body = if (Test-Path $sp) { Get-Content -LiteralPath $sp -Raw -Encoding UTF8 } else { '' }
     $styleOk["$st 文件存在"] = ($body.Length -gt 120)
     $styleOk["$st 带纯文本约束"] = ($body -match '不要用 Markdown')
+    # 提示词文件里**不能出现 Markdown 加粗** —— 模型会照着学，然后在气泡里原样吐出来
+    $styleOk["$st 没有 Markdown 加粗"] = ($body -notmatch '\*\*')
   }
+  # 损友模式的卖点是"陪着说话"，不是"只在有问题时说" —— 这条定位得写在提示词里
+  $roastBody = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'presets\roast.txt') -Raw -Encoding UTF8
+  $styleOk['损友带"陪着说话"定位'] = ($roastBody -match '陪着.说话')
   $swStyle = $null
   foreach ($sec in $swSchema) { foreach ($it in $sec.Items) { if ($it.Key -eq 'speakStyle') { $swStyle = $it } } }
   $styleOk['设置窗口有三档'] = ($null -ne $swStyle -and @($swStyle.Choices).Count -eq 3)
