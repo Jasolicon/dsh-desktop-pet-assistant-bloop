@@ -168,7 +168,7 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\desktop-guide\DesktopGuide.ps1
 
 | 需要 | 说明 |
 |---|---|
-| **PowerShell 7（必须）** | 不能用系统自带的 5.1 —— 它跑的是 .NET Framework，`Add-Type` 的引用解析方式完全不同，脚本开头的版本守卫会直接拒绝并提示升级（要装：`winget install Microsoft.PowerShell`） |
+| **PowerShell 7（必须）** | 不能用系统自带的 5.1 —— 它跑的是 .NET Framework，`Add-Type` 的引用解析方式完全不同，脚本开头的版本守卫会直接拒绝并提示升级。一条命令装好：`winget install Microsoft.PowerShell`（用户级，不用管理员） |
 | **DeepSeek Harness** | 桌宠把它当作"大脑"（使用已登录的账号，无需另配 key） |
 | 语音输入（可选） | 首次使用按需下载 SenseVoice 模型，约 229MB，识别全程在本机离线完成 |
 

@@ -89,12 +89,15 @@
 开机不要弹一个黑窗口（桌宠自己有分层窗口）。勾的状态**以注册表为准**（回读），写不进去（组策略
 禁了 HKCU\Run 之类）会把勾弹回去并给出可手动粘贴的命令行 —— 不骗用户。
 
-> ⚠️ **pwsh 路径是有讲究的**：`Get-AutoStartExe` 优先挑系统安装的 PowerShell 7
+> ⚠️ **pwsh 路径是有讲究的**：`Get-AutoStartExe` 优先挑**系统装**的 PowerShell 7
 > （`Program Files`、`LOCALAPPDATA\Programs`、`WindowsApps`），找不到才退回**当前进程用的那个**。
-> 这台机器上没有系统版 PowerShell 7 —— 唯一的 pwsh 在 Codex 运行时的缓存里
-> （`.cache\codex-runtimes\...\pwsh.exe`），所以开机项是绑在那个缓存上的：**能用**，
-> 但缓存被清理或升级后会失效。想让它稳，装一个系统版（`winget install Microsoft.PowerShell`）
-> 再把这个开关取消再勾一次即可（会重新写入新路径）。自检 5w 节会把这条提醒打出来。
+> 为什么挑：最早这台机器上没有系统版 PowerShell 7，唯一的 pwsh 在 Codex 运行时的缓存里
+> （`.cache\codex-runtimes\...\pwsh.exe`）—— 能用，但缓存被清理/升级就失效，开机项会指向一个不存在的文件。
+>
+> **现在装好了**：`winget install Microsoft.PowerShell` 装了 **7.6.6**（MSIX，**用户级、不需要管理员**），
+> 落到 `%LOCALAPPDATA%\Microsoft\WindowsApps\pwsh.exe`。所以开机项和快捷方式现在指的它 ——
+> 不再依赖 Codex 的缓存。换成别的机器时，只要装过系统版 pwsh，`Get-AutoStartExe` 会自动挑中；
+> 如果它仍然挑到了 `.cache\codex-runtimes\...`（说明那台机器还没装），自检 5w 会把这条提醒打出来。
 
 > ⚠️ **"移开就自动关"踩过一次**：它一开始只拿主菜单的范围算（`ContextMenuStrip.Bounds` 再外扩 250px），
 > 可**子菜单是独立窗口**，Bounds 里没有它们 —— 桌宠贴在屏幕右缘时，「设置 → 说话风格」
