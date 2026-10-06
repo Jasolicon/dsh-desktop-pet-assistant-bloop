@@ -27,6 +27,8 @@ param(
   [switch]$SelfTest,
   [switch]$Dump,
   [switch]$VisibleTest,
+  # 双击快捷方式时带上它：已经在跑的话弹个框说一声（开机启动那条不带，静默退出）
+  [switch]$NotifyIfRunning,
   [int]$Seconds = 0
 )
 
@@ -73,6 +75,47 @@ if ($PSVersionTable.PSVersion.Major -lt 7) {
   Write-Host $PSVersionTable.PSVersion.ToString() -ForegroundColor Yellow
   Write-Host '请改用：pwsh -NoProfile -ExecutionPolicy Bypass -File "<本文件路径>"'
   exit 1
+}
+
+function Get-RunningPetPid {
+  <# run\pet.pid 里记着当前桌宠的 PID。返回它还活着并且**确实是桌宠**的 PID，否则 0。
+     为什么要确认命令行：PID 会被系统复用 —— 只看"这个号有没有活进程"，
+     很容易把别的程序当桌宠，然后拒绝启动（那种 bug 最难查）。 #>
+  param([string]$RunDir = '')
+  if (-not $RunDir) { $RunDir = Join-Path $PSScriptRoot 'run' }
+  $f = Join-Path $RunDir 'pet.pid'
+  if (-not (Test-Path -LiteralPath $f)) { return 0 }
+  $other = 0
+  try { $other = [int]((Get-Content -LiteralPath $f -Raw -Encoding UTF8).Trim()) } catch { return 0 }
+  if ($other -le 0) { return 0 }
+  if (-not (Get-Process -Id $other -ErrorAction SilentlyContinue)) { return 0 }
+  try {
+    $ci = Get-CimInstance Win32_Process -Filter "ProcessId=$other" -ErrorAction SilentlyContinue
+    if ($ci -and ([string]$ci.CommandLine -match 'DesktopGuide\.ps1')) { return $other }
+  } catch { }
+  return 0
+}
+
+# 已经在跑了就别起第二个 —— 双击快捷方式、开机启动 + 手动再点一次、手滑点两下，都会撞上。
+# 两个桌宠叠一起不只是难看：它们抢同一个会话写句柄、抢同一个托盘图标，还会互相抢点击
+#（这条还是桌宠自己观察出来的）。
+# 自检 / Dump / 可见性诊断不挡（那些本来就是"再起一个进程"的用法）。
+if (-not ($SelfTest -or $Dump -or $VisibleTest)) {
+  $runningPet = Get-RunningPetPid
+  if ($runningPet -gt 0 -and $runningPet -ne $PID) {
+    Write-Host "桌宠已经在跑了（PID $runningPet），这次不重复启动。"
+    if ($NotifyIfRunning) {
+      try {
+        Add-Type -AssemblyName System.Windows.Forms
+        [void][System.Windows.Forms.MessageBox]::Show(
+          "桌宠已经在跑了（PID $runningPet）。`n`n点它一下 = 让它说一句；要退出用右键菜单。",
+          '泡泡 · Bloop', 'OK', 'Information')
+      } catch { }
+    } else {
+      Start-Sleep -Seconds 2
+    }
+    exit 0
+  }
 }
 
 Add-Type -AssemblyName System.Windows.Forms
@@ -4053,6 +4096,33 @@ $probe3 = New-Object DesktopGuide.PetForm -ArgumentList @([double]$script:UiScal
     Write-Output '  ⚠ 这台机器没有系统版 PowerShell 7，用的是 Codex 运行时缓存里的 pwsh —— 能开机启动，但缓存被清理/升级后会失效；装一个系统版（winget install Microsoft.PowerShell）再勾一次就稳了。'
   }
   Write-Output ("  5w {0}/{1} 项通过" -f @($wOk | Where-Object { $_ }).Count, $wOk.Count)
+  Write-Output '=== 5x. 双击启动（快捷方式 + 「已经在跑就别起第二个」）==='
+  # ① Get-RunningPetPid 的三态：没有 pid 文件 / pid 是死进程 / pid 是活的桌宠
+  #    （最后一态拿自检进程自己当样本 —— 它的命令行里本来就有 DesktopGuide.ps1）
+  # ② make-launcher.ps1 能跑（-SelfTest 模式只看不落盘）
+  $xOk = @()
+  $xTmp = Join-Path ([System.IO.Path]::GetTempPath()) ('bloop-pid-' + [guid]::NewGuid().ToString('N').Substring(0, 6))
+  New-Item -ItemType Directory -Force -Path $xTmp | Out-Null
+  try {
+    $xOk += ((Get-RunningPetPid -RunDir $xTmp) -eq 0)
+    Set-Content -LiteralPath (Join-Path $xTmp 'pet.pid') -Value 999999 -Encoding UTF8
+    $xOk += ((Get-RunningPetPid -RunDir $xTmp) -eq 0)
+    Set-Content -LiteralPath (Join-Path $xTmp 'pet.pid') -Value $PID -Encoding UTF8
+    $xOk += ((Get-RunningPetPid -RunDir $xTmp) -eq $PID)
+  } finally { try { Remove-Item -LiteralPath $xTmp -Recurse -Force -ErrorAction SilentlyContinue } catch { } }
+  Write-Output ("  没有 pet.pid → 0；pid 是死进程 → 0；pid 是活桌宠 → 认出来  " + $(if (@($xOk) -notcontains $false) { '✔' } else { '✘' }))
+  $mkScript = Join-Path $PSScriptRoot 'make-launcher.ps1'
+  $mkOut = ''
+  try { $mkOut = (& pwsh -NoProfile -ExecutionPolicy Bypass -File $mkScript -SelfTest 2>&1 | Out-String) } catch { }
+  $mkOk = ($mkOut -match '参数：' -and $mkOut -match 'DesktopGuide\.ps1' -and $mkOut -match 'pwsh')
+  $xOk += $mkOk
+  $icoOk = Test-Path -LiteralPath (Join-Path $PSScriptRoot 'assets\pet.ico')
+  $xOk += $icoOk
+  Write-Output ("  make-launcher -SelfTest 能跑 = {0}；图标 assets\pet.ico 在 = {1}" -f $mkOk, $icoOk)
+  $lnkRoot = Join-Path $PSScriptRoot '泡泡桌宠.lnk'
+  $lnkDesk = Join-Path ([Environment]::GetFolderPath('Desktop')) '泡泡桌宠.lnk'
+  Write-Output ("  当前快捷方式：仓库里={0}｜桌面={1}（生成方式见 make-launcher.ps1）" -f (Test-Path -LiteralPath $lnkRoot), (Test-Path -LiteralPath $lnkDesk))
+  Write-Output ("  5x {0}/{1} 项通过" -f @($xOk | Where-Object { $_ }).Count, $xOk.Count)
   Write-Output '=== 6. 朗读（TTS）==='
   # -Check 只列音色，不出声（自检不该在半夜突然开口）。
   [void](Initialize-Tts -Config $cfg)

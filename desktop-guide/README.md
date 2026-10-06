@@ -117,6 +117,30 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\DesktopGuide.ps1
 > `.ps1` 不受影响，所以用上面的命令；`-WindowStyle Minimized` 可以让控制台不占地方。
 > 想停止：右键宠物 →「退出」，或关掉那个窗口。
 
+### 双击启动：跑一次 `make-launcher.ps1`（推荐给日常使用）
+
+上面那行命令每次都要敲，太麻烦；而这台机器上 `.cmd` / `.bat` 又按扩展名被拦（见上一条），
+`.ps1` 双击默认交给记事本。所以给你生成一个**快捷方式**：
+
+```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\make-launcher.ps1
+```
+
+它做三件事：挑一个稳的 pwsh（优先系统安装的 PowerShell 7，找不到才用当前进程这个）、
+用 `assets\pet.png` 现生成一个 `assets\pet.ico` 当图标、然后在**桌面**和**仓库目录**各放一个
+「泡泡桌宠.lnk」。双击就启动，不用右键「使用 PowerShell 运行」。
+
+两个细节：
+
+- 快捷方式里带 `-WindowStyle Hidden`（不弹黑窗口）和 `-NotifyIfRunning`
+  （**已经在跑的时候双击**，会弹一句「桌宠已经在跑了（PID xxxx）」而不是起第二个 ——
+  两个桌宠叠一起会抢同一个会话写句柄、抢同一个托盘图标，还会互相抢点击）。
+- `.lnk` 里是绝对路径，所以它**不进仓库**（`.gitignore` 里挡了，图标 `pet.ico` 也一样）。
+  换机器 / 搬目录之后重跑一次 `make-launcher.ps1` 就行。
+
+自检第 5x 节盯着这条链：`Get-RunningPetPid` 的三态（没有 pid 文件 / pid 是死进程 / pid 是活桌宠）、
+`make-launcher.ps1 -SelfTest` 能跑、图标在不在。
+
 | 操作 | 效果 |
 |---|---|
 | **左键点它** | 现在说一句；**它正在朗读时，这一下是让它闭嘴**（不叠加新判断） |

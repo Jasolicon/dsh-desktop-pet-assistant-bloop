@@ -163,9 +163,12 @@ action），桌宠只是把默认关闭的开关打开，因此插件管理与 D
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\desktop-guide\DesktopGuide.ps1
 ```
 
+想双击启动的话跑一次 `desktop-guide\make-launcher.ps1`，它会在桌面和仓库目录各生成一个
+「泡泡桌宠.lnk」（图标用角色图现生成）。也支持**开机启动**：右键 →「设置 → 开机启动」。
+
 | 需要 | 说明 |
 |---|---|
-| **PowerShell 7** | 系统自带的 5.1 会在启动时被明确拒绝并提示升级 |
+| **PowerShell 7（必须）** | 不能用系统自带的 5.1 —— 它跑的是 .NET Framework，`Add-Type` 的引用解析方式完全不同，脚本开头的版本守卫会直接拒绝并提示升级（要装：`winget install Microsoft.PowerShell`） |
 | **DeepSeek Harness** | 桌宠把它当作"大脑"（使用已登录的账号，无需另配 key） |
 | 语音输入（可选） | 首次使用按需下载 SenseVoice 模型，约 229MB，识别全程在本机离线完成 |
 
