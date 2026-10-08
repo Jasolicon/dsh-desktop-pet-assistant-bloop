@@ -1,0 +1,5 @@
+# 只做一件事：把这个探针挂进 profile。
+# （照 dsh-pet / dsh-selfwake 的做法：bundle 包只负责"我这一行要插进来"。）
+- insert:
+    - id: petprobe
+      name: dsh-petprobe

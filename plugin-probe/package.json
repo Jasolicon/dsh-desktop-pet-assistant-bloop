@@ -1,0 +1,21 @@
+{
+  "name": "dsh-petprobe",
+  "version": "0.0.1",
+  "description": "泡泡·Bloop 的极薄插件探针：验证 DSH 插件能否 spawn 子进程抓屏 / 挂本机路由 / 正确收摊",
+  "type": "module",
+  "main": "index.js",
+  "license": "PolyForm-Noncommercial-1.0.0",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web"
+    }
+  }
+}
