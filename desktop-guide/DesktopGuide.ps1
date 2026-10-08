@@ -609,6 +609,20 @@ namespace DesktopGuide {
     /** 自检用：暂停标画在哪儿（没暂停就是空矩形）。 */
     public Rectangle PauseMarkBox { get { return pauseRect; } }
 
+    /** 用户框着监控区域时，底部那排里的「框选」按钮淡黄高亮 —— 提示"现在只截这一块"。
+        状态由外层推（改区域那条路 + 启动时各一处），这里只负责画；是**状态指示灯**，不闪不呼吸。 */
+    bool regionSet;
+    public bool RegionSet {
+      get { return regionSet; }
+      set { if (regionSet != value) { regionSet = value; Render(); } }
+    }
+
+    /** 自检用：底部按钮条里第 i 格的矩形（还没排版时是空矩形）。 */
+    public Rectangle ButtonRectAt(int i) {
+      if (i < 0 || i >= buttonRects.Length) return Rectangle.Empty;
+      return buttonRects[i];
+    }
+
     // 逻辑尺寸（96 DPI 下的像素），实际使用时会乘 uiScale
     readonly double uiScale;
     int S(int v) { return (int)Math.Round(v * uiScale); }
@@ -626,6 +640,8 @@ namespace DesktopGuide {
     // \uE8BD 消息气泡(问一句) · \uE8F2 对话 · \uE765 键盘(打字派活) · \uE7A8 裁剪(框选) · \uE81C 历史(记录)
     static readonly string[] BtnIcons = new string[] { "\uE8BD", "\uE8F2", "\uE765", "\uE7A8", "\uE81C" };
     static readonly string[] BtnLabels = new string[] { "问一句", "对话", "打字派活", "框选监控区域", "看它判过什么" };
+    // 「框选」在这一排里的下标。要跟上面两个数组的顺序一致（OnMouseUp 的 switch 也是按下标分的）
+    const int RegionBtnIdx = 3;
     // 长度跟着 BtnIcons 走，别再写死数字（写死的话加按钮会下标越界）
     Rectangle[] buttonRects = new Rectangle[5];
     int hotButton = -1;
@@ -1575,8 +1591,18 @@ namespace DesktopGuide {
             path.AddArc(r.X, r.Y, rad, rad, 90, 180);
             path.AddArc(r.Right - rad, r.Y, rad, rad, 270, 180);
             path.CloseFigure();
-            g.FillPath(fill, path);
-            g.DrawPath(line, path);
+            if (i == RegionBtnIdx && regionSet) {
+              // 淡黄高亮：黄在深色气泡上要够亮才看得出来，所以底板给到 205 的不透明度；
+              // 描边再黄一档，免得跟旁边那几个白底按钮糊在一起。单独的刷子只给这一格建。
+              using (var f2 = new SolidBrush(Color.FromArgb(i == hotButton ? 235 : 205, 255, 240, 150)))
+              using (var l2 = new Pen(Color.FromArgb(200, 255, 205, 60), 1f)) {
+                g.FillPath(f2, path);
+                g.DrawPath(l2, path);
+              }
+            } else {
+              g.FillPath(fill, path);
+              g.DrawPath(line, path);
+            }
           }
           TextRenderer.DrawText(g, BtnIcons[i], iconFont, r,
             i == hotButton ? Color.FromArgb(255, 26, 30, 40) : Color.FromArgb(205, 26, 30, 40),
@@ -2611,6 +2637,8 @@ function Set-UserRegion {
   if (-not $NoSave) { Save-PetConfig }
   [void](Clear-AutoRegion -Why '用户改了监控区域')
   Sync-CaptureRegion
+  # 底排那个「框选」按钮据此淡黄高亮。（$pet 在自检里还没建好，所以套 try）
+  try { $pet.RegionSet = [bool]($cfg.region -and $cfg.region.w) } catch { }
 }
 
 function Start-BackgroundCapture {
@@ -4548,6 +4576,63 @@ $probe3 = New-Object DesktopGuide.PetForm -ArgumentList @([double]$script:UiScal
     Remove-Item -LiteralPath $tmpCfg, $tmpInter -Force -ErrorAction SilentlyContinue
     try { Sync-CaptureRegion } catch { }
   }
+  Write-Output '=== 5ab. 框了区域 → 底部「框选」按钮淡黄高亮 ==='
+  # 视觉的东西不落到像素上就没钉住，所以这里真渲染两张（SavePreview 走的就是分层窗口那条 DrawAll），
+  # 再数「蓝色通道明显低于红色通道」的像素占比 —— 黄色在数值上就是这个特征。
+  # 不去比单点颜色：按钮正中间还压着一个图标字形，取中心点会取到字上。
+  $rprobe = New-Object DesktopGuide.PetForm -ArgumentList @([double]$script:UiScale, [string]$cfg.fontFamily, [double]$cfg.fontSize)
+  $null = $rprobe.Handle
+  if ($img) { $rprobe.SetImage($img) }
+  $outOff = Join-Path $runDir 'pet-preview-region-off.png'
+  $outOn = Join-Path $runDir 'pet-preview-region-on.png'
+  $rprobe.RegionSet = $false
+  $rprobe.SavePreview($outOff)
+  $btnRegion = $rprobe.ButtonRectAt(3)     # 3 = 「框选监控区域」（跟 OnMouseUp 的 case 3 同一个下标）
+  $btnAsk = $rprobe.ButtonRectAt(0)        # 0 = 「问一句」：用来确认"只有那一格变黄"
+  $rprobe.RegionSet = $true
+  $rprobe.SavePreview($outOn)
+  $rprobe.Dispose()
+
+  $yellowShare = {
+    param($path, $rect)
+    if (-not (Test-Path -LiteralPath $path) -or -not $rect -or $rect.Width -le 0) { return -1 }
+    $bmp = [System.Drawing.Bitmap]::FromFile($path)
+    try {
+      $hit = 0; $all = 0
+      for ($y = $rect.Top; $y -lt $rect.Bottom; $y++) {
+        for ($x = $rect.Left; $x -lt $rect.Right; $x++) {
+          $c = $bmp.GetPixel($x, $y)
+          $all++
+          # A>40 滤掉圆角外的全透明像素；黄 = 蓝通道比红/绿低一截
+          if ($c.A -gt 40 -and ($c.R - $c.B) -ge 30 -and ($c.G - $c.B) -ge 20) { $hit++ }
+        }
+      }
+      if ($all -eq 0) { return -1 }
+      return [math]::Round($hit / [double]$all, 3)
+    } finally { $bmp.Dispose() }
+  }
+  $shareOff = & $yellowShare $outOff $btnRegion
+  $shareOn = & $yellowShare $outOn $btnRegion
+  $shareAskOn = & $yellowShare $outOn $btnAsk
+  # 取一个"肯定是底色"的点打出来（诊断用：万一哪天 GetPixel 变成返回预乘值，这行能一眼看出来）
+  $diag = ''
+  try {
+    $db = [System.Drawing.Bitmap]::FromFile($outOn)
+    $pc = $db.GetPixel(($btnRegion.Left + [int]($btnRegion.Width / 4)), ($btnRegion.Top + [int]($btnRegion.Height / 2)))
+    $diag = "A=$($pc.A) R=$($pc.R) G=$($pc.G) B=$($pc.B)"
+    $db.Dispose()
+  } catch { }
+  Write-Output ("  「框选」那一格 {0}x{1}：没框区域时黄色像素占 {2}；框了之后占 {3}（底色取样 {4}）" -f `
+      $btnRegion.Width, $btnRegion.Height, $shareOff, $shareOn, $diag)
+  Write-Output ("  旁边的「问一句」那一格（框了之后）：黄色像素占 {0} —— 应该是 0，只亮该亮的那一格" -f $shareAskOn)
+  Write-Output ("  预览图：{0}｜{1}" -f $outOff, $outOn)
+  if ($shareOn -lt 0 -or $shareOff -lt 0 -or $shareAskOn -lt 0) {
+    Write-Output '  判定：⚠ 测不出来（按钮那一格没渲染出来）'
+  } elseif ($shareOn -ge 0.5 -and $shareOff -le 0.05 -and $shareAskOn -le 0.05) {
+    Write-Output '  判定：✔ 只有框了区域那一格才变黄（占了它大半面积，不是只描个边）'
+  } else {
+    Write-Output '  判定：✘ 高亮没生效、或者亮到了别的格子上'
+  }
   Write-Output '=== 6. 朗读（TTS）==='
   # -Check 只列音色，不出声（自检不该在半夜突然开口）。
   [void](Initialize-Tts -Config $cfg)
@@ -4663,6 +4748,9 @@ Load-History
 Load-Interactions
 $script:silentTotal = Get-SilentTotalFromLog
 $pet.SilentCount = [int]$script:silentTotal
+# 起来时先把"有没有框着监控区域"推给界面：底部那个「框选」按钮要据此淡黄高亮。
+# 不推的话，带着区域重启会先显示成"没框"，直到你下次动区域才对。
+$pet.RegionSet = [bool]($cfg.region -and $cfg.region.w)
 
 # ---- DSH agent 引擎（外壳 + 引擎：我们出界面，DSH 出 agent 能力）----
 $agentsConfig = Join-Path $PSScriptRoot 'agents.json'
