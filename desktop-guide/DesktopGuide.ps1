@@ -356,13 +356,10 @@ namespace DesktopGuide {
         g.InterpolationMode = InterpolationMode.HighQualityBilinear;
         g.DrawImage(full, 0, 0, 8, 8);
         full.Dispose();
-        var sb = new StringBuilder(32);
-        for (int y = 0; y < 8; y++) for (int x = 0; x < 8; x++) {
-          var c = small.GetPixel(x, y);
-          int lum = (c.R * 30 + c.G * 59 + c.B * 11) / 100;
-          sb.Append((char)(48 + lum / 16));   // 每格量化成 16 级
-        }
-        return sb.ToString();
+        // 走同一个 FingerprintOf：这里原来自己抄了一份 8x8 的算法，那份**不挖掉桌宠自己那块**，
+        // 哪天有人拿它做变化检测就会踩到"自己触发自己"（见 SelfRect 的注释）。
+        // 现在只有一处实现，两边的口径不会漂。
+        return FingerprintOf(small, r);
       }
     }
 
@@ -385,7 +382,7 @@ namespace DesktopGuide {
           g2.ReleaseHdc(dstDc);
         }
         // 顺手从这张已经缩小过的图算指纹 —— 别再为了 8x8 去重抓一次全屏。
-        LastFingerprint = FingerprintOf(small);
+        LastFingerprint = FingerprintOf(small, bounds);
         var codec = JpegCodec();
         var ps = new EncoderParameters(1);
         ps.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality, quality);
@@ -399,18 +396,54 @@ namespace DesktopGuide {
     /** 最近一次截图算出来的画面指纹（8x8 灰度量化）。GrabRectJpeg 每次抓图都会更新它。 */
     public static string LastFingerprint = "";
 
+    /** 桌宠自己的屏幕矩形（右下角那个窗口，**含它刚弹出来的气泡**）。
+        ⚠️ 为什么要它：抓屏和指纹都是整屏的，**里面就有桌宠自己**。自检里拿一块同样大小的白板
+        顶替它的气泡（占屏幕 30%×22%），落在 8x8 网格里的 6 格上，指纹差 **15** —— 而
+        judgeMinFpDelta 是 12，过线。也就是说：**它自己说一句话，就等于自己给自己制造了一次
+        "画面变了"**，下一轮更容易再开口（自己触发自己）。所以指纹里落在自己身上的格子要挖掉。 */
+    public static Rectangle SelfRect = Rectangle.Empty;
 
-    static string FingerprintOf(Bitmap img) {
+    /** 最近一次指纹里被挖掉的格子数（'1' = 挖掉）。自检和排查用。 */
+    public static int SelfMaskedCells = -1;
+
+    /** 最近一次指纹的挖洞掩码（64 个字符，1 = 挖掉）。 */
+    public static string LastFingerprintMask = "";
+
+    /** 一格（8x8 网格里的一格）落在 SelfRect 里的比例超过这么多，就把这一格挖掉。
+        取 0.30 而不是"碰一点就挖"：桌宠是圆角+透明背景，边缘那几格只被压住一角，
+        挖掉它们等于白丢分辨率。 */
+    const double SelfOverlapToMask = 0.30;
+
+    static string FingerprintOf(Bitmap img, Rectangle captured) {
       using (var tiny = new Bitmap(8, 8))
       using (var g = Graphics.FromImage(tiny)) {
         g.InterpolationMode = InterpolationMode.HighQualityBilinear;
         g.DrawImage(img, 0, 0, 8, 8);
         var sb = new StringBuilder(32);
+        var mk = new StringBuilder(32);
+        double cw = captured.Width / 8.0, ch = captured.Height / 8.0;
         for (int y = 0; y < 8; y++) for (int x = 0; x < 8; x++) {
           var c = tiny.GetPixel(x, y);
           int lum = (c.R * 30 + c.G * 59 + c.B * 11) / 100;
-          sb.Append((char)(48 + lum / 16));
+          bool self = false;
+          if (!SelfRect.IsEmpty && cw > 0 && ch > 0) {
+            var cell = Rectangle.FromLTRB(
+              captured.X + (int)Math.Floor(x * cw), captured.Y + (int)Math.Floor(y * ch),
+              captured.X + (int)Math.Ceiling((x + 1) * cw), captured.Y + (int)Math.Ceiling((y + 1) * ch));
+            var inter = Rectangle.Intersect(cell, SelfRect);
+            if (inter.Width > 0 && inter.Height > 0 &&
+                (inter.Width * (double)inter.Height) / (cell.Width * (double)cell.Height) >= SelfOverlapToMask) {
+              self = true;
+            }
+          }
+          // 挖掉的格子固定写 '0'：它对"差值之和"贡献 0，字符串相等比较里也永远相等 ——
+          // 于是 Get-FpDistance 和 `$fp -ne $lastFp` 两条路都自动忽略它，不用改调用方。
+          sb.Append(self ? '0' : (char)(48 + lum / 16));
+          mk.Append(self ? '1' : '0');
         }
+        LastFingerprintMask = mk.ToString();
+        SelfMaskedCells = 0;
+        for (int i = 0; i < mk.Length; i++) if (mk[i] == '1') SelfMaskedCells++;
         return sb.ToString();
       }
     }
@@ -2844,6 +2877,10 @@ function Sample-Once {
     Add-Interaction 'sample_resume' ''
   }
   # ② 下令抓下一张（也是微秒级；上一张还没抓完就自然跳过这一拍）
+  # 抓屏前把自己的屏幕矩形告诉抓屏侧：指纹里落在桌宠身上的格子会被挖掉。
+  # 不设这一句的话，它自己弹个气泡就会被当成"画面变了" —— 自己触发自己（见 Capture.SelfRect 的注释）。
+  # 写的是静态字段、抓屏在另一个 runspace 里读；最坏情况是这一拍读到旧矩形，顶多一张指纹算得保守些。
+  try { [DesktopGuide.Capture]::SelfRect = $pet.Bounds } catch { }
   Start-BackgroundCapture
 
   $record = [pscustomobject]@{
@@ -4123,6 +4160,59 @@ $probe3 = New-Object DesktopGuide.PetForm -ArgumentList @([double]$script:UiScal
   $lnkDesk = Join-Path ([Environment]::GetFolderPath('Desktop')) '泡泡桌宠.lnk'
   Write-Output ("  当前快捷方式：仓库里={0}｜桌面={1}（生成方式见 make-launcher.ps1）" -f (Test-Path -LiteralPath $lnkRoot), (Test-Path -LiteralPath $lnkDesk))
   Write-Output ("  5x {0}/{1} 项通过" -f @($xOk | Where-Object { $_ }).Count, $xOk.Count)
+  Write-Output '=== 5y. 自己别触发自己（指纹里挖掉桌宠自己那块）==='
+  # 复现手法：在屏幕右下角（桌宠待的地方）放一块**白板**代替它的气泡，看指纹跟不跟着动。
+  # 老行为它自己的气泡一弹，右下角那几格就变了 —— 等于"我自己说了一句话"被当成"画面变了"，
+  # 下一轮更容易再开口。这一段会**在屏幕上闪一块白板（约 1 秒）**，就是在测这个。
+  $probeSelf = $null
+  try {
+    $probeSelf = New-Object System.Windows.Forms.Form
+    $probeSelf.FormBorderStyle = 'None'
+    $probeSelf.BackColor = [System.Drawing.Color]::White
+    $probeSelf.StartPosition = 'Manual'
+    $probeSelf.TopMost = $true
+    $probeSelf.ShowInTaskbar = $false
+    $swa = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
+    $rw = [int]($swa.Width * 0.30); $rh = [int]($swa.Height * 0.22)
+    $probeSelf.Bounds = [System.Drawing.Rectangle]::new(($swa.Right - $rw - 40), ($swa.Bottom - $rh - 40), $rw, $rh)
+    $selfRect = $probeSelf.Bounds
+
+    $grab = {
+      [System.Windows.Forms.Application]::DoEvents()
+      Start-Sleep -Milliseconds 220
+      [System.Windows.Forms.Application]::DoEvents()
+      $null = [DesktopGuide.Capture]::GrabJpegBase64([int]$cfg.screenshotMaxWidth, [long]$cfg.jpegQuality)
+      return [DesktopGuide.Capture]::LastFingerprint
+    }
+
+    # ① 不挖自己 —— 老行为
+    [DesktopGuide.Capture]::SelfRect = [System.Drawing.Rectangle]::Empty
+    $probeSelf.Show(); $fpRawOn = & $grab
+    $probeSelf.Hide(); $fpRawOff = & $grab
+    $dRaw = Get-FpDistance $fpRawOn $fpRawOff
+
+    # ② 挖掉自己那块 —— 现在的行为
+    $probeSelf.Show(); [DesktopGuide.Capture]::SelfRect = $selfRect
+    $fpOn = & $grab
+    $maskedCells = [int][DesktopGuide.Capture]::SelfMaskedCells
+    $probeSelf.Hide(); $fpOff = & $grab
+    $dMasked = Get-FpDistance $fpOn $fpOff
+
+    Write-Output ("  不挖自己那块：同一块白板出现/消失 → 指纹差 {0}（judgeMinFpDelta = {1}，超过它就算「画面变了」）" -f $dRaw, [int]$cfg.judgeMinFpDelta)
+    Write-Output ("  挖掉自己那块：同样的变化        → 指纹差 {0}（挖掉 {1}/64 格）" -f $dMasked, $maskedCells)
+    if ($maskedCells -le 0) {
+      Write-Output '  判定：✘ 一格都没挖掉 —— 掩码没生效'
+    } elseif ($dRaw -le 0) {
+      Write-Output '  判定：⚠ 测不出来（画面本来就没动：黑屏 / 锁屏 / 远程会话）'
+    } elseif ($dMasked -lt $dRaw) {
+      Write-Output '  判定：✔ 自己的变化被屏蔽掉了（老行为会被自己触发，现在不会）'
+    } else {
+      Write-Output '  判定：✘ 挖了但没起作用'
+    }
+  } finally {
+    if ($probeSelf) { try { $probeSelf.Close() } catch { }; try { $probeSelf.Dispose() } catch { } }
+    [DesktopGuide.Capture]::SelfRect = [System.Drawing.Rectangle]::Empty
+  }
   Write-Output '=== 6. 朗读（TTS）==='
   # -Check 只列音色，不出声（自检不该在半夜突然开口）。
   [void](Initialize-Tts -Config $cfg)
