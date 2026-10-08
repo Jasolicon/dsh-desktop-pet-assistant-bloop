@@ -48,6 +48,10 @@ Desktop.ini
 .DS_Store
 *.tmp
 
+# Python 字节码缓存（跑 py_compile / import 会生成）
+__pycache__/
+*.pyc
+
 # 快捷方式：里面是绝对路径（机器相关），由 desktop-guide\make-launcher.ps1 现生成
 *.lnk
 # 快捷方式用的图标：从 assets\pet.png 现生成（make-launcher.ps1 会重建）

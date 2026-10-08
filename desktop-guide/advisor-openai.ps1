@@ -13,6 +13,9 @@
 #   OPENAI_API_KEY    必填（也可以写进 run\openai.key 文件）
 #   OPENAI_VISION     设为 0 可强制只发文本；默认按模型名判断
 #
+# 也可以写在 config.json（设置窗口「大脑与任务」那页 = 这几项），**环境变量优先**：
+#   openaiBaseUrl / openaiModel / openaiVision（''=按模型名判断，'1'=强制发图，'0'=不发）/ openaiMaxTokens
+#
 # 自检：pwsh -File advisor-openai.ps1 -Check
 
 param(
@@ -32,13 +35,30 @@ $apiKey = $env:OPENAI_API_KEY
 if ([string]::IsNullOrWhiteSpace($apiKey) -and (Test-Path $keyFile)) {
   $apiKey = (Get-Content -LiteralPath $keyFile -Raw -Encoding UTF8).Trim()
 }
-$baseUrl = if ($env:OPENAI_BASE_URL) { $env:OPENAI_BASE_URL.TrimEnd('/') } else { 'https://api.deepseek.com/v1' }
-$model = if ($env:OPENAI_MODEL) { $env:OPENAI_MODEL } else { 'deepseek-flash' }
+
+# config.json 兜底（和环境变量同义；环境变量优先，方便临时覆盖）
+$pc = $null
+try { $pc = Get-Content -LiteralPath (Join-Path $dgHome 'config.json') -Raw -Encoding UTF8 | ConvertFrom-Json } catch { }
+function Get-OpenAiCfg {
+  param([string]$EnvName, [string]$Key, $Default = '')
+  $ev = [Environment]::GetEnvironmentVariable($EnvName)
+  if (-not [string]::IsNullOrWhiteSpace($ev)) { return $ev.Trim() }
+  if ($pc -and ($pc.PSObject.Properties.Name -contains $Key) -and $null -ne $pc.$Key -and "$($pc.$Key)" -ne '') { return $pc.$Key }
+  return $Default
+}
+
+$baseUrl = [string](Get-OpenAiCfg 'OPENAI_BASE_URL' 'openaiBaseUrl' 'https://api.deepseek.com/v1')
+$baseUrl = $baseUrl.TrimEnd('/')
+$model = [string](Get-OpenAiCfg 'OPENAI_MODEL' 'openaiModel' 'deepseek-flash')
+$maxTokens = [int]$(Get-OpenAiCfg 'OPENAI_MAX_TOKENS' 'openaiMaxTokens' 1500)
+if ($maxTokens -lt 64) { $maxTokens = 64 }
+$visionCfg = [string](Get-OpenAiCfg 'OPENAI_VISION' 'openaiVision' '')
 
 # 已知支持图像的模型；其余情况要靠 OPENAI_VISION=1 显式打开
 $visionCapable = $model -match 'flash|vl|vision|gpt-4o|gpt-4\.1|gpt-5|gemini|claude|glm-4\.6v|kimi|qwen3\.[678]|mimo'
-$useVision = $visionCapable -and ($env:OPENAI_VISION -ne '0')
-if ($env:OPENAI_VISION -eq '1') { $useVision = $true }
+$useVision = $visionCapable
+if ($visionCfg -match '^(0|false|no|off)$') { $useVision = $false }
+elseif ($visionCfg -match '^(1|true|yes|on)$') { $useVision = $true }
 
 if ([string]::IsNullOrWhiteSpace($apiKey)) {
   Write-Output "（未配置：设置 OPENAI_API_KEY，或把 key 写进 $keyFile）"
@@ -164,7 +184,8 @@ try { Set-Content -LiteralPath (Join-Path $PSScriptRoot 'run\stage.txt') -Value 
 $body = @{
   model      = $model
   # deepseek-flash 是推理模型：思考先吃 token，给太少会导致 content 为空（实测 300 时就是空输出）。
-  max_tokens = 1500
+  # 默认 1500；换端点/换模型可以在设置窗口调（openaiMaxTokens），环境变量 OPENAI_MAX_TOKENS 也认。
+  max_tokens = $maxTokens
   messages   = @(
     @{ role = 'system'; content = $system }
     @{ role = 'user'; content = @($content) }

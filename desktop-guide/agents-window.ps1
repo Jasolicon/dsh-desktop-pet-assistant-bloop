@@ -2,7 +2,7 @@
 # Copyright (c) 2026 Jasolicon · 许可：PolyForm Noncommercial License 1.0.0（仓库根目录 LICENSE）
 # SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 
-# agents-window.ps1 —— 「派活给谁」窗口：**选一条 / 新建一条 / 删一条**
+# agents-window.ps1 —— 子 agent 管理窗口：**选一条 / 新建 / 删 / 看记录 / 中断**
 #
 # 为什么从右键子菜单改成窗口：子菜单只能点一下选中，看不到状态、没法新建、没法删。
 # 这个列表本质是一张表（状态 / 模型 / 权限 / 最后任务 / 时间），该用窗口。
@@ -38,6 +38,7 @@ function Get-DgAgentRows {
       'running' { '● 在跑' }
       'done'    { '✓ 完成' }
       'failed'  { '✗ 失败' }
+      'stopped' { '■ 已中断' }
       'ready'   { '○ 待派活' }
       default   { '· ' + [string]$a.status }
     }
@@ -53,6 +54,108 @@ function Get-DgAgentRows {
     }
   }
   return $rows
+}
+
+function Show-DgAgentLog {
+  <#
+    记录查看器：把一条 agent 记录的日志读成人话。
+    为什么单独开个窗口：日志是 JSONL，直接摊给用户看是一屏机器话；
+    这里只留他真正想知道的三样 —— 派了什么活、结论是什么、调用了哪些工具。
+    想看原文有「打开原始日志」。
+  #>
+  param(
+    [Parameter(Mandatory = $true)][string]$Root,
+    [Parameter(Mandatory = $true)][string]$Id,
+    [double]$UiScale = 0,
+    $OwnerForm = $null,
+    [string]$RenderTo = '',
+    [switch]$SelfTest
+  )
+  if (-not (Get-Command Get-DgHome -ErrorAction SilentlyContinue)) { . (Join-Path $Root 'paths.ps1') }
+  $dgHome = Get-DgHome
+  $runDir = Join-Path $dgHome 'run'
+
+  $agents = @(Get-Agents -RunDir $runDir)
+  $rec = $agents | Where-Object { $_.id -eq $Id } | Select-Object -First 1
+  $logFile = if ($rec -and $rec.logFile) { [string]$rec.logFile } else { '' }
+  # 老记录里存过相对路径（.\logs\agent-x.jsonl），补成绝对路径
+  if ($logFile -and -not [System.IO.Path]::IsPathRooted($logFile)) { $logFile = Join-Path $dgHome $logFile }
+  $digest = Get-AgentLogDigest -Agent $rec -LogFile $logFile
+  $finalText = if ($logFile -and (Test-Path -LiteralPath $logFile)) { Get-AgentResult -LogFile $logFile } else { '' }
+
+  $s = if ($UiScale -gt 0) { $UiScale } else { 1.0 }
+  $c = Get-DgAgentColors
+  $site = 'Microsoft YaHei UI'
+
+  $f = New-Object System.Windows.Forms.Form
+  $f.Text = "泡泡 · 子 agent 记录 · $Id"
+  $f.Font = New-Object System.Drawing.Font $site, ([float]9.5)
+  $f.BackColor = $c.Bg
+  $f.ForeColor = $c.Text
+  $f.AutoScaleMode = [System.Windows.Forms.AutoScaleMode]::None
+  $f.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterParent
+  $W = [int](760 * $s); $H = [int](560 * $s)
+  $f.Size = New-Object System.Drawing.Size ($W, $H)
+  $f.MinimumSize = New-Object System.Drawing.Size ($W, $H)
+
+  $box = New-Object System.Windows.Forms.TextBox
+  $box.Multiline = $true
+  $box.ReadOnly = $true
+  $box.ScrollBars = [System.Windows.Forms.ScrollBars]::Both
+  $box.WordWrap = $false
+  $box.BackColor = [System.Drawing.Color]::White
+  $box.Location = New-Object System.Drawing.Point ([int](20 * $s)), ([int](18 * $s))
+  $box.Size = New-Object System.Drawing.Size ([int](715 * $s)), ([int](450 * $s))
+  $box.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right -bor [System.Windows.Forms.AnchorStyles]::Bottom
+  $box.Text = $digest
+  $box.TabStop = $false          # 别让只读框抢焦点（抢了会把整段反白）
+  $f.Controls.Add($box)
+
+  function New-LogButton([string]$text, [double]$x, [double]$w) {
+    $b = New-Object System.Windows.Forms.Button
+    $b.Text = $text
+    $b.FlatStyle = [System.Windows.Forms.FlatStyle]::System
+    $b.Location = New-Object System.Drawing.Point ([int]($x * $s)), ([int](484 * $s))
+    $b.Size = New-Object System.Drawing.Size ([int]($w * $s)), ([int](32 * $s))
+    $b.Anchor = [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Bottom
+    return $b
+  }
+  $btnOpen = New-LogButton '打开原始日志' 20 130
+  $btnCopy = New-LogButton '复制结论' 160 100
+  $btnClose2 = New-LogButton '关闭' 618 118
+  $f.Controls.Add($btnOpen); $f.Controls.Add($btnCopy); $f.Controls.Add($btnClose2)
+
+  $btnOpen.Add_Click({
+      if ($logFile -and (Test-Path -LiteralPath $logFile)) { try { Start-Process -FilePath $logFile | Out-Null } catch { } }
+    })
+  $btnCopy.Add_Click({
+      if ($finalText) { try { [System.Windows.Forms.Clipboard]::SetText([string]$finalText) } catch { } }
+    })
+  $btnClose2.Add_Click({ $f.Close() })
+
+  if ($SelfTest -or $RenderTo) {
+    # 同 agents 主窗口：必须真的 Show 出来（挪到屏幕外）再 DrawToBitmap，否则子控件不渲染
+    $f.ShowInTaskbar = $false
+    $f.StartPosition = [System.Windows.Forms.FormStartPosition]::Manual
+    $f.Location = New-Object System.Drawing.Point -4000, -4000
+    $f.Show()
+    [System.Windows.Forms.Application]::DoEvents()
+    Start-Sleep -Milliseconds 120
+    [System.Windows.Forms.Application]::DoEvents()
+    if ($RenderTo) {
+      if (-not (Test-Path -LiteralPath $RenderTo)) { New-Item -ItemType Directory -Force -Path $RenderTo | Out-Null }
+      $bmp = New-Object System.Drawing.Bitmap $f.Width, $f.Height
+      $f.DrawToBitmap($bmp, (New-Object System.Drawing.Rectangle 0, 0, $f.Width, $f.Height))
+      $out = Join-Path $RenderTo 'agents-log-window.png'
+      $bmp.Save($out, [System.Drawing.Imaging.ImageFormat]::Png)
+      $bmp.Dispose()
+      Write-Host "记录窗口预览：$out"
+    }
+    if ($SelfTest) { $f.Dispose(); return }
+  }
+
+  [void]$f.ShowDialog($OwnerForm)
+  $f.Dispose()
 }
 
 function Show-DgAgents {
@@ -93,7 +196,7 @@ function Show-DgAgents {
 
   $W = [int](760 * $s); $H = [int](520 * $s)
   $f = New-Object System.Windows.Forms.Form
-  $f.Text = '泡泡 · 派活给谁'
+  $f.Text = '泡泡 · 子 agent 管理'
   $f.Font = $fontItem
   $f.BackColor = $c.Bg
   $f.ForeColor = $c.Text
@@ -103,14 +206,14 @@ function Show-DgAgents {
   $f.MinimumSize = New-Object System.Drawing.Size ($W, $H)
 
   $title = New-Object System.Windows.Forms.Label
-  $title.Text = '派活给谁'
+  $title.Text = '子 agent 管理'
   $title.Font = $fontH1
   $title.AutoSize = $true
   $title.Location = New-Object System.Drawing.Point ([int](20 * $s)), ([int](16 * $s))
   $f.Controls.Add($title)
 
   $hint = New-Object System.Windows.Forms.Label
-  $hint.Text = '选中的那条会接到后面所有语音 / 打字 / 拖文件的派活上，并且接着它的会话跑（上下文不断）。'
+  $hint.Text = '选中的那条会接到后面所有派活上，并且接着它的会话跑。双击一行 = 看这条的记录；「中断」停掉正在跑的。'
   $hint.Font = $fontSmall
   $hint.ForeColor = $c.Dim
   $hint.Location = New-Object System.Drawing.Point ([int](20 * $s)), ([int](46 * $s))
@@ -130,7 +233,8 @@ function Show-DgAgents {
   $list.MultiSelect = $false
   $list.HideSelection = $false
   $list.Location = New-Object System.Drawing.Point ([int](20 * $s)), ([int](104 * $s))
-  $list.Size = New-Object System.Drawing.Size ([int](715 * $s)), ([int](300 * $s))
+  # 高度收一点，给下面第二排按钮（看记录 / 中断）腾位置
+  $list.Size = New-Object System.Drawing.Size ([int](715 * $s)), ([int](262 * $s))
   $list.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right -bor [System.Windows.Forms.AnchorStyles]::Bottom
   [void]$list.Columns.Add('状态', [int](76 * $s))
   [void]$list.Columns.Add('ID', [int](132 * $s))
@@ -143,17 +247,17 @@ function Show-DgAgents {
   $status = New-Object System.Windows.Forms.Label
   $status.Font = $fontSmall
   $status.ForeColor = $c.Dim
-  $status.Location = New-Object System.Drawing.Point ([int](20 * $s)), ([int](414 * $s))
+  $status.Location = New-Object System.Drawing.Point ([int](20 * $s)), ([int](378 * $s))
   $status.Size = New-Object System.Drawing.Size ([int](715 * $s)), ([int](22 * $s))
   $status.Anchor = [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right -bor [System.Windows.Forms.AnchorStyles]::Bottom
   $f.Controls.Add($status)
 
-  function New-AgentButton([string]$text, [double]$x, [double]$w) {
+  function New-AgentButton([string]$text, [double]$x, [double]$w, [double]$y = 410) {
     $b = New-Object System.Windows.Forms.Button
     $b.Text = $text
     $b.Font = $fontItem
     $b.FlatStyle = [System.Windows.Forms.FlatStyle]::System
-    $b.Location = New-Object System.Drawing.Point ([int]($x * $s)), ([int](448 * $s))
+    $b.Location = New-Object System.Drawing.Point ([int]($x * $s)), ([int]($y * $s))
     $b.Size = New-Object System.Drawing.Size ([int]($w * $s)), ([int](32 * $s))
     $b.Anchor = [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Bottom
     return $b
@@ -165,6 +269,12 @@ function Show-DgAgents {
   $btnClose = New-AgentButton '关闭' 618 118
   $f.Controls.Add($btnPick); $f.Controls.Add($btnNew); $f.Controls.Add($btnDel)
   $f.Controls.Add($btnFresh); $f.Controls.Add($btnClose)
+
+  # 第二排：管理正在跑的东西 —— 看记录 / 中断
+  $btnLog = New-AgentButton '查看记录…' 20 118 452
+  $btnStop = New-AgentButton '中断' 146 76 452
+  $btnStopAll = New-AgentButton '全部中断' 230 100 452
+  $f.Controls.Add($btnLog); $f.Controls.Add($btnStop); $f.Controls.Add($btnStopAll)
 
   $state = @{ Target = [string](Get-DispatchTarget -RunDir $runDir) }
 
@@ -188,7 +298,9 @@ function Show-DgAgents {
     $list.EndUpdate()
     if ($state.Target) { $targetLabel.Text = "当前派活目标：$($state.Target)" }
     else { $targetLabel.Text = '当前派活目标：每次新建（默认）' }
-    $status.Text = "共 $($list.Items.Count) 条。加粗浅蓝底那条就是当前派活目标。"
+    $running = 0
+    foreach ($it in $list.Items) { if ($it.Text -like '*在跑*') { $running++ } }
+    $status.Text = "共 $($list.Items.Count) 条，其中 $running 个在跑。加粗浅蓝底那条是当前派活目标；双击一行看记录。"
   }
 
   function Get-SelectedAgentId {
@@ -222,6 +334,42 @@ function Show-DgAgents {
       if ($state.Target -eq $id) { $state.Target = '' }
       Refresh-AgentList
       $status.Text = "删掉了 $id。"
+    })
+
+  # ---- 查看记录 ----
+  $btnLog.Add_Click({
+      $id = Get-SelectedAgentId
+      if (-not $id) { $status.Text = '先在列表里选一条。'; return }
+      Show-DgAgentLog -Root $Root -Id $id -UiScale $s -OwnerForm $f
+      $status.Text = "看完 $id 的记录了。"
+    })
+
+  $list.Add_DoubleClick({
+      $id = Get-SelectedAgentId
+      if (-not $id) { return }
+      Show-DgAgentLog -Root $Root -Id $id -UiScale $s -OwnerForm $f
+      $status.Text = "看完 $id 的记录了。"
+    })
+
+  # ---- 中断 ----
+  $btnStop.Add_Click({
+      $id = Get-SelectedAgentId
+      if (-not $id) { $status.Text = '先在列表里选一条。'; return }
+      $r = Stop-DshAgent -RunDir $runDir -Id $id
+      Refresh-AgentList
+      $status.Text = "$id → $($r.Message)"
+    })
+
+  $btnStopAll.Add_Click({
+      $running = @(Update-AgentStatus -RunDir $runDir | Where-Object { $_.status -eq 'running' })
+      if ($running.Count -eq 0) { $status.Text = '现在没有在跑的子 agent。'; return }
+      $r = [System.Windows.Forms.MessageBox]::Show($f, "中断正在跑的全部 $($running.Count) 个子 agent？", '全部中断',
+        [System.Windows.Forms.MessageBoxButtons]::YesNo, [System.Windows.Forms.MessageBoxIcon]::Warning)
+      if ($r -ne [System.Windows.Forms.DialogResult]::Yes) { return }
+      $msgs = @()
+      foreach ($a in $running) { $msgs += "$($a.id)：$((Stop-DshAgent -RunDir $runDir -Id $a.id).Message)" }
+      Refresh-AgentList
+      $status.Text = '全部中断完成 —— ' + ($msgs -join '；')
     })
 
   $btnNew.Add_Click({
@@ -364,13 +512,86 @@ function Test-DgAgents {
     # 删掉的正好是派活目标 → 指针要被自动清空，不能留一个指向空气的目标
     $ok += ((Get-DispatchTarget -RunDir (Join-Path $tmp 'run')) -eq '')
 
+    # ---- 下面这组是「查看记录 / 中断」----
+    $base = $ok.Count
+    $fakeLog = Join-Path $tmp 'logs\agent-1111.jsonl'
+    @(
+      '{"type":"thinking","text":"先想一下"}',
+      '{"type":"tool_call","tool":"read_image"}',
+      '{"type":"tool_call","tool":"pwsh"}',
+      '{"type":"final","text":"改完了第三段。"}'
+    ) | Set-Content -LiteralPath $fakeLog -Encoding UTF8
+    $rec1111 = @(Get-Agents -RunDir (Join-Path $tmp 'run')) | Where-Object { $_.id -eq 'agent-1111' } | Select-Object -First 1
+    $digest = Get-AgentLogDigest -Agent $rec1111 -LogFile $fakeLog
+    $ok += ($digest -match '改完了第三段')     # 结论要能看到
+    $ok += ($digest -match 'read_image')       # 工具调用要能看到
+    $ok += ($digest -match '工具调用 2 次')     # 统计要对
+
+    # 已结束的记录：中断应当是"什么都不做"，而不是把 done 改成 stopped
+    $r1 = Stop-DshAgent -RunDir (Join-Path $tmp 'run') -Id 'agent-1111'
+    $ok += ($r1.Ok -eq $false)
+    $ok += ((@(Get-Agents -RunDir (Join-Path $tmp 'run')) | Where-Object { $_.id -eq 'agent-1111' }).status -eq 'done')
+
+    # 走常驻大脑、还在排队的任务：撤掉它的请求文件就算取消
+    $tdRun = Join-Path $tmp 'run'
+    $brainDir = Join-Path $tdRun 'brain'
+    New-Item -ItemType Directory -Force -Path $brainDir | Out-Null
+    Set-Content -LiteralPath (Join-Path $tdRun 'stage.txt') -Value '空闲' -Encoding UTF8
+    Set-Content -LiteralPath (Join-Path $brainDir 'req-2222bbbb.json') -Value '{"id":"2222bbbb","kind":"task","text":"排队中"}' -Encoding UTF8
+    $more = @(Get-Agents -RunDir $tdRun) + [pscustomobject]@{
+      id = 'agent-2222'; task = '排队中'; model = 'DeepSeek Flash'; access = '完全访问'
+      pid = $null; brainId = '2222bbbb'; via = 'brain'; startedAt = (Get-Date).ToString('o')
+      status = 'running'; exitCode = $null; logFile = ''; patch = ''
+    }
+    Save-Agents -RunDir $tdRun -Agents $more
+    $r2 = Stop-DshAgent -RunDir $tdRun -Id 'agent-2222'
+    $ok += ($r2.Ok -eq $true -and $r2.Mode -eq 'brain-queued')
+    $ok += (-not (Test-Path -LiteralPath (Join-Path $brainDir 'req-2222bbbb.json')))
+    $ok += ((@(Get-Agents -RunDir $tdRun) | Where-Object { $_.id -eq 'agent-2222' }).status -eq 'stopped')
+
     Write-Host ("  1) 读列表 {0} 条（agent-1111）              {1}" -f $rows.Count, $(if ($ok[0] -and $ok[1]) { '✔' } else { '✘' }))
     Write-Host ("  2) 新建一条 → 共 {0} 条、状态是待派活       {1}" -f $rows2.Count, $(if ($ok[2] -and $ok[3] -and $ok[4]) { '✔' } else { '✘' }))
     Write-Host ("  3) 设为派活目标 → dispatch.json 记下来了    {0}" -f $(if ($ok[5]) { '✔' } else { '✘' }))
     Write-Host ("  4) 删除 → 记录没了、派活目标被清空          {0}" -f $(if ($ok[6] -and $ok[7]) { '✔' } else { '✘' }))
+    Write-Host ("  5) 记录摘要 → 结论 / 工具调用 / 计数都对     {0}" -f $(if (@($ok[$base..($base+2)]) -notcontains $false) { '✔' } else { '✘' }))
+    Write-Host ("  6) 中断已结束 → 不动它、也不报错             {0}" -f $(if (@($ok[($base+3)..($base+4)]) -notcontains $false) { '✔' } else { '✘' }))
+    Write-Host ("  7) 中断排队中 → 请求撤回 + 记录翻成 stopped  {0}" -f $(if (@($ok[($base+5)..($ok.Count-1)]) -notcontains $false) { '✔' } else { '✘' }))
     Write-Host ("  agents 窗口逻辑：{0}/{1} 项通过" -f @($ok | Where-Object { $_ }).Count, $ok.Count)
     return (@($ok | Where-Object { -not $_ }).Count -eq 0)
   } finally {
     try { Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue } catch { }
   }
+}
+
+# ---------------------------------------------------------------------------
+# 独立运行入口（不是被 dot-source 时）：
+#   pwsh -NoProfile -ExecutionPolicy Bypass -File agents-window.ps1
+#
+# 为什么要它：这个窗口平时由桌宠菜单打开，而桌宠只在**启动时** dot-source 本文件 ——
+# 改了代码就得重启桌宠，可桌宠手里可能正跑着任务，重启会把它们全掐掉。
+# 有了独立入口，改完窗口代码直接开一个看效果，不碰桌宠。
+#
+# ⚠️ 独立进程必须自己设 DPI 感知：这台机器是 200%，不设的话窗口会被系统位图拉伸（糊）。
+#    桌宠那条路是在 DesktopGuide.ps1 开头统一设的，这里补一份等效的。
+if ($MyInvocation.InvocationName -ne '.') {
+  if (-not ('DesktopGuide.Dpi' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System; using System.Runtime.InteropServices;
+namespace DesktopGuide {
+  public static class Dpi {
+    [DllImport("user32.dll", SetLastError = true)] public static extern bool SetProcessDpiAwarenessContext(IntPtr value);
+    [DllImport("user32.dll")] public static extern uint GetDpiForSystem();
+    public static readonly IntPtr PER_MONITOR_AWARE_V2 = new IntPtr(-4);
+    public static uint Scale() {
+      try { SetProcessDpiAwarenessContext(PER_MONITOR_AWARE_V2); } catch { }
+      try { return GetDpiForSystem(); } catch { return 96; }
+    }
+  }
+}
+'@
+  }
+  $dpi = [Math]::Max(1.0, [double][DesktopGuide.Dpi]::Scale() / 96.0)
+  . (Join-Path $PSScriptRoot 'paths.ps1')
+  . (Join-Path $PSScriptRoot 'dsh-agents.ps1')
+  [void](Show-DgAgents -Root $PSScriptRoot -UiScale $dpi)
 }

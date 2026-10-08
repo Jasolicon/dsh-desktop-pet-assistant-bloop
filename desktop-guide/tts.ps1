@@ -51,12 +51,9 @@ $script:TtsEdgeRate     = '+6%'                      # 语速：稍快显活泼
 $script:TtsEdgePitch    = '+12Hz'                    # 音高：略抬高显可爱
 $script:TtsEdgeVolume   = '+0%'
 $script:TtsEdgeDir      = ''
-$script:TtsJob          = $null                      # 正在合成的 python 进程
-$script:TtsJobWav       = ''
-$script:TtsJobText      = ''
-$script:TtsJobAt        = $null
-$script:TtsPlayer       = $null                      # System.Media.SoundPlayer
-$script:TtsPlayUntil    = [datetime]::MinValue
+$script:TtsWorkerScript = ''                         # tts-worker.py（常驻「播音员」）
+$script:TtsWorkerProc   = $null
+$script:TtsQueueMax     = 3                          # 最多几句在排队（满了丢最旧的）
 $script:TtsEdgeActive   = $false                     # 正在出声（或正准备出声）
 $script:TtsSeq          = 0
 $script:TtsCuteDefault  = 'zh-CN-XiaoyiNeural'       # 卡通/活泼的女声；另有 zh-CN-YunxiaNeural（男童声）
@@ -142,8 +139,11 @@ function Get-WavSeconds {
 function Resolve-TtsEdge {
   <# 找 venv 里的 python（配置里 ttsPython 可以覆盖） #>
   param([string]$Root, [string]$Python)
+  # 播放走常驻播音员（tts-worker.py）—— 它才是必须的那个
+  $script:TtsWorkerScript = Join-Path $Root 'tts-worker.py'
+  if (-not (Test-Path $script:TtsWorkerScript)) { return $false }
+  # 试听（Invoke-TtsAudition）走一次性合成，缺了不影响正常朗读
   $script:TtsEdgeScript = Join-Path $Root 'tts-edge-say.py'
-  if (-not (Test-Path $script:TtsEdgeScript)) { return $false }
   $cands = @()
   if ($Python) { $cands += $Python }
   $cands += (Join-Path $script:TtsHome '.tts\venv\Scripts\python.exe')
@@ -153,115 +153,135 @@ function Resolve-TtsEdge {
   return $false
 }
 
-function Stop-TtsEdge {
-  <# 停播放 + 杀掉还在合成的进程 + 删临时文件 #>
-  $was = $script:TtsEdgeActive
-  try { if ($script:TtsPlayer) { $script:TtsPlayer.Stop() } } catch { }
-  if ($script:TtsJob) {
-    try { if (-not $script:TtsJob.HasExited) { $script:TtsJob.Kill() } } catch { }
-    $script:TtsJob = $null
-  }
-  foreach ($f in @($script:TtsJobWav)) {
-    # 只删我们自己生成的临时文件（名字一定是 say-<数字>.wav）
-    if ($f -and (Test-Path $f) -and ((Split-Path $f -Leaf) -match '^say-\d+\.(wav|txt|log|err\.txt)$')) {
-      Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue
-    }
-  }
-  if ($script:TtsJobWav) {
-    $base = [System.IO.Path]::GetFileNameWithoutExtension($script:TtsJobWav)
-    foreach ($ext in @('.txt', '.log', '.err.txt')) {
-      $g = Join-Path $script:TtsEdgeDir ($base + $ext)
-      if (Test-Path $g) { Remove-Item -LiteralPath $g -Force -ErrorAction SilentlyContinue }
-    }
-  }
-  $script:TtsJobWav = ''
-  $script:TtsJobText = ''
-  $script:TtsEdgeActive = $false
-  return $was
+# ---- edge 后端：跟常驻的「播音员」说话（tts-worker.py）-----------------------
+#
+# 老路子是「每句起一个 python → 整段合成 → 写 WAV → SoundPlayer 播」，两个毛病：
+#   ① 每句都白付 `import edge_tts` 的 1.7 秒；
+#   ② 必须等**整段**下载完才出声。
+# 实测出声 3.5–4.6 秒。现在换成常驻 worker：import 只付一次，边收边解码边播，
+# 实测出声 1.2 秒。
+#
+# 队列也交给它（文件形式）：桌宠往 run\tts\queue\ 里丢一个 json 就是"排一句"，
+# 播音员按文件顺序念、念完自己删。好处是桌宠重启了，没念完的还在盘上。
+
+function Write-TtsJson {
+  param([string]$Path, $Object)
+  try {
+    $tmp = "$Path.tmp"
+    [System.IO.File]::WriteAllText($tmp, ($Object | ConvertTo-Json -Compress -Depth 4),
+      [System.Text.UTF8Encoding]::new($false))
+    [System.IO.File]::Move($tmp, $Path, $true)
+  } catch { }
 }
 
-function Start-TtsEdgeJob {
-  <# 起一个 python 去合成。完全异步 —— 桌宠不会卡，wav 好了由 Update-Tts 负责播 #>
-  param([string]$Text)
-  if (-not $script:TtsEdgeDir) { return $false }
-  $script:TtsSeq++
-  $id = $script:TtsSeq
-  $txt = Join-Path $script:TtsEdgeDir ("say-$id.txt")
-  $wav = Join-Path $script:TtsEdgeDir ("say-$id.wav")
-  $log = Join-Path $script:TtsEdgeDir ("say-$id.log")
-  $err = Join-Path $script:TtsEdgeDir ("say-$id.err.txt")
+function Get-TtsWorkerPid {
+  $f = Join-Path $script:TtsEdgeDir 'worker.json'
+  if (-not (Test-Path -LiteralPath $f)) { return 0 }
   try {
-    [System.IO.File]::WriteAllText($txt, $Text, [System.Text.UTF8Encoding]::new($false))
-  } catch { return $false }
-  $argv = @($script:TtsEdgeScript, '--text-file', $txt, '--out-wav', $wav,
-    '--voice', $script:TtsVoiceName, '--rate', $script:TtsEdgeRate,
-    '--pitch', $script:TtsEdgePitch, '--volume', $script:TtsEdgeVolume)
+    $o = Get-Content -LiteralPath $f -Raw -Encoding UTF8 | ConvertFrom-Json
+    $wpid = [int]$o.pid
+    if ($wpid -gt 0 -and (Get-Process -Id $wpid -ErrorAction SilentlyContinue)) { return $wpid }
+  } catch { }
+  return 0
+}
+
+function Get-TtsQueueFiles {
+  $d = Join-Path $script:TtsEdgeDir 'queue'
+  if (-not (Test-Path -LiteralPath $d)) { return @() }
+  return @(Get-ChildItem -LiteralPath $d -Filter '*.json' -File -ErrorAction SilentlyContinue | Sort-Object Name)
+}
+
+function Start-TtsWorker {
+  <# 幂等：已经在跑就什么都不做。返回是否可用。 #>
+  if (Get-TtsWorkerPid) { return $true }
+  if (-not $script:TtsEdgePython -or -not $script:TtsWorkerScript) { return $false }
+  if (-not (Test-Path -LiteralPath $script:TtsWorkerScript)) { return $false }
+  if (-not (Test-Path -LiteralPath $script:TtsEdgeDir)) {
+    try { New-Item -ItemType Directory -Force -Path $script:TtsEdgeDir | Out-Null } catch { }
+  }
   try {
-    $script:TtsJob = Start-Process -FilePath $script:TtsEdgePython -ArgumentList $argv `
-      -NoNewWindow -PassThru -RedirectStandardOutput $log -RedirectStandardError $err
+    $script:TtsWorkerProc = Start-Process -FilePath $script:TtsEdgePython `
+      -ArgumentList @($script:TtsWorkerScript, '--root', $script:TtsRoot,
+        '--voice', $script:TtsVoiceName, '--rate', $script:TtsEdgeRate,
+        '--pitch', $script:TtsEdgePitch, '--volume', $script:TtsEdgeVolume) `
+      -NoNewWindow -PassThru `
+      -RedirectStandardOutput (Join-Path $script:TtsEdgeDir 'worker.out.txt') `
+      -RedirectStandardError (Join-Path $script:TtsEdgeDir 'worker.err.txt')
   } catch {
     $script:TtsError = $_.Exception.Message
     return $false
   }
-  $script:TtsJobWav = $wav
-  $script:TtsJobText = $Text
-  $script:TtsJobAt = Get-Date
+  return $true
+}
+
+function Stop-TtsWorker {
+  <# 退出时用：让播音员收摊（否则它会一直挂着等下一句） #>
+  if (-not (Get-TtsWorkerPid)) { return }
+  Write-TtsJson (Join-Path $script:TtsEdgeDir 'cmd.json') @{ kind = 'shutdown' }
+}
+
+function Submit-TtsQueueItem {
+  <# 排一句。队列满了丢**最旧的待播** —— 越新的消息越值钱。
+     同一句已经在排队就跳过（否则它会把同一句话念两遍，很难看）。 #>
+  param([string]$Text)
+  $dir = Join-Path $script:TtsEdgeDir 'queue'
+  if (-not (Test-Path -LiteralPath $dir)) {
+    try { New-Item -ItemType Directory -Force -Path $dir | Out-Null } catch { return $false }
+  }
+  $pending = @(Get-TtsQueueFiles)
+  foreach ($f in $pending) {
+    try {
+      $o = Get-Content -LiteralPath $f.FullName -Raw -Encoding UTF8 | ConvertFrom-Json
+      if ([string]$o.text -eq $Text) { return $true }
+    } catch { }
+  }
+  $max = [int]$script:TtsQueueMax
+  while ($pending.Count -ge $max -and $pending.Count -gt 0) {
+    try { Remove-Item -LiteralPath $pending[0].FullName -Force -ErrorAction SilentlyContinue } catch { }
+    $pending = @($pending | Select-Object -Skip 1)
+  }
+  $script:TtsSeq++
+  Write-TtsJson (Join-Path $dir ('{0:d5}.json' -f $script:TtsSeq)) @{
+    seq    = $script:TtsSeq
+    text   = $Text
+    voice  = $script:TtsVoiceName
+    rate   = $script:TtsEdgeRate
+    pitch  = $script:TtsEdgePitch
+    volume = $script:TtsEdgeVolume
+  }
   $script:TtsEdgeActive = $true
   return $true
 }
 
+function Stop-TtsEdge {
+  <# 立刻闭嘴：通知播音员停下，并把待播队列清空 #>
+  $was = [bool]$script:TtsEdgeActive
+  if (Get-TtsWorkerPid) { Write-TtsJson (Join-Path $script:TtsEdgeDir 'cmd.json') @{ kind = 'stop' } }
+  foreach ($f in (Get-TtsQueueFiles)) {
+    try { Remove-Item -LiteralPath $f.FullName -Force -ErrorAction SilentlyContinue } catch { }
+  }
+  $script:TtsEdgeActive = $false
+  return $was
+}
+
 function Update-Tts {
   <#
-    由宿主的定时器反复调用（桌宠 120ms 一次）。
-    edge 的朗读是「两段式」：先合成（python 子进程），再播放（本进程 SoundPlayer）。
-    这里推进这个状态机；宿主不调用它，edge 就永远不出声。
+    宿主定时器调（桌宠 120ms 一次）：读播音员的状态，维护「正在朗读」这个标志。
+    说话的是对面那个进程，这边只做同步 —— 所以桌宠永远不会被朗读卡住。
   #>
   if ($script:TtsBackend -ne 'edge') { return }
-
-  if ($script:TtsJob) {
-    $job = $script:TtsJob
-    $exited = $false
-    try { $exited = $job.HasExited } catch { $exited = $true }
-
-    # 超时保护：网络卡住时别让「正在准备朗读」挂一辈子
-    if (-not $exited -and $script:TtsJobAt -and ((Get-Date) - $script:TtsJobAt).TotalSeconds -gt 25) {
-      try { $job.Kill() } catch { }
-      $exited = $true
-      $script:TtsError = '合成超时'
-    }
-
-    if ($exited) {
-      $wav = $script:TtsJobWav
-      $ok = $false
-      if ($wav -and (Test-Path $wav) -and ((Get-Item $wav).Length -gt 2048)) {
-        try {
-          if (-not $script:TtsPlayer) { $script:TtsPlayer = New-Object System.Media.SoundPlayer }
-          $script:TtsPlayer.Stop()
-          $script:TtsPlayer.SoundLocation = $wav
-          $script:TtsPlayer.Load()
-          $script:TtsPlayer.Play()                       # 异步，立刻返回
-          $script:TtsPlayUntil = (Get-Date).AddSeconds((Get-WavSeconds $wav) + 0.5)
-          $script:TtsEdgeActive = $true
-          $ok = $true
-        } catch { $script:TtsError = $_.Exception.Message }
-      }
-      if (-not $ok) {
-        # 合成失败（断网 / 音色名写错 / venv 坏了）→ 退回本机音色，别让这句话没声
-        $script:TtsEdgeActive = $false
-        if ($script:TtsSynth -and $script:TtsJobText) {
-          try { $script:TtsSynth.SpeakAsync($script:TtsJobText) | Out-Null } catch { }
-        }
-      }
-      $script:TtsJob = $null
-      $script:TtsJobWav = ''
-      $script:TtsJobText = ''
-    }
-    return
+  $speaking = $false
+  $stateFile = Join-Path $script:TtsEdgeDir 'state.json'
+  if (Test-Path -LiteralPath $stateFile) {
+    try {
+      $o = Get-Content -LiteralPath $stateFile -Raw -Encoding UTF8 | ConvertFrom-Json
+      $speaking = (@('speaking', 'preparing') -contains [string]$o.state)
+    } catch { }
   }
-
-  if ($script:TtsEdgeActive -and (Get-Date) -gt $script:TtsPlayUntil) {
-    $script:TtsEdgeActive = $false
-  }
+  if (-not $speaking -and (Get-TtsQueueFiles).Count -gt 0) { $speaking = $true }
+  # 播音员没了就别再显示「正在朗读」
+  if ($speaking -and -not (Get-TtsWorkerPid)) { $speaking = $false }
+  $script:TtsEdgeActive = $speaking
 }
 
 function Test-TtsSpeaking {
@@ -294,10 +314,15 @@ function Speak-Text {
   $say = ConvertTo-Speakable $Text
   if ([string]::IsNullOrWhiteSpace($say)) { return $false }
   $say = Limit-SpeakText $say
-  Stop-Tts | Out-Null          # 新的一句压掉旧的，不排队
+  # 只有**不会排队**的后端才需要「新句压旧句」。
+  # edge 走队列：新的一句排在后面，不会把正在念的那句掐掉 ——
+  # 想立刻闭嘴请用「打断」（双击桌宠 / 停止朗读），那是显式动作。
+  if ($script:TtsBackend -ne 'edge') { Stop-Tts | Out-Null }
   try {
     if ($script:TtsBackend -eq 'edge') {
-      if (-not (Start-TtsEdgeJob -Text $say)) { return $false }
+      # 排进队列就返回 —— 真正的合成和播放都在播音员那个进程里，桌宠一步都不等
+      if (-not (Start-TtsWorker)) { return $false }
+      if (-not (Submit-TtsQueueItem -Text $say)) { return $false }
     } elseif ($script:TtsBackend -eq 'speech') {
       $script:TtsSynth.SpeakAsync($say) | Out-Null
     } elseif ($script:TtsBackend -eq 'sapi') {
@@ -336,7 +361,12 @@ function Get-TtsStatus {
   }
   $v = if ($script:TtsVoiceName) { $script:TtsVoiceName } else { '默认音色' }
   $flag = if ($script:TtsMuted) { ' · 已静音' } else { '' }
-  $tail = if ($script:TtsBackend -eq 'edge') { " · $($script:TtsEdgeRate)/$($script:TtsEdgePitch) · 需联网" } else { '' }
+  $tail = ''
+  if ($script:TtsBackend -eq 'edge') {
+    $q = 0
+    try { $q = (Get-TtsQueueFiles).Count } catch { }
+    $tail = " · $($script:TtsEdgeRate)/$($script:TtsEdgePitch) · 需联网" + $(if ($q -gt 0) { " · 队列 $q 句" } else { '' })
+  }
   return "朗读：$v（$($script:TtsBackend)$flag$tail）"
 }
 
@@ -352,6 +382,7 @@ function Initialize-Tts {
   $script:TtsEdgeRate     = [string](Get-TtsCfg $Config 'ttsEdgeRate' $script:TtsEdgeRate)
   $script:TtsEdgePitch    = [string](Get-TtsCfg $Config 'ttsEdgePitch' $script:TtsEdgePitch)
   $script:TtsEdgeVolume   = [string](Get-TtsCfg $Config 'ttsEdgeVolume' $script:TtsEdgeVolume)
+  $script:TtsQueueMax     = [int](Get-TtsCfg $Config 'ttsQueueMax' 3)
   $voiceCfg               = [string](Get-TtsCfg $Config 'ttsVoice' '')
   $pythonCfg              = [string](Get-TtsCfg $Config 'ttsPython' '')
 
@@ -441,10 +472,18 @@ function Test-Tts {
   }
   if ($Play) {
     if ($script:TtsBackend -eq 'edge') {
-      $null = Start-TtsEdgeJob -Text '这是桌宠的朗读自检：听到这句话就说明 Edge 音色是通的。'
+      Write-Output '（排一句给播音员，约 1 秒出声）'
+      if (Start-TtsWorker) {
+        [void](Submit-TtsQueueItem -Text '这是桌宠的朗读自检：听到这句话就说明 Edge 音色是通的。')
+      }
+      Start-Sleep -Milliseconds 600          # 先让播音员捡起来，别在它还没开工时就判定"念完了"
       $deadline = (Get-Date).AddSeconds(30)
-      while ($script:TtsJob -and (Get-Date) -lt $deadline) { Update-Tts; Start-Sleep -Milliseconds 100 }
-      Start-Sleep -Seconds 5
+      while ((Get-Date) -lt $deadline) {
+        Update-Tts
+        if (-not $script:TtsEdgeActive -and (Get-TtsQueueFiles).Count -eq 0) { break }
+        Start-Sleep -Milliseconds 150
+      }
+      Start-Sleep -Seconds 1
       return
     }
   }
@@ -477,6 +516,10 @@ function Invoke-TtsAudition {
   param([string]$Text = '这个循环写了三遍，上面的判断可以合并。')
   if ($script:TtsBackend -ne 'edge') {
     Write-Output '当前不是 Edge 引擎，没法试听候选音色（先确认 .tts\venv 和 tts-edge-say.py 在）。'
+    return
+  }
+  if (-not $script:TtsEdgeScript -or -not (Test-Path -LiteralPath $script:TtsEdgeScript)) {
+    Write-Output '试听要 tts-edge-say.py（一次性合成），这个文件不在。'
     return
   }
   $cands = @(

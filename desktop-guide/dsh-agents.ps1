@@ -533,16 +533,168 @@ function Start-DshAgent {
   return $record
 }
 
+# ---------------------------------------------------------------------------
+# 子 agent 的「中断」
+#
+# 桌宠派活有两条完全不同的路，中断方式也就不一样 —— 老版本只写了 taskkill，
+# 于是「走常驻大脑」的任务（记录里根本没有 pid）点了中断什么都不会发生：
+#   · taskkill /PID $null 静默失败，记录却被改成 stopped → 任务还在跑，列表在骗人
+#
+#   ① 直连 CLI 起的（Start-DshAgent）：记录里有 pid → taskkill /T /F 杀掉整棵树
+#   ② 走常驻大脑的（via: brain）：没有 pid。任务在大脑进程里顺序执行，
+#      真正干活的是**大脑的子进程**（那个 DSH 运行时）。所以中断 = 杀那个子进程树；
+#      大脑会从 Invoke-DshPrompt 的异常里恢复、回到空闲，下一个任务再懒起一个运行时。
+#      还在排队、没轮到它的：删掉 req-<id>.json 就干净取消了。
+# ---------------------------------------------------------------------------
+
+function Get-BrainRuntimePid {
+  <# 大脑手里那个 DSH 运行时的 pid（大脑的子进程）。没有就 0。 #>
+  param([string]$RunDir)
+  $b = Get-BrainState -RunDir $RunDir
+  if (-not $b) { return 0 }
+  try {
+    $kids = @(Get-CimInstance Win32_Process -Filter "ParentProcessId=$([int]$b.pid)" -ErrorAction SilentlyContinue)
+    $rt = $kids | Where-Object { $_.Name -match 'DeepSeek Harness|electron|node' } | Select-Object -First 1
+    if ($rt) { return [int]$rt.ProcessId }
+  } catch { }
+  return 0
+}
+
+function Get-BrainActiveRequestId {
+  <# 大脑此刻正在跑的那个请求的 id。空闲 → 空串。
+     判据：大脑是**顺序**取活的，取的是最老的那个 req-*.json（跑完才在 finally 里删），
+     所以「最老的待办」就是「正在跑的这个」。 #>
+  param([string]$RunDir)
+  $stage = Join-Path $RunDir 'stage.txt'
+  if (Test-Path -LiteralPath $stage) {
+    try { if ((Get-Content -LiteralPath $stage -Raw -Encoding UTF8).Trim() -eq '空闲') { return '' } } catch { }
+  }
+  $req = @(Get-ChildItem -LiteralPath (Get-BrainDir $RunDir) -Filter 'req-*.json' -File -ErrorAction SilentlyContinue |
+      Sort-Object LastWriteTime | Select-Object -First 1)
+  if ($req.Count -eq 0) { return '' }
+  return [string]($req[0].BaseName -replace '^req-', '')
+}
+
+function Get-AgentLogDigest {
+  <# 把 logs\agent-<id>.jsonl 压成一段人能读的东西：任务 / 配置 / 结论 / 工具调用统计。 #>
+  param($Agent, [string]$LogFile, [int]$MaxTools = 12)
+  $out = New-Object System.Collections.ArrayList
+
+  $task = if ($Agent -and $Agent.task) { [string]$Agent.task } else { '(未知)' }
+  [void]$out.Add("任务：$task")
+
+  $bits = @()
+  if ($Agent) {
+    if ($Agent.model) { $bits += "模型 $($Agent.model)" }
+    if ($Agent.access) { $bits += "权限 $($Agent.access)" }
+    if ((@($Agent.PSObject.Properties.Name) -contains 'via') -and $Agent.via) { $bits += "通道 $($Agent.via)" }
+    if ((@($Agent.PSObject.Properties.Name) -contains 'sessionId') -and $Agent.sessionId) { $bits += "会话 $($Agent.sessionId)" }
+  }
+  if ($bits.Count) { [void]$out.Add($bits -join '    ') }
+
+  $when = ''
+  try { if ($Agent -and $Agent.startedAt) { $when = ([datetime]$Agent.startedAt).ToString('MM-dd HH:mm:ss') } } catch { }
+  $secs = ''
+  try { if ($Agent -and $Agent.seconds) { $secs = "耗时 $([math]::Round([double]$Agent.seconds, 1))s" } } catch { }
+  [void]$out.Add("状态：$($Agent.status)    $when    $secs")
+  [void]$out.Add('')
+
+  if (-not $LogFile -or -not (Test-Path -LiteralPath $LogFile)) {
+    [void]$out.Add('（这条记录没有日志文件 —— 可能是还没派过活的空槽）')
+    # ⚠️ 必须 CRLF：WinForms 的 TextBox 只认 CRLF，喂 LF 会把整段压成一行（实测踩过）
+    return ($out -join "`r`n")
+  }
+
+  $tools = New-Object System.Collections.ArrayList
+  $texts = New-Object System.Collections.ArrayList
+  $thinking = 0
+  foreach ($line in (Get-Content -LiteralPath $LogFile -Encoding UTF8)) {
+    if ([string]::IsNullOrWhiteSpace($line)) { continue }
+    try { $e = $line | ConvertFrom-Json } catch { continue }
+    switch ([string]$e.type) {
+      'tool_call' { if ($e.tool) { [void]$tools.Add([string]$e.tool) } }
+      'tool/call' { if ($e.data -and $e.data.name) { [void]$tools.Add([string]$e.data.name) } }
+      'text'      { if ($e.text) { [void]$texts.Add([string]$e.text) } }
+      'final'     { if ($e.text) { [void]$texts.Add([string]$e.text) } }
+      'thinking'  { $thinking++ }
+    }
+  }
+
+  [void]$out.Add('结论：')
+  $finalText = if ($texts.Count -gt 0) { [string]$texts[$texts.Count - 1] } else { '(还没有输出)' }
+  foreach ($l in ($finalText -split "`r?`n")) { [void]$out.Add("   $l") }
+  [void]$out.Add('')
+
+  [void]$out.Add("过程：工具调用 $($tools.Count) 次，思考段 $thinking 段")
+  if ($tools.Count -eq 0) {
+    [void]$out.Add('   （没有工具调用）')
+  } else {
+    foreach ($g in (@($tools | Group-Object | Sort-Object Count -Descending) | Select-Object -First $MaxTools)) {
+      [void]$out.Add("   · $($g.Name) ×$($g.Count)")
+    }
+  }
+  [void]$out.Add('')
+  [void]$out.Add("原始日志：$LogFile")
+  return ($out -join "`r`n")
+}
+
 function Stop-DshAgent {
+  <# 中断一条记录。返回 @{ Ok; Mode; Message }。
+     Mode: pid | brain-runtime | brain-queued | none —— 用来把「到底停掉了什么」讲清楚。 #>
   param([string]$Id, [string]$RunDir)
   $agents = @(Get-Agents -RunDir $RunDir)
   $target = $agents | Where-Object { $_.id -eq $Id } | Select-Object -First 1
-  if (-not $target) { return $false }
-  try { taskkill /PID $target.pid /T /F | Out-Null } catch { }
-  $target.status = 'stopped'
-  $target.endedAt = (Get-Date).ToString('o')
-  Save-Agents -RunDir $RunDir -Agents $agents
-  return $true
+  if (-not $target) { return [pscustomobject]@{ Ok = $false; Mode = 'none'; Message = "列表里没有 $Id" } }
+
+  $mode = 'none'
+  $msg = ''
+
+  if ((@($target.PSObject.Properties.Name) -contains 'brainId') -and $target.brainId) {
+    $bid = [string]$target.brainId
+    $reqPath = Join-Path (Get-BrainDir $RunDir) ("req-$bid.json")
+    $wasQueued = Test-Path -LiteralPath $reqPath
+    if ($wasQueued) { try { Remove-Item -LiteralPath $reqPath -Force -ErrorAction SilentlyContinue } catch { } }
+
+    if ((Get-BrainActiveRequestId -RunDir $RunDir) -eq $bid) {
+      $rt = Get-BrainRuntimePid -RunDir $RunDir
+      if ($rt -gt 0) {
+        try { taskkill /PID $rt /T /F | Out-Null } catch { }
+        $mode = 'brain-runtime'
+        $msg = "已打断常驻大脑里正在跑的这一轮（运行时 $rt）"
+      } else {
+        $mode = 'brain-queued'
+        $msg = '请求已撤回；运行时不在，无需杀进程'
+      }
+    } elseif ($wasQueued) {
+      $mode = 'brain-queued'
+      $msg = '还没轮到它，已经从队列里撤回了'
+    } else {
+      $msg = '这条已经结束（没有在跑的任务）'
+    }
+  } elseif ($target.pid) {
+    if ([string]$target.status -eq 'running') {
+      try {
+        taskkill /PID ([int]$target.pid) /T /F | Out-Null
+        $mode = 'pid'
+        $msg = "已终止进程树 $($target.pid)"
+      } catch {
+        $msg = "杀进程失败：$($_.Exception.Message)"
+      }
+    } else {
+      $msg = '这条已经结束（没有在跑的进程）'
+    }
+  } else {
+    $msg = '这条记录没有可中断的东西（空槽或已结束）'
+  }
+
+  if ($mode -ne 'none') {
+    Set-AgentField $target 'status' 'stopped'
+    Set-AgentField $target 'endedAt' (Get-Date).ToString('o')
+    Set-AgentField $target 'note' $msg
+    # 顺手把残留的请求文件清掉（排队中的已删，正在跑的也一并撤掉，免得大脑回头又捡起来）
+    Save-Agents -RunDir $RunDir -Agents $agents
+  }
+  return [pscustomobject]@{ Ok = ($mode -ne 'none'); Mode = $mode; Message = $msg }
 }
 
 # 启动时对账：把上一次运行留下的"running"记录收拾掉。
@@ -653,8 +805,12 @@ function Remove-DshAgentRecord {
   $agents = @(Get-Agents -RunDir $RunDir)
   $target = $agents | Where-Object { $_.id -eq $Id } | Select-Object -First 1
   if (-not $target) { return $false }
-  if ($target.status -eq 'running') {
-    try { if ($target.pid) { taskkill /PID $target.pid /T /F | Out-Null } } catch { }
+  # 跑着的先停。**必须走 Stop-DshAgent** —— 只有它知道"走常驻大脑"的任务没有 pid，
+  # 该打断的是大脑手里那个运行时。老版本这里只 taskkill $pid，对大脑任务等于没停，
+  # 记录被删了、任务还在后台跑。
+  if ([string]$target.status -eq 'running') {
+    [void](Stop-DshAgent -RunDir $RunDir -Id $Id)
+    $agents = @(Get-Agents -RunDir $RunDir)   # 停完重新读，别把停之前的旧对象写回去
   }
   $keep = @($agents | Where-Object { $_.id -ne $Id })
   Save-Agents -RunDir $RunDir -Agents $keep

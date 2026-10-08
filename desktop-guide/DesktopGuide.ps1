@@ -1032,9 +1032,9 @@ namespace DesktopGuide {
         agentMenu.DropDownItems.Add(item);
       }
       moreMenu.DropDownItems.Add(agentMenu);
-      // 「Agent 列表（派活给谁）」打开一个**窗口**：在那边选一条 / 新建一条 / 删一条。
-      // 菜单里只放入口 —— 列表要能看状态、能新建删除，子菜单干不了这些。
-      moreMenu.DropDownItems.Add(MakeMenuItem("Agent 列表（派活给谁）…", AgentListRequested));
+      // 「子 agent 管理」打开一个**窗口**：选一条 / 新建 / 删一条 / 看它的记录 / 中断它。
+      // 菜单里只放入口 —— 列表要能看状态、看日志、能中断，子菜单干不了这些。
+      moreMenu.DropDownItems.Add(MakeMenuItem("子 agent 管理（记录 / 中断 / 派活）…", AgentListRequested));
     }
 
     /// 「设置」子菜单：主 agent 用哪个模型、工作 agent 用哪档权限。
@@ -2118,6 +2118,10 @@ $defaults = [ordered]@{
   timelineSize          = 40
   advisor               = ''
   advisorFast           = ''
+  # 判断走「内联」：提示词在桌宠进程内拼，直接起 dsh —— 省掉 cmd.exe + 一个额外 pwsh
+  # 的纯启动开销（实测 1.2–1.8 秒/次）。提示词实现仍是 advisor-core.ps1，和命令式同源。
+  # 只在 advisor 指向 advisor-dsh.ps1 时生效；任何一步失败都会当场退回命令式。
+  advisorInline         = $true
   # 大脑来源：dsh | openai | ollama | custom。它不是运行时开关，而是**设置窗口的翻译层** ——
   # 选了它就会把下面 advisor / advisorFast 两行改写成对应脚本（见 settings-window.ps1 的 Resolve-DgBrainCommands）。
   brainKind             = 'dsh'
@@ -2142,6 +2146,8 @@ $defaults = [ordered]@{
   fontFamily            = 'Microsoft YaHei UI'
   fontSize              = 9.5
   speakStyle            = 'guard'
+  roastMinSeconds       = 15    # 损友专用：最短多少秒说一句（在损友模式下它同时就是检查节拍）
+  roastBackoffMax       = 2     # 损友专用：连续"没什么可说"时间隔最多放宽到几倍（0 = 不退避）
   ttsEnabled            = $true    # 是否朗读（菜单里的「出声朗读」，运行时可切，静音状态存在 pet.json）
   ttsEngine             = 'auto'   # auto | edge | speech。auto = 有 Edge 就用 Edge，否则退回本机音色
   ttsVoice              = ''       # 留空 = Edge 用默认可爱音色 / 本机用自动挑的中文音色
@@ -2149,6 +2155,7 @@ $defaults = [ordered]@{
   ttsEdgePitch          = '+12Hz'  # Edge 音高（略抬高显可爱）
   ttsEdgeVolume         = '+0%'
   ttsPython             = ''       # 留空 = 自动用 .tts\venv\Scripts\python.exe
+  ttsQueueMax           = 3        # 待播队列最多几句（满了丢最旧）
   ttsRate               = 0        # -10..10，0 是正常语速
   ttsVolume             = 100      # 0..100
   ttsMaxChars           = 180      # 一句话最多读多少字，超了就在标点处截断
@@ -2259,6 +2266,8 @@ $logPath = Join-Path $logDir ("observe-{0}.jsonl" -f (Get-Date -Format 'yyyyMMdd
 . (Join-Path $PSScriptRoot 'settings-window.ps1')
 # 「派活给谁」窗口：选一条 / 新建一条 / 删一条。见 agents-window.ps1 头部。
 . (Join-Path $PSScriptRoot 'agents-window.ps1')
+# 判断内核：提示词拼装 / 结果解析。**advisor-dsh.ps1 和本文件的内联路径共用这一份**。
+. (Join-Path $PSScriptRoot 'advisor-core.ps1')
 
 # ---------------------------------------------------------------------------
 # 采集
@@ -2290,6 +2299,16 @@ $script:interactions = New-Object System.Collections.ArrayList
 $script:advisorStarted = $null
 $script:advisorT0 = $null
 $script:lastStage = ''
+$script:thinkTick = 0
+# ---- 内联判断（config 的 advisorInline）----------------------------------
+# 命令式要经过 `cmd.exe → pwsh(advisor-dsh.ps1) → dsh` 三层，其中**纯启动**就 1.2–1.8 秒。
+# 内联把"拼提示词"搬回本进程（提示词实现仍是 advisor-core.ps1，两边同源），只留一个 dsh。
+$script:advisorTaskFile   = Join-Path $runDir 'main-agent.task.txt'
+$script:advisorRawOut     = Join-Path $runDir 'main-agent.out.jsonl'
+$script:advisorRawErr     = Join-Path $runDir 'main-agent.err.txt'
+$script:advisorInlineOn   = $false     # 这一轮是不是内联起的
+$script:advisorLock       = $null      # 内联这一轮握着的主会话锁
+$script:advisorCtx        = $null      # 内联这一轮的上下文（会话 / 模型 / patch）
 $script:lastFp = ''
 $script:stillSince = Get-Date
 $script:lastJudgedFp = ''
@@ -3342,9 +3361,16 @@ function Test-WorthAutoJudge {
   # 代价是真的花钱：每轮都是一次模型调用（约 0.02–0.03 元）。所以留两个刹车：
   #   · 用户长时间不动键鼠 → 不开口（直播间里没人了还解说就很傻）
   #   · 连着几次都判成"没什么可说" → 间隔按 2x/3x 放宽（别对着一个无聊画面一直付费）
+  #
+  # ⚠ 光调这里不够：闸门是**被 autoTimer 叫醒时才被问一次**的。以前定时器固定按
+  #   autoMinutes（默认 1 分钟）走，于是把 roastMinSeconds 调到 15 也毫无效果 ——
+  #   一分钟才问一次闸门，最快也就一分钟一句。现在损友模式的节拍 = roastMinSeconds
+  #   （见 Get-AutoTickMs），一个旋钮管一头。
   if ($cfg.speakStyle -eq 'roast') {
-    $roastGap = [double]$(if ($cfg.roastMinSeconds) { $cfg.roastMinSeconds } else { 30 })
-    $roastNeed = $roastGap * (1 + [math]::Min($script:silentStreak, 2))
+    $roastGap = [double]$(if ($null -ne $cfg.roastMinSeconds) { $cfg.roastMinSeconds } else { 15 })
+    # 退避上限可调：连 N 次判成"没什么可说"就放宽到 (1+N) 倍。0 = 不退避，永远按最短间隔来。
+    $roastBack = [int]$(if ($null -ne $cfg.roastBackoffMax) { $cfg.roastBackoffMax } else { 2 })
+    $roastNeed = $roastGap * (1 + [math]::Min($script:silentStreak, [Math]::Max(0, $roastBack)))
     if ($since -lt $roastNeed) {
       return "距上次开口只有 $([int]$since)s（损友模式最短 $([int]$roastNeed)s 一句）"
     }
@@ -3366,6 +3392,50 @@ function Test-WorthAutoJudge {
     return "人不在（$($idle)s 没有键鼠输入，窗口也没换）"
   }
   return ''
+}
+
+function Complete-InlineAdvisor {
+  <#
+    内联判断的收尾。三件事：
+      ① 把 dsh 的事件流（run\main-agent.out.jsonl）翻译成 advisor.out.txt 那种格式 ——
+         这样下游的解析逻辑**一行都不用改**（内联和命令式产出同一种产物）；
+      ② 第一次拿到 sessionId 时写回 run\main-agent.json（和 advisor-dsh.ps1 行为一致）；
+      ③ 放掉主会话锁。
+  #>
+  param([switch]$TimedOut)
+
+  $final = ''
+  $newSession = $null
+  if (Test-Path -LiteralPath $script:advisorRawOut) {
+    foreach ($line in (Get-Content -LiteralPath $script:advisorRawOut -Encoding UTF8 -ErrorAction SilentlyContinue)) {
+      if ([string]::IsNullOrWhiteSpace($line)) { continue }
+      try { $e = $line | ConvertFrom-Json } catch { continue }
+      if ($e.type -eq 'session' -and $e.sessionId) { $newSession = $e.sessionId }
+      if ($e.type -eq 'final' -and $e.text) { $final = [string]$e.text }
+    }
+  }
+  $err = ''
+  if (Test-Path -LiteralPath $script:advisorRawErr) {
+    $err = [string](Get-Content -LiteralPath $script:advisorRawErr -Raw -Encoding UTF8)
+  }
+
+  if ($script:advisorCtx -and $newSession -and $newSession -ne $script:advisorCtx.SessionId) {
+    try {
+      ([pscustomobject]@{
+          sessionId = $newSession
+          model     = $script:advisorCtx.Model.name
+          updatedAt = (Get-Date).ToString('o')
+        } | ConvertTo-Json -Compress) | Set-Content -LiteralPath $script:advisorCtx.StateFile -Encoding UTF8
+    } catch { }
+  }
+
+  $outcome = if ($TimedOut) { @('（主 agent 超时，已中止这一轮）') }
+  else { ConvertTo-JudgeOutcome -FinalText $final -ErrText $err }
+  try { Set-Content -LiteralPath $advisorOut -Value ($outcome -join "`r`n") -Encoding UTF8 } catch { }
+
+  if ($script:advisorLock) { try { Exit-AgentLock -LockPath $script:advisorLock } catch { } }
+  $script:advisorLock = $null
+  $script:advisorInlineOn = $false
 }
 
 function Start-Advisor {
@@ -3421,6 +3491,69 @@ function Start-Advisor {
     return
   }
 
+  # ---- 内联路径（advisorInline）：提示词在**本进程**里拼，只起一个 dsh ----
+  # 命令式要经过 cmd.exe → pwsh(advisor-dsh.ps1) → dsh，其中纯启动就 1.2–1.8 秒
+  #（实测：pwsh -NoProfile -Command exit 约 0.9–1.5 秒，加上脚本加载到 1.2–1.8 秒）。
+  # 内联只留最后那个 dsh。提示词实现仍是 advisor-core.ps1，和命令式**同一份**。
+  #
+  # 任何一步失败都当场退回命令式 —— 判断是桌宠的核心功能，不能因为提速把它弄丢。
+  # 注意会话锁用 TimeoutSeconds=0：等锁会卡住桌宠的 UI；抢不到就直接退回命令式，
+  # 让 advisor-dsh 在**它自己的进程**里排队等（那种等待不影响界面）。
+  $inlineWanted = ($cfg.advisorInline -ne $false) -and ($cmd -match 'advisor-dsh\.ps1')
+  if ($inlineWanted) {
+    try {
+      $ctx = Get-JudgeContext -Root $PSScriptRoot -RunDir $runDir -HomeDir $script:DgHome -AgentsConfig $script:AgentCfg
+      $prompt = Build-JudgePrompt -Root $PSScriptRoot -RunDir $runDir -LogDir $logDir `
+        -PayloadPath $payloadPath -HomeDir $script:DgHome -Config $cfg
+      Set-Content -LiteralPath (Join-Path $runDir 'stage.txt') -Value '正在启动 DSH…' -Encoding UTF8
+      Set-Content -LiteralPath $script:advisorTaskFile -Value $prompt -Encoding UTF8
+      if (Test-Path -LiteralPath $advisorOut) { Remove-Item -LiteralPath $advisorOut -Force }
+      if (Test-Path -LiteralPath $advisorErr) { Remove-Item -LiteralPath $advisorErr -Force }
+
+      $lock = Enter-AgentLock -RunDir $runDir -Name 'main' -TimeoutSeconds 0
+      try {
+        $agentWs = Get-AgentWorkspace -RunDir $runDir
+        $dshArgs = @('--expose-internals', $ctx.DshCli, '--profile', $ctx.Profile, '--patch', $ctx.PatchPath)
+        if ($ctx.SessionId) { $dshArgs += @('--session-id', $ctx.SessionId) }
+        $dshArgs += @('--json', '-')
+        $oldNode = $env:ELECTRON_RUN_AS_NODE
+        $oldMode = $env:DSH_PERMISSION_MODE
+        $env:ELECTRON_RUN_AS_NODE = '1'
+        if ($ctx.Access -and $ctx.Access.sandbox) { $env:DSH_PERMISSION_MODE = $ctx.Access.sandbox }
+        try {
+          $script:advisorProc = Start-Process -FilePath $ctx.DshExe -ArgumentList $dshArgs `
+            -RedirectStandardInput $script:advisorTaskFile `
+            -RedirectStandardOutput $script:advisorRawOut `
+            -RedirectStandardError $script:advisorRawErr `
+            -WorkingDirectory $agentWs -NoNewWindow -PassThru
+        } finally {
+          if ($null -eq $oldNode) { Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue }
+          else { $env:ELECTRON_RUN_AS_NODE = $oldNode }
+          if ($null -eq $oldMode) { Remove-Item Env:DSH_PERMISSION_MODE -ErrorAction SilentlyContinue }
+          else { $env:DSH_PERMISSION_MODE = $oldMode }
+        }
+        $script:advisorLock = $lock
+        $script:advisorCtx = $ctx
+        $script:advisorInlineOn = $true
+        $script:thinking = $true
+        $script:advisorT0 = Get-Date
+        $script:lastStage = ''
+        $script:thinkTick = 0
+        $pet.ShowThinking('正在看屏幕…')
+        return
+      } catch {
+        # 起了锁但 dsh 没起来 → 立刻放锁，交给下面那条路
+        try { Exit-AgentLock -LockPath $lock } catch { }
+        throw
+      }
+    } catch {
+      $script:advisorInlineOn = $false
+      $script:advisorLock = $null
+      Add-Interaction 'advisor_inline_fallback' $_.Exception.Message
+      # 落到下面：走命令式（advisor-dsh.ps1），行为退回到提速之前
+    }
+  }
+
   if (Test-Path $advisorOut) { Remove-Item -LiteralPath $advisorOut -Force }
   if (Test-Path $advisorErr) { Remove-Item -LiteralPath $advisorErr -Force }
   # 注意：不要把整条 advisor 命令再包一层引号 —— 它自己通常已经带引号（-File "路径"），
@@ -3430,6 +3563,7 @@ function Start-Advisor {
   $script:thinking = $true
   $script:advisorT0 = Get-Date
   $script:lastStage = ''
+  $script:thinkTick = 0
   # 通用阶段上报：任何 advisor 都可以往这个文件写一行当前阶段，桌宠优先读它。
   # 没有它的话，单次 HTTP 调用的路径（advisor-openai）全程只能显示"正在启动"。
   try { Remove-Item -LiteralPath (Join-Path $runDir 'stage.txt') -Force -ErrorAction SilentlyContinue } catch { }
@@ -3463,7 +3597,15 @@ function Complete-AdvisorIfDone {
         if ($s) { $stage = $s }
       } catch { }
     }
-    $line = "$stage ${elapsed}s"
+    # 省略号做**动画**：. → .. → ... 循环。
+    # 以前这里是个写死的 `…`，配上每秒跳一次的秒数，看着像卡住了 ——
+    # 12 秒里有 7 秒根本不是模型在算（见 README「一次判断的时间去哪了」），
+    # 所以更得让人看见"它还在动"。
+    # 节拍跟轮询同步（500ms 一格，1.5 秒一个循环），代价是一次重绘，可以忽略。
+    $script:thinkTick++
+    $dots = '.' * (1 + ($script:thinkTick % 3))
+    $stage = $stage -replace '[.．。…]+$', ''      # 先去掉原来那个写死的省略号
+    $line = "$stage$dots ${elapsed}s"
     if ($line -ne $script:lastStage) {
       $script:lastStage = $line
       try { $pet.ShowThinking($line) } catch { }
@@ -3473,6 +3615,8 @@ function Complete-AdvisorIfDone {
     if (-not $pet.PromptPending -and
         ((Get-Date) - $script:advisorProc.StartTime).TotalSeconds -gt [double]$cfg.advisorTimeoutSeconds) {
       try { $script:advisorProc.Kill() } catch { }
+      # 内联这一轮握着主会话锁，超时也必须放掉，否则下次判断会被自己挡住
+      if ($script:advisorInlineOn) { try { Complete-InlineAdvisor -TimedOut } catch { } }
       $script:thinking = $false
       Add-Interaction 'judge_timeout' ("$([int]((Get-Date) - $script:advisorProc.StartTime).TotalSeconds)s 没有结果，已杀掉")
       $pet.ShowMessage('（想太久了，先不想了）', [int]$cfg.showSeconds)
@@ -3480,6 +3624,9 @@ function Complete-AdvisorIfDone {
     return
   }
   $script:thinking = $false
+  # 内联：dsh 刚退出 —— 把事件流翻译成 advisor.out.txt（下游解析一行都不用改），并放掉会话锁。
+  # 必须在读 $advisorOut 之前做。
+  if ($script:advisorInlineOn) { try { Complete-InlineAdvisor } catch { } }
   $text = ''
   if (Test-Path $advisorOut) { $text = (Get-Content -LiteralPath $advisorOut -Raw -Encoding UTF8) }
   $err = ''
@@ -3532,10 +3679,18 @@ function Complete-AdvisorIfDone {
   Add-History -Text $shownText -Reason $reason -Silent $silent
   if ($script:suppressShow) {
     $script:suppressShow = $false
+    # 预热同样不显示结果 —— 但**必须清掉**"正在想… Ns"，
+    # 否则它会以 messageUntil = MaxValue 挂在屏幕上直到下一轮判断（实测挂了几分钟）。
+    try { $pet.ClearMessage() } catch { }
   } elseif ($script:autoAsk -and $silent) {
     # 自动模式下它决定不说：不打扰，只留日志
     # 同时记账：连续沉默就退避（下一次要求更长间隔），这条完全由本地代码控制
     $script:silentStreak++
+    # ⚠️ "不打扰"指的是**不冒新气泡**，不是**留着上一句**。
+    # ShowThinking 把 messageUntil 设成了 MaxValue，所以这里不清的话，
+    # 那句「正在想… 16s」会一直停在屏幕上 —— 看着像卡死，而且那个秒数是过期的。
+    # （用户报的"没有省略号动画"就是这么来的：他盯着的是一个已经结束的残留气泡。）
+    try { $pet.ClearMessage() } catch { }
   } else {
     if ($script:autoAsk) { $script:silentStreak = 0 }
     # agent 给了选项 → 渲染成可点按钮 + 倒计时自动取消；否则普通气泡
@@ -4296,8 +4451,11 @@ $probe3 = New-Object DesktopGuide.PetForm -ArgumentList @([double]$script:UiScal
   # ---- 损友模式：同一套假状态，只换 speakStyle，看闸门会不会放行 ----
   # 损友模式的定位是"陪着说话"，所以它必须能在**画面没变**时开口（直播里"又在刷同一个页面"
   # 本身就是内容）—— 这两行断言就是钉住这条：30 秒内拦住、40 秒放行。
+  # 这里把 roastMinSeconds 钉死成 30，免得用户改了配置之后这两行说法就自相矛盾。
   $oldStyle = [string]$cfg.speakStyle
+  $oldRoastGap = $cfg.roastMinSeconds
   $cfg.speakStyle = 'roast'
+  $cfg.roastMinSeconds = 30
   $script:standby = $false
   $script:silentStreak = 0
   $script:lastFp = $zeroFp
@@ -4311,6 +4469,7 @@ $probe3 = New-Object DesktopGuide.PetForm -ArgumentList @([double]$script:UiScal
   Write-Output ("  [损友] 同上但连 2 次没说 → '" + (Test-WorthAutoJudge) + "'  （退避到 90s：别对着无聊画面一直付费）")
   $script:silentStreak = 0
   $cfg.speakStyle = $oldStyle
+  $cfg.roastMinSeconds = $oldRoastGap
   $script:shots.Clear()      # 假截图用完就撤，别影响后面几节
   $script:lastFp = $fullFp
   $script:standby = $true
@@ -4490,15 +4649,23 @@ $probe3 = New-Object DesktopGuide.PetForm -ArgumentList @([double]$script:UiScal
   # 名字写错的话桌宠会直接起不来，而这种错只有到运行时才暴露。
   $swEvt = [DesktopGuide.PetForm].GetMethod('add_SettingsRequested')
   Write-Output ("  事件接线：add_SettingsRequested 存在 = {0}" -f ($null -ne $swEvt))
-  Write-Output '=== 5s. Agent 列表窗口（派活给谁：选 / 新建 / 删）==='
-  # 三件事一起盯：① 逻辑自检（在临时目录里跑"新建 / 设目标 / 删除"，见 agents-window.ps1）
-  # ② 真窗口离屏渲染一张图（版面用眼睛核）③ 事件接线 —— 自检在"挂菜单事件"那段代码**之前**
+  Write-Output '=== 5s. 子 agent 管理窗口（派活 / 看记录 / 中断）==='
+  # 四件事一起盯：① 逻辑自检（在临时目录里跑"新建 / 设目标 / 删除 / 看记录 / 中断"，
+  #   见 agents-window.ps1）② 真窗口离屏渲染成图（版面用眼睛核）③ 记录窗口也渲染一张
+  # ④ 事件接线 —— 自检在"挂菜单事件"那段代码**之前**
   #    就 exit 了，事件名写错的话桌宠会直接起不来，那种错只有运行时才暴露。
   try {
     . (Join-Path $PSScriptRoot 'dsh-agents.ps1')
     . (Join-Path $PSScriptRoot 'agents-window.ps1')
     [void](Test-DgAgents -Root $PSScriptRoot -UiScale $script:UiScale)
     [void](Show-DgAgents -Root $PSScriptRoot -UiScale $script:UiScale -RenderTo $runDir -SelfTest)
+    # 记录窗口：挑最近一条真记录渲染（没有记录就跳过，不算失败）
+    $anyAgent = @(Get-Agents -RunDir $runDir | Select-Object -Last 1)
+    if ($anyAgent.Count -gt 0 -and $anyAgent[0].id) {
+      Show-DgAgentLog -Root $PSScriptRoot -Id ([string]$anyAgent[0].id) -UiScale $script:UiScale -RenderTo $runDir -SelfTest
+    } else {
+      Write-Output '  （还没有 agent 记录，记录窗口跳过渲染）'
+    }
   } catch { Write-Output "  ✘ agents 窗口自检失败：$($_.Exception.Message)" }
   $evtA = [DesktopGuide.PetForm].GetMethod('add_AgentListRequested')
   $evtW = [DesktopGuide.PetForm].GetMethod('add_WakeRequested')
@@ -4994,6 +5161,9 @@ if ($resolvedImage) { $pet.SetImage($resolvedImage); Write-Host "角色图：$re
 # ---- 朗读（TTS）----
 # 配置里的 ttsEnabled 决定初始静音与否；真正的开关状态随后由 pet.json 覆盖。
 [void](Initialize-Tts -Config $cfg)
+# 预热播音员：它 import edge_tts 要 1.7 秒，摊在启动时比摊在第一句话上好。
+# 第一句和第一百句的出声延迟就一样了（实测 ~1.2 秒）。
+if ($script:TtsBackend -eq 'edge') { [void](Start-TtsWorker) }
 $pet.TtsEnabled = -not (Get-TtsMuted)
 Write-Host (Get-TtsStatus)
 
@@ -5421,6 +5591,37 @@ function Clear-MonitorRegion {
 
 # agent 说"盯这个窗口"，我们把它解析成真实矩形。
 # 让模型做语义判断（该盯什么），我们做几何测量（它在哪）—— 比让它猜像素坐标可靠得多。
+# ---- 自动检查的节拍 -------------------------------------------------------
+# 为什么要有这一对函数：autoTimer 以前固定按 autoMinutes 走（默认 1 分钟一次）。
+# 可损友模式的卖点是"陪着说话"，而闸门是**被定时器叫醒时才被问一次**的 ——
+# 于是把 roastMinSeconds 调到 15 秒也没用，最快还是一分钟一句。
+# 现在：损友模式的节拍就等于 roastMinSeconds，一个旋钮管一头。
+function Get-AutoTickMs {
+  $floorMs = 5000   # 下限 5 秒：再密就是空转，省不下什么
+  if ($cfg.speakStyle -eq 'roast') {
+    $sec = [double]$(if ($null -ne $cfg.roastMinSeconds) { $cfg.roastMinSeconds } else { 15 })
+    return [int][Math]::Max($floorMs, $sec * 1000)
+  }
+  $min = [double]$(if ($null -ne $cfg.autoMinutes) { $cfg.autoMinutes } else { 5 })
+  return [int][Math]::Max($floorMs, $min * 60 * 1000)
+}
+
+function Format-AutoTickLabel {
+  $ms = Get-AutoTickMs
+  if ($ms -lt 60000) { return "每 $([int][Math]::Round($ms / 1000.0)) 秒" }
+  return "每 $([Math]::Round($ms / 60000.0, 1)) 分钟"
+}
+
+function Update-AutoTick {
+  <# 改完说话风格 / 改完间隔后调一次，让定时器和菜单文案都跟上 #>
+  if (-not $autoTimer) { return }
+  $wasOn = $false
+  try { $wasOn = $autoTimer.Enabled } catch { }
+  $autoTimer.Interval = Get-AutoTickMs
+  if ($wasOn) { $autoTimer.Stop(); $autoTimer.Start() }   # 改了 Interval 要重启才立刻生效
+  try { $pet.AutoItemText = "自动发言（$(Format-AutoTickLabel)问一次）" } catch { }
+}
+
 function Set-SpeakStyle {
   param([ValidateSet('guard', 'coach', 'roast')][string]$Style)
   $src = Join-Path $PSScriptRoot "presets\$Style.txt"
@@ -5432,10 +5633,11 @@ function Set-SpeakStyle {
   $cfg.speakStyle = $Style
   Save-PetConfig
   Add-Interaction 'speak_style' $Style
+  Update-AutoTick   # 损友模式的节拍跟着 roastMinSeconds 走，换档时要重设
   $autoHint = if ($pet.AutoEnabled) { '自动检查已开着，它会自己找机会开口。' } else { '但自动检查目前是关的 —— 右键开「自动发言」才会自己找机会，否则只在你问的时候给建议。' }
   switch ($Style) {
     'coach' { $pet.ShowMessage("已切到陪练模式：每次判断都会给出建议。`n$autoHint", [int]$cfg.showSeconds) }
-    'roast' { $pet.ShowMessage("已切到损友模式：先吐槽一句再给建议 —— 只吐槽屏幕上那件事，不骂人。`n$autoHint", [int]$cfg.showSeconds) }
+    'roast' { $pet.ShowMessage("已切到损友模式：先吐槽一句再给建议 —— 只吐槽屏幕上那件事，不骂人。`n$(Format-AutoTickLabel)就有一次开口机会。`n$autoHint", [int]$cfg.showSeconds) }
     default { $pet.ShowMessage('已切回保守模式：只在明显的问题、反复失败、或与目标冲突时开口。', [int]$cfg.showSeconds) }
   }
 }
@@ -6143,19 +6345,20 @@ $pet.Add_CollapseRequested({
     try { Set-PetWidth 292; if (-not $pet.PromptPending) { $pet.ClearMessage() } } catch { }
   })
 
-# 菜单里「自动发言」的文案跟着真实周期走（周期来自 config.json 的 autoMinutes）
-try { $pet.AutoItemText = "自动发言（每 $([double]$cfg.autoMinutes) 分钟问一次）" } catch { }
-
 $autoTimer = New-Object System.Windows.Forms.Timer
-$autoTimer.Interval = [int]([double]$cfg.autoMinutes * 60 * 1000)
+$autoTimer.Interval = Get-AutoTickMs
 $autoTimer.Add_Tick({ try { Start-Advisor -Auto } catch { } })
+
+# 菜单里「自动发言」的文案跟着真实周期走。
+# 注意周期不总是 autoMinutes —— 损友模式下它等于 roastMinSeconds（见 Get-AutoTickMs）
+try { $pet.AutoItemText = "自动发言（$(Format-AutoTickLabel)问一次）" } catch { }
 
 $pet.Add_AutoChanged({
     try {
       Add-Interaction 'auto' $(if ($pet.AutoEnabled) { 'on' } else { 'off' })
       if ($pet.AutoEnabled) {
         $autoTimer.Start()
-        $pet.ShowMessage("好，我会每 $($cfg.autoMinutes) 分钟自己看一眼；没事就不出声。", 6)
+        $pet.ShowMessage("好，我会$(Format-AutoTickLabel)自己看一眼；没事就不出声。", 6)
       } else {
         $autoTimer.Stop()
         $pet.ShowMessage('自动发言已关闭。', 5)
@@ -6537,6 +6740,8 @@ if ($HostPid -gt 0) {
 
 $pet.Add_FormClosing({
     try { Stop-Tts | Out-Null } catch { }
+    # 播音员是常驻进程，退出时得让它收摊（它自己也看 pet.pid，双保险）
+    try { Stop-TtsWorker } catch { }
     # 托盘图标不显式收掉的话，进程没了它还会挂在通知区里，要等鼠标划过才消失
     try { if ($script:tray) { $script:tray.Visible = $false; $script:tray.Dispose() } } catch { }
     # 退出时把常驻大脑收掉（它自己也有 pet.pid 看门狗，双保险）
