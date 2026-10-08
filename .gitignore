@@ -52,6 +52,18 @@ Desktop.ini
 __pycache__/
 *.pyc
 
+# 桌宠派出去的 agent 的「任务产物」—— 不是项目代码，不该跟着源码进库。
+# 典型来源：一次「写故事 / 做文档」的活会在 desktop-guide\ 下留下脚本、交付物、渲染预览。
+#   check_docx.py / make_story.py 是那次活生成的一次性工具，checks.json 是它的校验输出，
+#   修灯的人.docx 是交付物，preview-v*/ 是 docx→PDF→PNG 的渲染预览（用来看版面的）。
+# ⚠️ 这里的 .py 必须**按具体名字**忽略：desktop-guide\ 下还有项目自己的 python
+#    （tts-edge-say.py / tts-worker.py），写 *.py 会把它们一起打死。
+desktop-guide/check_docx.py
+desktop-guide/make_story.py
+desktop-guide/checks.json
+desktop-guide/*.docx
+desktop-guide/preview-v*/
+
 # 快捷方式：里面是绝对路径（机器相关），由 desktop-guide\make-launcher.ps1 现生成
 *.lnk
 # 快捷方式用的图标：从 assets\pet.png 现生成（make-launcher.ps1 会重建）
