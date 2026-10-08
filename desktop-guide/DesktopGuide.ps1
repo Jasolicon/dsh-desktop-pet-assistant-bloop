@@ -396,11 +396,19 @@ namespace DesktopGuide {
     /** 最近一次截图算出来的画面指纹（8x8 灰度量化）。GrabRectJpeg 每次抓图都会更新它。 */
     public static string LastFingerprint = "";
 
-    /** 桌宠自己的屏幕矩形（右下角那个窗口，**含它刚弹出来的气泡**）。
-        ⚠️ 为什么要它：抓屏和指纹都是整屏的，**里面就有桌宠自己**。自检里拿一块同样大小的白板
-        顶替它的气泡（占屏幕 30%×22%），落在 8x8 网格里的 6 格上，指纹差 **15** —— 而
-        judgeMinFpDelta 是 12，过线。也就是说：**它自己说一句话，就等于自己给自己制造了一次
-        "画面变了"**，下一轮更容易再开口（自己触发自己）。所以指纹里落在自己身上的格子要挖掉。 */
+    /** 桌宠自己的屏幕矩形（**含它刚弹出来的气泡**）。**位置不固定** —— 桌宠可以拖到任何地方，
+        所以这个值每次抓屏前都从 $pet.Bounds 现取，不是启动时算一次。
+
+        ⚠️ 为什么要它：抓屏和指纹都是整屏的，**里面就有桌宠自己**。自检（第 5y 节）拿一块它那么大的
+        白板（430x250 逻辑 px）顶替它的气泡，测到的指纹差**随位置变**：
+          · 放在右下角、整块可见 → **26**（judgeMinFpDelta 是 12，**过线**）
+          · 放在贴右边的记录位置、一半在屏外 → **5**（没过线）
+        也就是说：**某些位置下，它自己弹一次气泡就够触发一次判断了**。挖掉之后两种情况都是 0~2。
+        这一处不再是"要不要修"的问题，是"它说一句话就等于给自己制造了一次画面变化"。
+
+        已知且可接受的一点：桌宠被拖走时，掩码格子集合会变（老位置不再挖、新位置开始挖），
+        所以拖动本身会造成一次指纹跳变 —— 但拖动确实是"画面真的变了"，而且拖它的人就在现场，
+        这次跳变是对的，不用额外处理。 */
     public static Rectangle SelfRect = Rectangle.Empty;
 
     /** 最近一次指纹里被挖掉的格子数（'1' = 挖掉）。自检和排查用。 */
@@ -4161,8 +4169,9 @@ $probe3 = New-Object DesktopGuide.PetForm -ArgumentList @([double]$script:UiScal
   Write-Output ("  当前快捷方式：仓库里={0}｜桌面={1}（生成方式见 make-launcher.ps1）" -f (Test-Path -LiteralPath $lnkRoot), (Test-Path -LiteralPath $lnkDesk))
   Write-Output ("  5x {0}/{1} 项通过" -f @($xOk | Where-Object { $_ }).Count, $xOk.Count)
   Write-Output '=== 5y. 自己别触发自己（指纹里挖掉桌宠自己那块）==='
-  # 复现手法：在屏幕右下角（桌宠待的地方）放一块**白板**代替它的气泡，看指纹跟不跟着动。
-  # 老行为它自己的气泡一弹，右下角那几格就变了 —— 等于"我自己说了一句话"被当成"画面变了"，
+  # 复现手法：在**桌宠当前所在的位置**放一块它那么大的白板代替它的气泡，看指纹跟不跟着动。
+  # 位置取自 run\pet.json（桌宠可拖，不能假设它在右下角），大小取它默认的 430x250 逻辑 px。
+  # 老行为它自己的气泡一弹，那几格就变了 —— 等于"我自己说了一句话"被当成"画面变了"，
   # 下一轮更容易再开口。这一段会**在屏幕上闪一块白板（约 1 秒）**，就是在测这个。
   $probeSelf = $null
   try {
@@ -4173,8 +4182,20 @@ $probe3 = New-Object DesktopGuide.PetForm -ArgumentList @([double]$script:UiScal
     $probeSelf.TopMost = $true
     $probeSelf.ShowInTaskbar = $false
     $swa = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
-    $rw = [int]($swa.Width * 0.30); $rh = [int]($swa.Height * 0.22)
-    $probeSelf.Bounds = [System.Drawing.Rectangle]::new(($swa.Right - $rw - 40), ($swa.Bottom - $rh - 40), $rw, $rh)
+    $rw = [int](430 * $script:UiScale); $rh = [int](250 * $script:UiScale)   # 桌宠默认的宽 / 基准高
+    $px = $swa.Right - $rw - 40; $py = $swa.Bottom - $rh - 40                # 拿不到位置就退回右下角
+    $petState = Join-Path $runDir 'pet.json'
+    if (Test-Path -LiteralPath $petState) {
+      try {
+        $ps2 = Get-Content -LiteralPath $petState -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ($null -ne $ps2.x) { $px = [int]$ps2.x }
+        if ($null -ne $ps2.y) { $py = [int]$ps2.y }
+      } catch { }
+    }
+    # 不钳位：桌宠本来就可能被拖到贴边（露出一半），板子跟着它才有意义 ——
+    # 越过屏幕的部分不影响掩码（掩码只和"屏幕内那几格"求交）。
+    $probeSelf.Bounds = [System.Drawing.Rectangle]::new($px, $py, $rw, $rh)
+    Write-Output ("  白板放在桌宠记录的位置 ({0},{1})，大小 {2}x{3}" -f $px, $py, $rw, $rh)
     $selfRect = $probeSelf.Bounds
 
     $grab = {
