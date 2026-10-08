@@ -2476,8 +2476,15 @@ $script:lastTickError = ''      # 采样/焦点定时器最近一次异常（同
 
 function Reset-CaptureRunspace {
   <# 建一个**常驻** runspace（别每帧重建 —— 那本身要几十毫秒）。
-      参数在建立时固定；用户改监控区域时会重建（改区域本来就会清空截图环）。 #>
-  if ($script:capPs) { try { $script:capPs.Dispose() } catch { } ; $script:capPs = $null }
+       参数（含监控区域）是建立时用 AddArgument 固定下来的 —— **改了区域必须重建**，见 Sync-CaptureRegion。 #>
+  # 先把状态清干净再处置旧的：万一 Dispose 抛异常，也不会留下一个"忙"的标记把后面的抓屏全挡掉。
+  # 如果正抓着一张（BeginInvoke 还没 EndInvoke），Dispose 会把那条流水线掐掉 —— 那一张本来就该
+  # 随区域一起作废（截图环刚清过），丢掉是对的。
+  $old = $script:capPs
+  $script:capPs = $null
+  $script:capBusy = $false
+  $script:capHandle = $null
+  if ($old) { try { $old.Dispose() } catch { } }
   $ps = [powershell]::Create()
   $null = $ps.AddScript({
       param($w, $q, $rx, $ry, $rw, $rh)
@@ -2495,6 +2502,19 @@ function Reset-CaptureRunspace {
   $script:capPs = $ps
   $script:capBusy = $false
   $script:capHandle = $null
+}
+
+function Sync-CaptureRegion {
+  <# 监控区域一变就必须走这一句，两件事缺一不可：
+       ① 清掉截图环 —— 环里那些图是**旧区域**的，发出去既费 token 又误导
+          （模型会拿旧取景框里的画面去对新窗口说话）。
+       ② **重建抓屏 runspace** —— 区域参数是建 runspace 时用 AddArgument 固定下来的，
+          不重建的话新区域要等重启（或一次抓屏停滞自愈）才生效，中间一直按旧区域抓。
+          实测就是这么漏的：框完区域，图还是整屏，重启才对。
+     调用点：右键框选 / 取消框选 / agent 的 WATCH / 设置窗口保存（Apply-PetConfigLive）。
+     它**不写盘** —— 存 config 由调用方自己 Save-PetConfig（设置窗口那条路已经存过了）。 #>
+  try { $script:shots.Clear() } catch { }
+  try { Reset-CaptureRunspace } catch { }
 }
 
 function Start-BackgroundCapture {
@@ -4234,6 +4254,64 @@ $probe3 = New-Object DesktopGuide.PetForm -ArgumentList @([double]$script:UiScal
     if ($probeSelf) { try { $probeSelf.Close() } catch { }; try { $probeSelf.Dispose() } catch { } }
     [DesktopGuide.Capture]::SelfRect = [System.Drawing.Rectangle]::Empty
   }
+  Write-Output '=== 5z. 监控区域改了立刻生效（不用重启）==='
+  # 复现手法：**先把抓屏 runspace 建起来（这时候是整屏）**，再像用户框选那样只改区域，立刻抓一张量像素宽。
+  # 老行为：区域参数是建 runspace 时固定的，改区域只清了截图环、没重建 ——
+  # 于是这一张仍然是整屏宽度，要重启（或等一次"抓屏停滞自愈"）才按新区域抓。
+  # 故意取一块**比 1024 窄**的区域：这样「整屏 1024 宽」和「新区域 600 宽」一眼能分开。
+  $regionBefore = $cfg.region
+  try {
+    $probeW = 600; $probeH = 400
+    # 走真实的抓屏 runspace（不是直接调 Capture）—— 要钉住的正是 runspace 里那份区域参数跟没跟着改
+    $grabViaRunspace = {
+      Start-BackgroundCapture
+      $deadline = (Get-Date).AddSeconds(5)
+      while ((Get-Date) -lt $deadline) {
+        $r = Complete-BackgroundCapture
+        if ($r) { return $r }
+        Start-Sleep -Milliseconds 25
+      }
+      return $null
+    }
+    $jpegWidthOf = {
+      param($res)
+      if (-not $res -or -not $res.jpeg) { return -1 }
+      try {
+        $bytes = [Convert]::FromBase64String($res.jpeg)
+        $ms = [System.IO.MemoryStream]::new($bytes)
+        $img = [System.Drawing.Image]::FromStream($ms)
+        $wd = $img.Width
+        $img.Dispose(); $ms.Dispose()
+        return $wd
+      } catch { return -2 }
+    }
+
+    # ① 整屏状态下先建好 runspace —— 这正是出 bug 的现场：runspace 早就在了
+    $cfg.region = $null
+    try { Reset-CaptureRunspace } catch { }
+    $fullW = & $jpegWidthOf (& $grabViaRunspace)
+
+    # ② 像用户框选一样**只改区域**（走真实函数），立刻再抓一张
+    $cfg.region = [pscustomobject]@{ x = 0; y = 0; w = $probeW; h = $probeH }
+    Sync-CaptureRegion
+    $regionW = & $jpegWidthOf (& $grabViaRunspace)
+
+    Write-Output ("  建 runspace 时是整屏 → 抓出来 {0} px 宽" -f $fullW)
+    Write-Output ("  只改区域、不重启     → 抓出来 {0} px 宽（新区域是 {1} px）" -f $regionW, $probeW)
+    if ($fullW -le 0 -or $regionW -le 0) {
+      Write-Output '  判定：⚠ 测不出来（抓不到屏：黑屏 / 锁屏 / 远程会话）'
+    } elseif ($regionW -eq $probeW) {
+      Write-Output '  判定：✔ 区域改了立刻生效（老行为：这里会是整屏宽度，得重启才变）'
+    } elseif ($regionW -eq $fullW) {
+      Write-Output '  判定：✘ 还是整屏宽度 —— runspace 没重建，新区域根本没生效'
+    } else {
+      Write-Output ("  判定：✘ 宽度不对（期望 {0}，实际 {1}）" -f $probeW, $regionW)
+    }
+  } finally {
+    # 自检用的假区域不许留在配置里（这里只改内存没写盘，但仍要还回去，顺便重建 runspace）
+    $cfg.region = $regionBefore
+    try { Sync-CaptureRegion } catch { }
+  }
   Write-Output '=== 6. 朗读（TTS）==='
   # -Check 只列音色，不出声（自检不该在半夜突然开口）。
   [void](Initialize-Tts -Config $cfg)
@@ -4737,7 +4815,7 @@ function Select-MonitorRegion {
   $x = $wa.X + $sel.X; $y = $wa.Y + $sel.Y
   $cfg.region = [pscustomobject]@{ x = $x; y = $y; w = $sel.Width; h = $sel.Height }
   Save-PetConfig
-  $script:shots.Clear()
+  Sync-CaptureRegion
   Add-Interaction 'region_set' "$x,$y,$($sel.Width)x$($sel.Height)"
   $pet.ShowMessage("监控区域已设为 $($sel.Width)x$($sel.Height)`n以后只截图这一块（省 token，也更私密）。", [int]$cfg.showSeconds)
 }
@@ -4745,7 +4823,7 @@ function Select-MonitorRegion {
 function Clear-MonitorRegion {
   $cfg.region = $null
   Save-PetConfig
-  $script:shots.Clear()
+  Sync-CaptureRegion
   Add-Interaction 'region_clear'
   $pet.ShowMessage('监控区域已取消，恢复抓整个屏幕。', [int]$cfg.showSeconds)
 }
@@ -4824,8 +4902,11 @@ function Apply-PetConfigLive {
       if (Test-Path -LiteralPath $src) { Copy-Item -LiteralPath $src -Destination (Join-Path $PSScriptRoot 'system-prompt.txt') -Force }
     } catch { }
   }
-  # 监控区域或任务规则表变了 → 之前攒的截图/任务档判据都过期了
-  if ($Changed -contains 'region' -or $Changed -contains 'taskRules') { try { $script:shots.Clear() } catch { } }
+  # 任务规则表变了 → 之前攒的截图/任务档判据都过期了（顺带清环，反正马上会重新抓）
+  if ($Changed -contains 'taskRules') { try { $script:shots.Clear() } catch { } }
+  # 区域变了要的不只是清环 —— 还得重建抓屏 runspace，否则新区域要等重启才生效。
+  # 这里必须调 Sync-CaptureRegion 而不是自己写 shots.Clear()：理由见它头上那段注释。
+  if ($Changed -contains 'region') { try { Sync-CaptureRegion } catch { } }
 }
 
 # 供应商表：key 写到哪里、有什么用。参考那类"路径 + 供应商表"的做法，但只留我们真会读的三个。
@@ -4958,7 +5039,7 @@ function Set-WatchFromAgent {
   param([string]$Target, [switch]$Quiet)
   if ([string]::IsNullOrWhiteSpace($Target)) { return $false }
   if ($Target -match '^(full|fullscreen|全屏|全部|整个屏幕)$') {
-    $cfg.region = $null; Save-PetConfig; $script:shots.Clear()
+    $cfg.region = $null; Save-PetConfig; Sync-CaptureRegion
     Add-Interaction 'watch_agent' 'full'
     if (-not $Quiet) { $pet.ShowMessage('（它把监控范围调回整屏了）', [int]$cfg.showSeconds) }
     return $true
@@ -4979,7 +5060,7 @@ function Set-WatchFromAgent {
   if (-not $best) { return $false }
   $cfg.region = [pscustomobject]@{ x = [int]$best[0]; y = [int]$best[1]; w = [int]$best[2]; h = [int]$best[3] }
   Save-PetConfig
-  $script:shots.Clear()
+  Sync-CaptureRegion
   Add-Interaction 'watch_agent' "$key -> $($best -join ',')"
   if (-not $Quiet) { $pet.ShowMessage("它把监控范围收到「$key」这个窗口了。", [int]$cfg.showSeconds) }
   return $true
