@@ -20,7 +20,8 @@
 
 param(
   [Parameter(Mandatory = $false, Position = 0)][string]$PayloadPath,
-  [switch]$Check
+  [switch]$Check,
+  [switch]$Brief
 )
 
 $ErrorActionPreference = 'Stop'
@@ -92,6 +93,105 @@ if ($Check) {
     Write-Output "FAIL  $($_.Exception.Message)"
     if ($_.ErrorDetails.Message) { Write-Output $_.ErrorDetails.Message }
   }
+  exit 0
+}
+
+# ---------------------------------------------------------------------------
+# -Brief：任务改写模式（桌宠**派活前**先过这一道）
+#
+# 为什么要有：派给执行 agent 的只有用户那句话，而执行 agent **看不到屏幕**——
+#   「把那个窗口关掉」里的「那个」它无从得知。主 agent 看得见，所以让它把指代
+#   换成具体信息，并决定要不要把当前这一屏的截图一起交过去。
+#
+# 输入：arg1 = payload.json 路径（当前观察）；run\task-raw.txt = 用户原话
+# 输出：第一行 SHOT: yes|no；第二行起是改写后的任务书
+# ---------------------------------------------------------------------------
+if ($Brief) {
+  $rawFile = Join-Path $dgHome 'run\task-raw.txt'
+  $raw = ''
+  if (Test-Path -LiteralPath $rawFile) { $raw = (Get-Content -LiteralPath $rawFile -Raw -Encoding UTF8).Trim() }
+  if ([string]::IsNullOrWhiteSpace($raw)) { Write-Output 'SHOT: no'; Write-Output '（没拿到用户原话）'; exit 0 }
+
+  $obs = New-Object System.Collections.ArrayList
+  if ($PayloadPath -and (Test-Path -LiteralPath $PayloadPath)) {
+    try {
+      $bp = Get-Content -LiteralPath $PayloadPath -Raw -Encoding UTF8 | ConvertFrom-Json
+      [void]$obs.Add("前台窗口：$($bp.current.process)《$($bp.current.title)》，已停留 $(Format-Duration -Seconds $bp.current.inWindowS)")
+      if ($bp.timeline -and @($bp.timeline).Count -gt 0) {
+        [void]$obs.Add('最近的窗口轨迹（从早到晚）：')
+        foreach ($t in @($bp.timeline)) {
+          [void]$obs.Add("  - $($t.process)《$($t.title)》停留 $(Format-Duration -Seconds $t.seconds)")
+        }
+      }
+      if ($bp.screen) { [void]$obs.Add("画面静止 $($bp.screen.stillSeconds) 秒") }
+      if ($bp.human) { [void]$obs.Add("距上次键鼠输入 $($bp.human.idleSeconds) 秒") }
+    } catch { }
+  }
+
+  $bsys = @'
+你是「随时指导」桌宠的主 agent。用户刚对桌宠说了一句话，桌宠要把它派给一个**执行 agent**去做。
+那个执行 agent 在一个工作区里动手干活，但它**看不到用户的屏幕**——没有截图、没有窗口焦点、没有操作轨迹。
+
+你的任务：把用户原话改写成**给执行 agent 的任务书**。
+
+规则：
+- 「那个」「这个」「刚才那个文件」「上面那个报错」这类指代，凡是能从下面的屏幕信息里确定的，必须换成具体信息（窗口标题、进程名、文件路径、报错原文）。
+- 确定不了的**不要瞎猜**：保留原来的说法，并在任务书里明说"用户指的可能是 X，若不对先停下问一句"。
+- 如果这件事本来就跟屏幕无关（例如"把这份表格按月拆开"），保持原意，不要硬塞屏幕信息、不要扩写用户没让你做的事。
+- 不要替用户改主意，不要加动作，不要客套。
+
+输出格式（严格两行起）：
+第一行：只剩 SHOT: yes 或 SHOT: no —— 执行 agent 是否需要看**当前这一屏**的截图（只有你说 yes，桌宠才会把图给它）
+第二行开始：改写后的任务书本身（纯文本，不要 Markdown，不要用星号/井号/反引号）
+'@
+
+  $bline = New-Object System.Collections.ArrayList
+  [void]$bline.Add("用户原话：")
+  [void]$bline.Add($raw)
+  [void]$bline.Add('')
+  [void]$bline.Add('此刻的屏幕（只有你看得见）：')
+  if ($obs.Count -gt 0) { foreach ($l in $obs) { [void]$bline.Add($l) } }
+  else { [void]$bline.Add('（这一轮没有可用的屏幕信息）') }
+
+  $bcontent = New-Object System.Collections.ArrayList
+  [void]$bcontent.Add(@{ type = 'text'; text = ($bline -join "`n") })
+  if ($useVision) {
+    foreach ($shot in @($bp.shots | Select-Object -Last 2)) {
+      if ([string]::IsNullOrWhiteSpace($shot)) { continue }
+      [void]$bcontent.Add(@{ type = 'image_url'; image_url = @{ url = "data:image/jpeg;base64,$shot" } })
+    }
+  }
+
+  $bbody = @{
+    model      = $model
+    max_tokens = 800
+    messages   = @(
+      @{ role = 'system'; content = $bsys }
+      @{ role = 'user'; content = @($bcontent) }
+    )
+  } | ConvertTo-Json -Depth 14 -Compress
+
+  try {
+    $br = Invoke-RestMethod -Uri "$baseUrl/chat/completions" -Method Post -Headers $headers -Body $bbody -TimeoutSec 90
+  } catch {
+    $d = ''
+    if ($_.ErrorDetails.Message) { $d = ' ' + ($_.ErrorDetails.Message -replace '\s+', ' ') }
+    Write-Output 'SHOT: no'
+    Write-Output "（任务改写失败，按原话派活：$($_.Exception.Message)$d）"
+    exit 0
+  }
+  $bt = ''
+  if ($br.choices -and $br.choices[0].message.content) { $bt = [string]$br.choices[0].message.content }
+  $bt = $bt.Trim()
+  if ([string]::IsNullOrWhiteSpace($bt)) { Write-Output 'SHOT: no'; Write-Output $raw; exit 0 }
+
+  $brows = @($bt -split "`r?`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' })
+  $shotLine = ($brows | Where-Object { $_ -match '^SHOT[:：]' } | Select-Object -First 1)
+  $shotYes = ($shotLine -match 'yes|是|1|true')
+  $body = @($brows | Where-Object { $_ -notmatch '^SHOT[:：]' }) -join "`n"
+  if ([string]::IsNullOrWhiteSpace($body)) { $body = $raw }
+  Write-Output ('SHOT: ' + $(if ($shotYes) { 'yes' } else { 'no' }))
+  Write-Output $body
   exit 0
 }
 

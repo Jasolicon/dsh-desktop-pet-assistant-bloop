@@ -2122,6 +2122,12 @@ $defaults = [ordered]@{
   # 的纯启动开销（实测 1.2–1.8 秒/次）。提示词实现仍是 advisor-core.ps1，和命令式同源。
   # 只在 advisor 指向 advisor-dsh.ps1 时生效；任何一步失败都会当场退回命令式。
   advisorInline         = $true
+  # 派活前让主 agent 过一道（见 Get-TaskBriefing 的注释）：
+  #   执行 agent 看不到屏幕，「把那个窗口关掉」里的「那个」它无从得知 ——
+  #   主 agent 看得见，由它把指代换成具体信息，并决定要不要把这一屏的截图一起交过去。
+  taskBrief             = $true
+  taskBriefCommand      = 'pwsh -NoProfile -ExecutionPolicy Bypass -File "{root}\advisor-openai.ps1" -Brief'
+  taskBriefTimeoutSeconds = 25
   # 大脑来源：dsh | openai | ollama | custom。它不是运行时开关，而是**设置窗口的翻译层** ——
   # 选了它就会把下面 advisor / advisorFast 两行改写成对应脚本（见 settings-window.ps1 的 Resolve-DgBrainCommands）。
   brainKind             = 'dsh'
@@ -5403,11 +5409,98 @@ function New-TaskTextFromDrop {
   return ($parts -join "`n")
 }
 
+function Get-TaskBriefing {
+  <#
+    派活前让主 agent 过一道 —— 因为**执行 agent 看不见屏幕**。
+
+    它拿到的是纯文本任务：没有截图、没有前台窗口、没有操作轨迹。所以「把那个窗口关掉」
+    里的「那个」它只能猜。主 agent（这条快路带视觉）看得见，由它把指代换成具体信息
+    （窗口标题 / 进程名 / 报错原文），并决定要不要把**这一屏的截图**一起交过去。
+
+    约定（advisor 契约的延伸）：
+      · 命令 = config 的 taskBriefCommand（默认 advisor-openai.ps1 -Brief）
+      · 输入：arg1 = run\payload.json（当前观察）；run\task-raw.txt = 用户原话
+      · 输出：第 1 行 SHOT: yes|no；第 2 行起是改写后的任务书
+
+    任何失败（没配命令 / 超时 / 输出看不懂）都**按原话派活** —— 派活不能被这道工序卡死。
+  #>
+  param([string]$Task)
+
+  $fallback = [pscustomobject]@{ Text = $Task; Shot = $false; Note = 'off' }
+  if (-not $cfg.taskBrief) { return $fallback }
+  $briefCmd = Expand-DgTokens ([string]$cfg.taskBriefCommand)
+  if ([string]::IsNullOrWhiteSpace($briefCmd)) { $fallback.Note = 'no-command'; return $fallback }
+
+  # 当前观察写成 payload（命令读它）；用户原话写进文件（走命令行会被引号拆碎）
+  try {
+    $bp = Build-Payload
+    ($bp | ConvertTo-Json -Depth 6 -Compress) | Set-Content -LiteralPath $payloadPath -Encoding UTF8
+    [System.IO.File]::WriteAllText((Join-Path $runDir 'task-raw.txt'), $Task, [System.Text.UTF8Encoding]::new($false))
+  } catch {
+    $fallback.Note = 'prep-failed'; return $fallback
+  }
+
+  $bOut = Join-Path $runDir 'task-brief.out.txt'
+  $bErr = Join-Path $runDir 'task-brief.err.txt'
+  foreach ($f in @($bOut, $bErr)) {
+    if (Test-Path -LiteralPath $f) { Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue }
+  }
+
+  $t0 = Get-Date
+  try {
+    $proc = Start-Process -FilePath 'cmd.exe' `
+      -ArgumentList '/c', ('{0} "{1}"' -f $briefCmd, $payloadPath) `
+      -NoNewWindow -PassThru -RedirectStandardOutput $bOut -RedirectStandardError $bErr
+    $timeout = [int]$(if ($cfg.taskBriefTimeoutSeconds) { $cfg.taskBriefTimeoutSeconds } else { 25 })
+    if (-not $proc.WaitForExit($timeout * 1000)) {
+      try { $proc.Kill() } catch { }
+      Add-Interaction 'task_brief' "timeout ${timeout}s"
+      $fallback.Note = 'timeout'; return $fallback
+    }
+  } catch {
+    Add-Interaction 'task_brief' ('error: ' + $_.Exception.Message)
+    $fallback.Note = 'error'; return $fallback
+  }
+
+  $lines = @(Get-Content -LiteralPath $bOut -Encoding UTF8 -ErrorAction SilentlyContinue)
+  if ($lines.Count -eq 0) { Add-Interaction 'task_brief' 'empty'; $fallback.Note = 'empty'; return $fallback }
+  $shot = ([string]$lines[0] -match 'SHOT[:：]\s*yes')
+  $body = @($lines | Select-Object -Skip 1) -join "`n"
+  # 任务书本身也过一遍纯文本清洗（气泡/提示词都不渲染 Markdown）
+  if (Get-Command ConvertTo-PlainText -ErrorAction SilentlyContinue) { $body = ConvertTo-PlainText $body }
+  $body = $body.Trim()
+  if ([string]::IsNullOrWhiteSpace($body)) { Add-Interaction 'task_brief' 'empty-body'; $fallback.Note = 'empty-body'; return $fallback }
+
+  Add-Interaction 'task_brief' ("{0}ms｜shot={1}｜{2} 字" -f `
+      [int]((Get-Date) - $t0).TotalMilliseconds, $shot, $body.Length)
+  return [pscustomobject]@{ Text = $body; Shot = $shot; Note = 'ok' }
+}
+
 function Start-PetTask {
   <# 把一句自然语言（或一串文件）变成一次后台 agent 任务。 #>
   param([string]$Task, $Model = $null)
   if ([string]::IsNullOrWhiteSpace($Task)) { return }
   if (-not $script:AgentCfg) { $pet.ShowMessage('agent 引擎没加载，做不了。', 8); return }
+
+  # ---- 派活前让主 agent 过一道：它看得见屏幕，而执行 agent 看不见（见 Get-TaskBriefing）----
+  # 注意这段是**同步**的（会在 UI 线程上跑 3–5 秒），所以先把气泡立起来再跑 ——
+  # 否则用户说完话会看到界面僵住、一点反馈都没有。（把它挪进 runspace 记在「待优化清单」里。）
+  if ($cfg.taskBrief) { try { $pet.ShowMessage('正在把这句话整理成任务…', 0) } catch { } }
+  try {
+    $brief = Get-TaskBriefing -Task $Task
+    $Task = [string]$brief.Text
+    if ($brief.Shot) {
+      # 它说执行 agent 需要看这一屏 → 把最新一张截图落盘，把路径写进任务书。
+      # 执行 agent 有 read_image，给路径它就能自己看；没有这一步它永远看不到屏幕。
+      $lastShot = @($script:shots | Select-Object -Last 1)
+      if ($lastShot.Count -gt 0) {
+        $img = Join-Path $runDir ('shots\task-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.jpg')
+        [System.IO.File]::WriteAllBytes($img, [Convert]::FromBase64String([string]$lastShot[0].jpegBase64))
+        $Task += "`n`n【桌宠附上的一屏截图】$img`n（这是用户派活那一刻的屏幕。需要就用 read_image 看它；看不到就直说看不到，不要猜。）"
+      }
+    }
+  } catch { }
+
   try {
     if (-not $Model) {
       $want = [string]$cfg.petTaskModel
