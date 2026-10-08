@@ -272,13 +272,20 @@ namespace DesktopGuide {
       return h == IntPtr.Zero ? 0L : h.ToInt64();
     }
 
-    // 列出可见的顶层窗口（标题 + 矩形），用来把 agent 说的"盯这个窗口"解析成真实坐标。
+    // 列出可见的顶层窗口（标题 + 矩形 + 窗口句柄），用来把 agent 说的"盯这个窗口"解析成真实坐标。
     [StructLayout(LayoutKind.Sequential)] public struct RECT { public int L, T, R, B; }
     [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc cb, IntPtr p);
     [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
     [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out RECT r);
     [DllImport("user32.dll")] static extern int GetWindowLong(IntPtr h, int i);
+    [DllImport("user32.dll")] static extern bool IsWindow(IntPtr h);
     delegate bool EnumProc(IntPtr h, IntPtr p);
+    // 这个窗口句柄还在不在。用途：agent 的"临时盯某个窗口"在窗口关掉后要自动作废 ——
+    // 不查的话覆盖层会一直指着一个已经不存在的窗口的矩形，抓出来是它背后的东西。
+    public static bool IsWindowAlive(long hwnd) {
+      if (hwnd == 0) return false;
+      try { return IsWindow(new IntPtr(hwnd)); } catch { return false; }
+    }
     // 距上次键鼠输入过了多久（毫秒）。Windows 自己就在算这个 —— 免费的 AFK 探测器。
     // 有了它才能把「等程序跑完」和「人不在」分开：前者画面可能在动但人没动，后者两者都静止。
     [StructLayout(LayoutKind.Sequential)] public struct LASTINPUTINFO { public uint cbSize; public uint dwTime; }
@@ -320,7 +327,7 @@ namespace DesktopGuide {
         GetWindowText(h, sb, 300);
         var title = sb.ToString();
         if (title.Length == 0) return true;
-        list.Add(title + "\u0001" + r.L + "," + r.T + "," + (r.R - r.L) + "," + (r.B - r.T));
+        list.Add(title + "\u0001" + r.L + "," + r.T + "," + (r.R - r.L) + "," + (r.B - r.T) + "\u0001" + h.ToInt64());
         return true;
       }, IntPtr.Zero);
       return (string[])list.ToArray(typeof(string));
@@ -2494,8 +2501,10 @@ function Reset-CaptureRunspace {
       $sw.Stop()
       [pscustomobject]@{ jpeg = $b64; ms = $sw.ElapsedMilliseconds; fp = [DesktopGuide.Capture]::LastFingerprint }
     }).AddArgument([int]$cfg.screenshotMaxWidth).AddArgument([long]$cfg.jpegQuality)
-  if ($cfg.region -and $cfg.region.w) {
-    $null = $ps.AddArgument([int]$cfg.region.x).AddArgument([int]$cfg.region.y).AddArgument([int]$cfg.region.w).AddArgument([int]$cfg.region.h)
+  # 用**生效区域**（覆盖层 → 用户层 → 整屏），不是裸的 $cfg.region —— 两层分开之后这里最容易写错
+  $eff = Get-EffectiveRegion
+  if ($eff) {
+    $null = $ps.AddArgument([int]$eff.x).AddArgument([int]$eff.y).AddArgument([int]$eff.w).AddArgument([int]$eff.h)
   } else {
     $null = $ps.AddArgument(0).AddArgument(0).AddArgument(0).AddArgument(0)
   }
@@ -2515,6 +2524,93 @@ function Sync-CaptureRegion {
      它**不写盘** —— 存 config 由调用方自己 Save-PetConfig（设置窗口那条路已经存过了）。 #>
   try { $script:shots.Clear() } catch { }
   try { Reset-CaptureRunspace } catch { }
+}
+
+# ---------------------------------------------------------------------------
+# 监控区域分两层：用户的意见 / agent 的临时覆盖
+#
+# 为什么拆：原来一个 $cfg.region 干两件事 —— 用户框选和 agent 的 WATCH 都往它里面写、都落盘。
+# 于是 agent 回一句 "WATCH: Codex"，用户手选的那块在**磁盘上**就没了（取消、重启都回不去），
+# 而且 agent 这条路是 -Quiet 的，连气泡都不弹（只在日志里留一行）—— 用户完全无感。
+# 分法和 config.taskRules（部署方的意见）对 task-samples.json（观察到的现实）是同一个原则：
+# 谁写谁那一份，互不覆盖。
+# ---------------------------------------------------------------------------
+$script:autoRegion = $null          # 覆盖层：agent 的 WATCH /（以后）自动跟随。**只在内存里**，不落盘。
+$script:autoRegionNote = ''         # 最近一次覆盖层"为什么没上 / 为什么没了"（自检与排查用）
+# 覆盖层能不能盖过用户手选的区域。写死 $false = **用户优先**：框选是显式动作，气泡里还明说了"更私密"。
+# 要反过来（agent 优先）等下一步把它变成开关 watchOverridesRegion。
+$script:watchOverridesUserRegion = $false
+# 覆盖层最长活多久（秒），0 = 不设限。盯的窗口关掉会立刻作废，这个只是兜底：
+# 防止盯上一个一直不关的窗口之后再也不撒手。
+$script:watchTtlSeconds = 1800
+
+function Clear-AutoRegion {
+  <# 撤掉覆盖层。返回"原来有没有" —— 没有的话调用方连抓屏都不用重建。 #>
+  param([string]$Why = '')
+  if (-not $script:autoRegion) { return $false }
+  $script:autoRegion = $null
+  $script:autoRegionNote = $Why
+  try { Add-Interaction 'auto_region_off' $Why } catch { }
+  return $true
+}
+
+function Set-AutoRegion {
+  <# agent（以后还有自动跟随）要盯某一块。**用户优先**：用户已经手选了区域就不许盖，返回 $false，
+     调用方据此记一条"被挡住"——别像老实现那样静默覆盖。
+     成功时只写内存：$cfg.region 一个字都不动，也就不会被 Save-PetConfig 带进 config.json。 #>
+  param([int]$X, [int]$Y, [int]$W, [int]$H, [string]$Source = 'watch', [long]$Owner = 0, [string]$Label = '')
+  if ($cfg.region -and $cfg.region.w -and -not $script:watchOverridesUserRegion) {
+    $script:autoRegionNote = '被用户手选的区域挡住（用户优先）'
+    return $false
+  }
+  $script:autoRegion = [pscustomobject]@{
+    x = $X; y = $Y; w = $W; h = $H
+    source = $Source; owner = $Owner; label = $Label; at = (Get-Date).ToString('o')
+  }
+  $script:autoRegionNote = ''
+  # 覆盖层上了就得让抓屏跟上 —— 放在这里而不是让调用方自己记得调：
+  # 忘了调 = 又变成"改了不生效"，而那正是这一轮刚修掉的坑。
+  Sync-CaptureRegion
+  return $true
+}
+
+function Test-AutoRegionExpired {
+  <# 覆盖层该不该作废：盯的窗口关掉了、或者活太久了。每拍调一次，所以必须便宜。 #>
+  if (-not $script:autoRegion) { return $false }
+  $owner = [long]$script:autoRegion.owner
+  if ($owner -gt 0) {
+    $alive = $true
+    try { $alive = [DesktopGuide.Native]::IsWindowAlive($owner) } catch { }
+    if (-not $alive) { return $true }
+  }
+  if ([double]$script:watchTtlSeconds -gt 0) {
+    try {
+      if (((Get-Date) - [datetime]$script:autoRegion.at).TotalSeconds -ge [double]$script:watchTtlSeconds) { return $true }
+    } catch { }
+  }
+  return $false
+}
+
+function Get-EffectiveRegion {
+  <# 这一拍到底该抓哪一块：覆盖层（若允许）→ 用户层（$cfg.region）→ $null = 整屏。
+     顺手把过期的覆盖层丢掉（窗口关了 / 活太久）。 #>
+  if ($script:autoRegion -and (Test-AutoRegionExpired)) { [void](Clear-AutoRegion -Why '过期（盯的窗口关了或超时）') }
+  if ($script:autoRegion -and ($script:watchOverridesUserRegion -or -not ($cfg.region -and $cfg.region.w))) {
+    return $script:autoRegion
+  }
+  if ($cfg.region -and $cfg.region.w) { return $cfg.region }
+  return $null
+}
+
+function Set-UserRegion {
+  <# 用户**显式**改监控区域（右键框选 / 取消框选 / 设置窗口里清除）：写用户层、落盘，
+     并顺手作废 agent 的临时覆盖 —— 用户一动手，那个临时的就不该再压着。
+     $Region = $null 表示回整屏。 -NoSave 给"调用方已经存过盘"的路（设置窗口）。 #>
+  param($Region, [switch]$NoSave)
+  $cfg.region = $Region
+  if (-not $NoSave) { Save-PetConfig }
+  [void](Clear-AutoRegion -Why '用户改了监控区域')
+  Sync-CaptureRegion
 }
 
 function Start-BackgroundCapture {
@@ -2823,6 +2919,12 @@ function Sample-Once {
   # 暂停同理 —— 这里再挡一道，是因为"暂停"是靠停定时器实现的，而在飞的那一拍 Tick 照样会跑
   # （实测：暂停着启动时还会记一条 task + 一条 judge_skip）。多这一道闸，暂停就真的什么都不做。
   if ($script:standby -or $script:paused) { return }
+  # 覆盖层（agent 的 WATCH）盯着的那个窗口可能已经关了 —— 每拍便宜地核一眼，失效就撤掉并重建抓屏。
+  # 不查的话会一直指着一个不存在的窗口的矩形，抓出来的是它背后的东西，而且没人知道原因。
+  if ($script:autoRegion -and (Test-AutoRegionExpired)) {
+    [void](Clear-AutoRegion -Why '盯的窗口关了或超时')
+    try { Sync-CaptureRegion } catch { }
+  }
   $fgPid = [DesktopGuide.Native]::ForegroundPid()
   $title = [DesktopGuide.Native]::ForegroundTitle()
   $proc = Get-ProcessNameSafe -ProcessId $fgPid
@@ -3578,6 +3680,67 @@ function Read-AgentTask {
   }
 }
 
+# 设置改完要写回 config.json。
+# ⚠️ 和 Set-WatchFromAgent 同样的位置约束：5aa 那段自检要经过 Set-UserRegion → 这里，
+#    所以必须定义在 `if ($SelfTest) {` 之前。
+function Save-PetConfig {
+  try { ($cfg | ConvertTo-Json -Depth 6) | Set-Content -LiteralPath $Config -Encoding UTF8 } catch { }
+}
+
+# ---------------------------------------------------------------------------
+# agent 说"盯这个窗口" → 解析成真实矩形（回复里那行 WATCH: ）
+#
+# ⚠️ 定义位置有约束：`if ($SelfTest)` 是**顶层代码**、按顺序执行，5aa 那段自检要能调到它，
+#    所以它必须定义在 `if ($SelfTest) {` **之前** —— 挪到后面前面，自检里会报 "not recognized"。
+#    （同一个坑 5j 那边踩过，见那边的注释。）
+# ---------------------------------------------------------------------------
+function Set-WatchFromAgent {
+  <# agent 在回复里写的一行 "WATCH: <窗口关键词|full>"。
+     **它只能动覆盖层**（内存），不许碰用户手选的那份 $cfg.region：
+     老实现是 `$cfg.region = ...; Save-PetConfig`，等于 agent 一开口就把用户框的那块从磁盘上抹了，
+     而且 -Quiet 连气泡都不弹 —— 用户完全无感。 #>
+  param([string]$Target, [switch]$Quiet)
+  if ([string]::IsNullOrWhiteSpace($Target)) { return $false }
+  if ($Target -match '^(full|fullscreen|全屏|全部|整个屏幕)$') {
+    # 只撤覆盖层。"我不管了" != "把用户框的那块也删了"（老行为就是后者）。
+    $had = Clear-AutoRegion -Why 'agent 说不盯了（full）'
+    if ($had) { Sync-CaptureRegion }
+    Add-Interaction 'watch_agent' $(if ($had) { 'full' } else { 'full（本来就没在盯窗口）' })
+    if (-not $Quiet) {
+      $back = if ($cfg.region -and $cfg.region.w) { "回到你框的那块（$($cfg.region.w)×$($cfg.region.h)）" } else { '回到整屏' }
+      $pet.ShowMessage("（它不盯某个窗口了，$back）", [int]$cfg.showSeconds)
+    }
+    return $true
+  }
+  $key = ($Target -replace '^["「『]|["」』]$', '').Trim()
+  $wins = [DesktopGuide.Native]::ListWindows()
+  $best = $null; $bestArea = 0; $bestHwnd = [long]0
+  foreach ($w in $wins) {
+    $parts = $w -split "`u{0001}"
+    if ($parts.Count -lt 2) { continue }
+    if ($parts[0] -notlike "*$key*") { continue }
+    if ($parts[0] -like '*随时指导*' -or $parts[0] -like '*DesktopGuide*') { continue }   # 别盯我们自己
+    $r = $parts[1] -split ','
+    if ($r.Count -ne 4) { continue }
+    $area = [int]$r[2] * [int]$r[3]
+    if ($area -gt $bestArea) {
+      $bestArea = $area; $best = $r
+      $bestHwnd = if ($parts.Count -ge 3) { try { [long]$parts[2] } catch { [long]0 } } else { [long]0 }
+    }
+  }
+  if (-not $best) { return $false }
+  if (-not (Set-AutoRegion -X ([int]$best[0]) -Y ([int]$best[1]) -W ([int]$best[2]) -H ([int]$best[3]) `
+        -Source 'watch' -Owner $bestHwnd -Label $key)) {
+    # 用户已经手选了区域 → 不许盖。**必须留痕**：老实现的静默覆盖是查不出来的。
+    Add-Interaction 'watch_agent_blocked' "$key（你已经手选了监控区域，按你的来）"
+    if (-not $Quiet) { $pet.ShowMessage("它想盯「$key」，但你已经框选过监控区域了 —— 没换。", [int]$cfg.showSeconds) }
+    return $false
+  }
+  Add-Interaction 'watch_agent' "$key -> $($best -join ',')"
+  if (-not $Quiet) { $pet.ShowMessage("它把监控范围收到「$key」这个窗口了（临时的，你框的区域还留着）。", [int]$cfg.showSeconds) }
+  return $true
+}
+
 if ($SelfTest) {
   Write-Output '=== 1. 前台窗口 ==='
   $fgPid = [DesktopGuide.Native]::ForegroundPid()
@@ -4254,6 +4417,30 @@ $probe3 = New-Object DesktopGuide.PetForm -ArgumentList @([double]$script:UiScal
     if ($probeSelf) { try { $probeSelf.Close() } catch { }; try { $probeSelf.Dispose() } catch { } }
     [DesktopGuide.Capture]::SelfRect = [System.Drawing.Rectangle]::Empty
   }
+  # 5z / 5aa 共用这两件：走**真实的抓屏 runspace**（不是直接调 Capture）抓一张，把图宽解出来 ——
+  # 要钉的正是 runspace 里那份区域参数跟没跟着变，直接调 Capture 是绕过去的，测不出来。
+  $grabViaRunspace = {
+    Start-BackgroundCapture
+    $deadline = (Get-Date).AddSeconds(5)
+    while ((Get-Date) -lt $deadline) {
+      $r = Complete-BackgroundCapture
+      if ($r) { return $r }
+      Start-Sleep -Milliseconds 25
+    }
+    return $null
+  }
+  $jpegWidthOf = {
+    param($res)
+    if (-not $res -or -not $res.jpeg) { return -1 }
+    try {
+      $bytes = [Convert]::FromBase64String($res.jpeg)
+      $ms = [System.IO.MemoryStream]::new($bytes)
+      $img = [System.Drawing.Image]::FromStream($ms)
+      $wd = $img.Width
+      $img.Dispose(); $ms.Dispose()
+      return $wd
+    } catch { return -2 }
+  }
   Write-Output '=== 5z. 监控区域改了立刻生效（不用重启）==='
   # 复现手法：**先把抓屏 runspace 建起来（这时候是整屏）**，再像用户框选那样只改区域，立刻抓一张量像素宽。
   # 老行为：区域参数是建 runspace 时固定的，改区域只清了截图环、没重建 ——
@@ -4262,30 +4449,6 @@ $probe3 = New-Object DesktopGuide.PetForm -ArgumentList @([double]$script:UiScal
   $regionBefore = $cfg.region
   try {
     $probeW = 600; $probeH = 400
-    # 走真实的抓屏 runspace（不是直接调 Capture）—— 要钉住的正是 runspace 里那份区域参数跟没跟着改
-    $grabViaRunspace = {
-      Start-BackgroundCapture
-      $deadline = (Get-Date).AddSeconds(5)
-      while ((Get-Date) -lt $deadline) {
-        $r = Complete-BackgroundCapture
-        if ($r) { return $r }
-        Start-Sleep -Milliseconds 25
-      }
-      return $null
-    }
-    $jpegWidthOf = {
-      param($res)
-      if (-not $res -or -not $res.jpeg) { return -1 }
-      try {
-        $bytes = [Convert]::FromBase64String($res.jpeg)
-        $ms = [System.IO.MemoryStream]::new($bytes)
-        $img = [System.Drawing.Image]::FromStream($ms)
-        $wd = $img.Width
-        $img.Dispose(); $ms.Dispose()
-        return $wd
-      } catch { return -2 }
-    }
-
     # ① 整屏状态下先建好 runspace —— 这正是出 bug 的现场：runspace 早就在了
     $cfg.region = $null
     try { Reset-CaptureRunspace } catch { }
@@ -4310,6 +4473,79 @@ $probe3 = New-Object DesktopGuide.PetForm -ArgumentList @([double]$script:UiScal
   } finally {
     # 自检用的假区域不许留在配置里（这里只改内存没写盘，但仍要还回去，顺便重建 runspace）
     $cfg.region = $regionBefore
+    try { Sync-CaptureRegion } catch { }
+  }
+  Write-Output '=== 5aa. 监控区域分两层：agent 那份碰不到用户那份 ==='
+  # 要钉三件事（都是老实现的真实行为）：
+  #   ① agent 的 WATCH 只写内存覆盖层，**一个字节都不写盘**（老：直接盖 $cfg.region + Save-PetConfig）
+  #   ② 用户已经框了区域时，agent 的覆盖**盖不过**（用户优先），而且被挡要留痕
+  #   ③ WATCH: full 只撤覆盖层，不删用户那份（老：把用户框的一起清掉并落盘）
+  # "有没有写盘"要做成可断言的事实、而不是推理：把 Save-PetConfig 和 interactions 日志的落点
+  # 临时指到自检专用文件，只有 agent 那一小段跑完，看它们有没有被创建。
+  $regionBefore2 = $cfg.region
+  $autoBefore = $script:autoRegion
+  $cfgPathBefore = $Config
+  $interPathBefore = $interactionPath
+  $tmpCfg = Join-Path $runDir 'region-selftest.json'
+  $tmpInter = Join-Path $runDir 'region-selftest.jsonl'
+  Remove-Item -LiteralPath $tmpCfg, $tmpInter -Force -ErrorAction SilentlyContinue
+  try {
+    $Config = $tmpCfg
+    $interactionPath = $tmpInter
+
+    # ① 用户先框了一块 600 宽（自检只在内存里设，不去动真正的 config.json）
+    $cfg.region = [pscustomobject]@{ x = 0; y = 0; w = 600; h = 400 }
+    [void](Clear-AutoRegion -Why '自检准备')
+    Sync-CaptureRegion
+
+    # ② agent 想盯一块 800 宽的 → 用户优先，挡下；再喊一声 full → 本来就没什么可撤。
+    #    这一整段都不该产生任何写盘（老实现这两句都会 Save-PetConfig）。
+    $blocked = -not (Set-AutoRegion -X 0 -Y 0 -W 800 -H 500 -Source 'watch' -Owner 0 -Label '自检')
+    [void](Set-WatchFromAgent -Target 'full' -Quiet)
+    $agentWrote = Test-Path -LiteralPath $tmpCfg
+    $eff1 = Get-EffectiveRegion
+    $w1 = & $jpegWidthOf (& $grabViaRunspace)
+
+    # ③ 用户没框过 → 覆盖层才是生效那份（抓出来要真的变成 800 宽，不只是变量对）
+    $cfg.region = $null
+    Sync-CaptureRegion
+    $ok = Set-AutoRegion -X 0 -Y 0 -W 800 -H 500 -Source 'watch' -Owner 0 -Label '自检'
+    $eff2 = Get-EffectiveRegion
+    $w2 = & $jpegWidthOf (& $grabViaRunspace)
+
+    # ④ 覆盖生效时用户重新框一次（走真实函数）→ 覆盖层当场作废，回到"按我框的来"
+    Set-UserRegion -Region ([pscustomobject]@{ x = 0; y = 0; w = 600; h = 400 })
+    $autoGone = ($null -eq $script:autoRegion)
+    $eff3 = Get-EffectiveRegion
+
+    # ⑤ WATCH: full 只撤覆盖层，不许碰用户那份。
+    #    默认策略下"用户层 + 覆盖层"并存不了（框选会清覆盖、覆盖会被用户层挡下），
+    #    所以这里直接造出那个状态来测这个分支 —— 这也正是哪天把优先级反过来时的现场。
+    $script:autoRegion = [pscustomobject]@{
+      x = 0; y = 0; w = 800; h = 500; source = 'watch'; owner = 0; label = '自检'; at = (Get-Date).ToString('o')
+    }
+    [void](Set-WatchFromAgent -Target 'full' -Quiet)
+    $userKept = ($null -ne $cfg.region) -and ([int]$cfg.region.w -eq 600) -and ($null -eq $script:autoRegion)
+
+    $interLines = if (Test-Path -LiteralPath $tmpInter) { (Get-Content -LiteralPath $tmpInter | Measure-Object).Count } else { 0 }
+    Write-Output ("  用户框 600 + agent 要盯 800 → 被挡下 = {0}；生效 {1} px；这一段里写盘 = {2}" -f $blocked, $w1, $agentWrote)
+    Write-Output ("  用户没框  + agent 要盯 800 → 覆盖生效；抓出来 {0} px（期望 800）" -f $w2)
+    Write-Output ("  覆盖生效时用户再框一次      → 覆盖作废 = {0}；生效 {1} px（期望回到 600）" -f $autoGone, [int]$eff3.w)
+    Write-Output ("  WATCH: full                 → 用户那份还在 = {0}；覆盖层 = {1}" -f $userKept, $(if ($null -eq $script:autoRegion) { '已撤' } else { '还在' }))
+    Write-Output ("  （日志被指到自检文件，写到它的行数 = {0}；真日志一个字没动）" -f $interLines)
+    if ($w1 -le 0 -or $w2 -le 0) {
+      Write-Output '  判定：⚠ 测不出来（抓不到屏：黑屏 / 锁屏 / 远程会话）'
+    } elseif ($blocked -and (-not $agentWrote) -and $ok -and $w1 -eq 600 -and $w2 -eq 800 -and $autoGone -and $userKept) {
+      Write-Output '  判定：✔ agent 的覆盖只在内存里、盖不过用户、full 也不删用户那份'
+    } else {
+      Write-Output '  判定：✘ 没达预期（见上面四个数字）'
+    }
+  } finally {
+    $Config = $cfgPathBefore
+    $interactionPath = $interPathBefore
+    $cfg.region = $regionBefore2
+    $script:autoRegion = $autoBefore
+    Remove-Item -LiteralPath $tmpCfg, $tmpInter -Force -ErrorAction SilentlyContinue
     try { Sync-CaptureRegion } catch { }
   }
   Write-Output '=== 6. 朗读（TTS）==='
@@ -4793,11 +5029,6 @@ try {
   }
 } catch { Write-Warning "对账 agent 记录失败（不影响使用）：$($_.Exception.Message)" }
 
-# 设置改完要写回 agents.json，并刷新菜单上的勾选
-function Save-PetConfig {
-  try { ($cfg | ConvertTo-Json -Depth 6) | Set-Content -LiteralPath $Config -Encoding UTF8 } catch { }
-}
-
 function Select-MonitorRegion {
   $pet.Hide()                       # 别把桌宠自己也框进去
   Start-Sleep -Milliseconds 150
@@ -4813,17 +5044,15 @@ function Select-MonitorRegion {
   }
   $wa = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
   $x = $wa.X + $sel.X; $y = $wa.Y + $sel.Y
-  $cfg.region = [pscustomobject]@{ x = $x; y = $y; w = $sel.Width; h = $sel.Height }
-  Save-PetConfig
-  Sync-CaptureRegion
+  # 写**用户层**（并作废 agent 的临时覆盖）：这是"我的意见"，跟 agent 的 WATCH 存在两个地方，互不覆盖
+  Set-UserRegion -Region ([pscustomobject]@{ x = $x; y = $y; w = $sel.Width; h = $sel.Height })
   Add-Interaction 'region_set' "$x,$y,$($sel.Width)x$($sel.Height)"
   $pet.ShowMessage("监控区域已设为 $($sel.Width)x$($sel.Height)`n以后只截图这一块（省 token，也更私密）。", [int]$cfg.showSeconds)
 }
 
 function Clear-MonitorRegion {
-  $cfg.region = $null
-  Save-PetConfig
-  Sync-CaptureRegion
+  # 用户说的是"回整屏"，那就两层一起清（消息里承诺的就是"恢复抓整个屏幕"）
+  Set-UserRegion -Region $null
   Add-Interaction 'region_clear'
   $pet.ShowMessage('监控区域已取消，恢复抓整个屏幕。', [int]$cfg.showSeconds)
 }
@@ -4904,9 +5133,9 @@ function Apply-PetConfigLive {
   }
   # 任务规则表变了 → 之前攒的截图/任务档判据都过期了（顺带清环，反正马上会重新抓）
   if ($Changed -contains 'taskRules') { try { $script:shots.Clear() } catch { } }
-  # 区域变了要的不只是清环 —— 还得重建抓屏 runspace，否则新区域要等重启才生效。
-  # 这里必须调 Sync-CaptureRegion 而不是自己写 shots.Clear()：理由见它头上那段注释。
-  if ($Changed -contains 'region') { try { Sync-CaptureRegion } catch { } }
+  # 区域变了要的不只是清环 —— 还得重建抓屏 runspace，否则新区域要等重启才生效（见 Sync-CaptureRegion）。
+  # 走 Set-UserRegion：设置窗口改的是**用户层**，顺带作废 agent 的临时覆盖；盘那边它自己已经存过了。
+  if ($Changed -contains 'region') { try { Set-UserRegion -Region $cfg.region -NoSave } catch { } }
 }
 
 # 供应商表：key 写到哪里、有什么用。参考那类"路径 + 供应商表"的做法，但只留我们真会读的三个。
@@ -5033,37 +5262,6 @@ function Edit-SystemPrompt {
     if ([string]::IsNullOrWhiteSpace($text)) { $pet.ShowMessage('已清空自定义 prompt，恢复内置规则。', [int]$cfg.showSeconds) }
     else { $pet.ShowMessage("已保存（$($text.Length) 字），下一次判断生效。", [int]$cfg.showSeconds) }
   }
-}
-
-function Set-WatchFromAgent {
-  param([string]$Target, [switch]$Quiet)
-  if ([string]::IsNullOrWhiteSpace($Target)) { return $false }
-  if ($Target -match '^(full|fullscreen|全屏|全部|整个屏幕)$') {
-    $cfg.region = $null; Save-PetConfig; Sync-CaptureRegion
-    Add-Interaction 'watch_agent' 'full'
-    if (-not $Quiet) { $pet.ShowMessage('（它把监控范围调回整屏了）', [int]$cfg.showSeconds) }
-    return $true
-  }
-  $key = ($Target -replace '^["「『]|["」』]$', '').Trim()
-  $wins = [DesktopGuide.Native]::ListWindows()
-  $best = $null; $bestArea = 0
-  foreach ($w in $wins) {
-    $parts = $w -split "`u{0001}"
-    if ($parts.Count -lt 2) { continue }
-    if ($parts[0] -notlike "*$key*") { continue }
-    if ($parts[0] -like '*随时指导*' -or $parts[0] -like '*DesktopGuide*') { continue }   # 别盯我们自己
-    $r = $parts[1] -split ','
-    if ($r.Count -ne 4) { continue }
-    $area = [int]$r[2] * [int]$r[3]
-    if ($area -gt $bestArea) { $bestArea = $area; $best = $r }
-  }
-  if (-not $best) { return $false }
-  $cfg.region = [pscustomobject]@{ x = [int]$best[0]; y = [int]$best[1]; w = [int]$best[2]; h = [int]$best[3] }
-  Save-PetConfig
-  Sync-CaptureRegion
-  Add-Interaction 'watch_agent' "$key -> $($best -join ',')"
-  if (-not $Quiet) { $pet.ShowMessage("它把监控范围收到「$key」这个窗口了。", [int]$cfg.showSeconds) }
-  return $true
 }
 
 function Open-ChatPanel {

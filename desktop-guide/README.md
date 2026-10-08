@@ -1260,3 +1260,41 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File compare.ps1 -Advisor minimax -Fres
    而 headless profile 里现在一律 fail-closed（审批直接拒、`exit_plan_mode` 调用即失败）。
 5. 把 `todo` / `goal` 投影画到桌面上（DSH 侧已有，缺的只是呈现）。
 6. 反馈评分（👍/👎 写回 `dsh-message-feedback`）——直接产出"什么时候该沉默"的标注数据。
+
+## 监控区域分两层：你的意见 / agent 的临时覆盖
+
+`config.json` 里的 `region` 原来一个键干两件事：你在右键里**框选**的区域，和主 agent 回复里那行
+`WATCH: Codex` 解析出来的窗口矩形，都往它里面写、都落盘。于是 agent 一开口，你框的那块在**磁盘上**
+就没了 —— 取消、重启都回不去；而且那条路是 `-Quiet` 的，连气泡都不弹（只在日志里留一行），你完全无感。
+
+现在拆成两层：
+
+| 层 | 存在哪 | 谁能写 | 活多久 |
+|---|---|---|---|
+| 用户层 `config.json:region` | 落盘 | 只有你（框选 / 取消 / 设置窗口） | 一直在，直到你改 |
+| 覆盖层（内存 `$script:autoRegion`） | **不落盘** | agent 的 `WATCH:`（以后的自动跟随） | 盯的窗口关掉、超时（默认 30 分钟）、或你一动手就撤 |
+
+生效顺序是 `覆盖层（若允许）→ 用户层 → 整屏`，而默认**用户优先**：
+
+- 你已经框了区域 → agent 的 `WATCH` **盖不过**，会被挡下并记一条 `watch_agent_blocked`（不再静默）。
+- `WATCH: full` 只撤**覆盖层**。"我不管了"不等于"把用户框的那块也删了"。
+- 你重新框一次（或取消）→ 覆盖层当场作废。
+
+分法是照抄项目里已经在用的那条原则：`config.taskRules`（部署方的意见）对
+`task-samples.json`（观察到的现实）——**分开写，谁改谁不互相覆盖**。
+
+自检第 5aa 节钉的就是这三条，而且"有没有写盘"是可断言的事实、不是推理：它把 `Save-PetConfig`
+和 interactions 日志的落点临时指到自检专用文件，再回头看它们有没有被创建。
+
+```
+用户框 600 + agent 要盯 800 → 被挡下 = True；生效 600 px；这一段里写盘 = False
+用户没框  + agent 要盯 800 → 覆盖生效；抓出来 800 px（期望 800）
+覆盖生效时用户再框一次      → 覆盖作废 = True；生效 600 px（期望回到 600）
+WATCH: full                 → 用户那份还在 = True；覆盖层 = 已撤
+判定：✔ agent 的覆盖只在内存里、盖不过用户、full 也不删用户那份
+```
+
+> 还没做（第 4 步）：冲突时用气泡上的按钮问你一次（复用现成的 `OPTIONS:` 机制），以及一个
+> `watchOverridesRegion` 开关（想让 agent 反过来优先时用）——这条现在写死在代码里
+> （`$script:watchOverridesUserRegion = $false`）。设置窗口「监控区域」那页目前只显示**生效**的那份，
+> "你手选的 / 当前生效 + 来源"两行式也在第 4 步。
