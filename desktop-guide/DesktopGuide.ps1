@@ -5552,6 +5552,24 @@ function Start-PetTask {
       $Model = $Model.PSObject.Copy()
       $Model.effort = [string]$cfg.petTaskEffort
     }
+    # ---- 工作区约定：过程文件放进被 git 忽略的 scratch 目录 ----
+    # 不写这条的话，派出去的 agent 会在**项目目录里乱扔**：一次做 docx 的活，
+    # 在 desktop-guide\ 下留了 6 个临时脚本 + 十几个渲染预览 + 导出文本，全冒到 git status 里
+    # （只能一条条加 .gitignore 打地鼠，治不了根）。run\ 整个目录本来就被忽略，让它们往这里扔。
+    if ($cfg.taskScratchNote -ne $false) {
+      $scratchDir = Join-Path $runDir 'scratch'
+      try { if (-not (Test-Path -LiteralPath $scratchDir)) { New-Item -ItemType Directory -Force -Path $scratchDir | Out-Null } } catch { }
+      $Task += (@(
+          ''
+          '【工作区约定（桌宠加上的，照做就行）】'
+          '- 过程文件（临时脚本、中间导出、渲染预览、日志、dump）一律写到：'
+          "  $scratchDir"
+          '  那个目录已经被 git 忽略，随便放、不用清理。项目目录里不要留散件 —— 会被当成源码或噪音。'
+          '- 最终交付物：用户指定了位置就按用户的；没指定就放同一个目录，并在结论里给出完整路径。'
+          '- 结论只给一句人话 + 产物路径，不要复述过程。'
+        ) -join "`n")
+    }
+
     $rec = Start-DshAgent -Task $Task -Model $Model -Access $access `
       -RunDir $runDir -LogDir $logDir -Config $agentsConfig -MaxConcurrent ([int]$script:AgentCfg.maxConcurrent) `
       -UseBrain:$([bool]$cfg.brainTransport) -SessionId $sid -ReuseId $reuseId
