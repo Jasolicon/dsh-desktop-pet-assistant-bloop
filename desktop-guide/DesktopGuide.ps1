@@ -5409,6 +5409,63 @@ function New-TaskTextFromDrop {
   return ($parts -join "`n")
 }
 
+function Get-OpenFileFacts {
+  <#
+    「目标文件现在被谁开着」—— 派活前必须让模型知道这条事实。
+
+    为什么：文件被 WPS/Word 打开时，直接改盘上有两个真实风险：
+      ① 被锁挡住，写不进去（mtime 不变）；
+      ② 就算写进去了，**应用内存里那份一保存就把改动整个覆盖掉** —— 这种最阴，
+         因为它看起来"改成功了"。
+    实测：10-05 和 10-09 两次 docx 任务都栽在这里，而 agent 每次只能事后报告。
+
+    判断全部是**本地看痕迹**，不碰文件内容：
+      · Office/WPS 打开文档会在同目录留一个 `~$<文件名>` 锁文件
+      · 同名进程（wps / WINWORD / EXCEL / POWERPNT）在跑
+      · 前台窗口标题里带着 `<文件名>.docx` → 那就是它此刻开着的那份
+    拿不准就说拿不准（找不到文件、没看到进程），不编。
+  #>
+  param([string]$Task = '')
+  $names = New-Object System.Collections.ArrayList
+  # ① 前台窗口标题里的文档名（WPS/Word/Excel 都会把文件名放进标题）
+  try {
+    $title = @($script:currentKey -split '\|')[ -1 ]
+    foreach ($m in [regex]::Matches([string]$title, '([^\\/:*?"<>|\r\n]+\.(docx?|xlsx?|pptx?|pdf))')) {
+      [void]$names.Add($m.Groups[1].Value.Trim())
+    }
+  } catch { }
+  # ② 任务正文里直接写了文件名
+  foreach ($m in [regex]::Matches([string]$Task, '([^\\/:*?"<>|\r\n\s]+\.(docx?|xlsx?|pptx?|pdf))')) {
+    [void]$names.Add($m.Groups[1].Value.Trim())
+  }
+  $names = @($names | Where-Object { $_ } | Select-Object -Unique)
+  if ($names.Count -eq 0) { return @() }
+
+  $apps = @()
+  foreach ($p in @('wps', 'et', 'wpp', 'WINWORD', 'EXCEL', 'POWERPNT')) {
+    if (Get-Process -Name $p -ErrorAction SilentlyContinue) { $apps += $p }
+  }
+  $dirs = @($PSScriptRoot, $script:DgHome, (Join-Path $runDir 'scratch'), [Environment]::GetFolderPath('Desktop'))
+
+  $facts = New-Object System.Collections.ArrayList
+  foreach ($n in $names) {
+    $bits = @()
+    foreach ($d in ($dirs | Where-Object { $_ } | Select-Object -Unique)) {
+      $p = Join-Path $d $n
+      if (Test-Path -LiteralPath $p) {
+        $locked = Test-Path -LiteralPath (Join-Path $d ('~$' + $n))
+        $bits += ("在 $p" + $(if ($locked) { '，且同目录有锁文件 ~$ 开头的那份 → 正被打开' } else { '（附近没看到锁文件）' }))
+      }
+    }
+    $line = "- 「$n」"
+    if ($bits.Count -gt 0) { $line += '：' + ($bits -join '；') }
+    if ($apps.Count -gt 0) { $line += "。Office/WPS 进程在跑：" + ($apps -join ', ') }
+    if ($bits.Count -eq 0 -and $apps.Count -eq 0) { $line += "：（没找到这个文件，也没看到 Office/WPS 在跑）" }
+    [void]$facts.Add($line)
+  }
+  return @($facts)
+}
+
 function Get-TaskBriefing {
   <#
     派活前让主 agent 过一道 —— 因为**执行 agent 看不见屏幕**。
@@ -5434,6 +5491,11 @@ function Get-TaskBriefing {
   # 当前观察写成 payload（命令读它）；用户原话写进文件（走命令行会被引号拆碎）
   try {
     $bp = Build-Payload
+    # 目标文件被谁开着 —— 执行 agent 看不见这条，不告诉它就会去硬改
+    #（10-05 和 10-09 两次 docx 任务都栽在这，见 Get-OpenFileFacts）
+    try {
+      $bp | Add-Member -NotePropertyName openFiles -NotePropertyValue @(Get-OpenFileFacts -Task $Task) -Force
+    } catch { }
     ($bp | ConvertTo-Json -Depth 6 -Compress) | Set-Content -LiteralPath $payloadPath -Encoding UTF8
     [System.IO.File]::WriteAllText((Join-Path $runDir 'task-raw.txt'), $Task, [System.Text.UTF8Encoding]::new($false))
   } catch {

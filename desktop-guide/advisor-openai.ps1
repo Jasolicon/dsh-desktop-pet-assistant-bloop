@@ -153,6 +153,19 @@ if ($Brief) {
   if ($obs.Count -gt 0) { foreach ($l in $obs) { [void]$bline.Add($l) } }
   else { [void]$bline.Add('（这一轮没有可用的屏幕信息）') }
 
+  # 目标文件的占用情况：这条事实不告诉模型，它就会去硬改 —— 而文件正被 WPS/Word 打开时，
+  # 直接改盘上的文件要么写不进去，要么**写进去后被应用保存时覆盖**（看起来像成功了，最阴）。
+  $openFiles = @()
+  if ($bp -and ($bp.PSObject.Properties.Name -contains 'openFiles')) { $openFiles = @($bp.openFiles | Where-Object { $_ }) }
+  if ($openFiles.Count -gt 0) {
+    [void]$bline.Add('')
+    [void]$bline.Add('目标文件的占用情况（桌宠本地探测的，不是猜的）：')
+    foreach ($l in $openFiles) { [void]$bline.Add($l) }
+    [void]$bline.Add('如果目标文件正被 Office/WPS 打开：**不要**在任务书里让执行 agent 直接改盘上的文件 ——')
+    [void]$bline.Add('要么让它先请用户关掉那个窗口再改，要么让它"另存一份副本"并在结论里给出副本路径。')
+    [void]$bline.Add('绝不允许假装改成功了。')
+  }
+
   $bcontent = New-Object System.Collections.ArrayList
   [void]$bcontent.Add(@{ type = 'text'; text = ($bline -join "`n") })
   if ($useVision) {
