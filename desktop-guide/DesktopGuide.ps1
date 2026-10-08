@@ -711,6 +711,18 @@ namespace DesktopGuide {
     /** 暂停标志（托盘里「暂停（停止观察）」）。为 true 时在**头顶左上角**画一个小暂停标。 */
     bool pausedNow;
     Rectangle pauseRect = Rectangle.Empty;
+    /** 沉默态右上角那三个点的位置（自检用；不显示时是空矩形） */
+    Rectangle silentDotsRect = Rectangle.Empty;
+    public Rectangle SilentDotsBox { get { return silentDotsRect; } }
+    /** 自检用：直接把动画帧号设成某个值，好让"两帧不一样 = 动画真的在动"这件事可断言 */
+    public int TickFrame { set { tick = value; Render(); } }
+    /** 自检用：把"三个点"那块区域截出来（两帧对比用） */
+    public Bitmap SnapshotDots() {
+      if (surface == null || silentDotsRect.Width <= 0) return null;
+      var r = Rectangle.Intersect(silentDotsRect, new Rectangle(0, 0, surface.Width, surface.Height));
+      if (r.Width <= 0 || r.Height <= 0) return null;
+      return surface.Clone(r, PixelFormat.Format32bppArgb);
+    }
     public bool PausedNow {
       get { return pausedNow; }
       set { if (pausedNow != value) { pausedNow = value; Render(); } }
@@ -1529,6 +1541,7 @@ namespace DesktopGuide {
         g.InterpolationMode = InterpolationMode.HighQualityBicubic;
         g.DrawImage(petImage, dest);
         DrawPauseMark(g, dest);
+        DrawSilentDots(g, dest);
         DrawButtons(g);
         return;
       }
@@ -1623,6 +1636,7 @@ namespace DesktopGuide {
       }
 
       DrawPauseMark(g, bodyRect);
+      DrawSilentDots(g, bodyRect);
       DrawButtons(g);
     }
 
@@ -1811,6 +1825,39 @@ namespace DesktopGuide {
       if (i == 0) return Color.FromArgb(a, 47, 127, 208);
       return Color.FromArgb(a, 120, 128, 142);
     }
+    /// 沉默态（"它选择不说"）右上角的**三个跳动的点**：一个圆角胶囊，里面三个小点上下错相位地跳。
+    /// 为什么要它：沉默以前只有"变灰 + 嘴角放平"两种静态表达，看起来跟发呆没区别；
+    /// 加个会跳的省略号，一眼就能看出"它看过了、正在忍着不说"。
+    void DrawSilentDots(Graphics g, Rectangle anchor) {
+      if (state != "silent") { silentDotsRect = Rectangle.Empty; return; }
+      int dot = Math.Max(4, S(5));            // 点的直径
+      int gap = Math.Max(2, S(4));
+      int padX = Math.Max(4, S(6)), padY = Math.Max(4, S(6));
+      int amp = Math.Max(3, S(5));            // 上下跳动幅度（太小看不出"跳"，只是三条点）
+      int w = padX * 2 + dot * 3 + gap * 2;
+      int h = padY * 2 + dot + amp * 2;
+      var rect = new Rectangle(anchor.Right - w - S(4), anchor.Top + S(2), w, h);
+      silentDotsRect = rect;
+      using (var path = new GraphicsPath()) {
+        int r = h;   // 圆角胶囊
+        path.AddArc(rect.X, rect.Y, r, r, 90, 180);
+        path.AddArc(rect.Right - r, rect.Y, r, r, 270, 180);
+        path.CloseFigure();
+        using (var b = new SolidBrush(Color.FromArgb(206, 108, 116, 132))) g.FillPath(b, path);
+        using (var p = new Pen(Color.FromArgb(235, 255, 255, 255), Math.Max(1f, (float)S(2)))) g.DrawPath(p, path);
+        // 三个点：相位依次往后错开，看起来像"打字中/我在忍着"的那种跳动
+        using (var wb = new SolidBrush(Color.FromArgb(248, 255, 255, 255)))
+          for (int i = 0; i < 3; i++) {
+            // 相位依次往后错开 → 看起来是"波浪式"跳动，而不是三个点一起上下
+            double phase = tick / 3.0 - i * 0.8;
+            int dy = (int)(Math.Sin(phase) * amp);
+            int cx = rect.X + padX + i * (dot + gap);
+            int cy = rect.Y + padY + amp + dy;
+            g.FillEllipse(wb, cx, cy, dot, dot);
+          }
+      }
+    }
+
     /// 暂停标志：**头顶左上角**一个圆角胶囊 + 两道竖杠。
     /// anchor = 角色图实际占的矩形（或代码绘制时的身体范围），标就贴它的左上角内侧。
     /// 描一圈白边是为了在深色背景 / 深色头发上也看得清 —— 和托盘里那个"已暂停"是同一个状态。
@@ -2071,6 +2118,22 @@ $defaults = [ordered]@{
   timelineSize          = 40
   advisor               = ''
   advisorFast           = ''
+  # 大脑来源：dsh | openai | ollama | custom。它不是运行时开关，而是**设置窗口的翻译层** ——
+  # 选了它就会把下面 advisor / advisorFast 两行改写成对应脚本（见 settings-window.ps1 的 Resolve-DgBrainCommands）。
+  brainKind             = 'dsh'
+  # 本地 Ollama（advisor-ollama.ps1）：零 key、数据不出机器。设置窗口「大脑与任务」那页可改。
+  ollamaUrl             = 'http://127.0.0.1:11434'
+  ollamaModel           = ''      # 空 = 用本机第一个可用模型
+  ollamaVision          = ''      # '' = 按模型名判断；'1' 强制发图；'0' 强制不发
+  ollamaTemperature     = 0.3
+  ollamaNumCtx          = 8192    # 上下文；0 = 让 Ollama 自己定
+  ollamaNumPredict      = 400     # 生成上限：一句话够用，也防止思考型模型无限生成
+  ollamaKeepAlive       = '10m'   # 模型留在显存里多久（短了每次都要重新加载）
+  # 网络模型（advisor-openai.ps1，OpenAI 兼容端点）：key 在 run\openai.key（不进这份配置）
+  openaiBaseUrl         = 'https://api.deepseek.com/v1'
+  openaiModel           = 'deepseek-flash'
+  openaiVision          = ''      # '' = 按模型名判断；'1' 强制发图；'0' 强制不发
+  openaiMaxTokens       = 1500    # 推理型模型思考也吃 token，给太少会"只有思考没有结论"
   advisorTimeoutSeconds = 30
   warmupOnStart         = $true
   autoMinutes           = 5
@@ -3988,6 +4051,58 @@ $probe3 = New-Object DesktopGuide.PetForm -ArgumentList @([double]$script:UiScal
     $pBox.Width, $pBox.Height, $pBox.X, $pBox.Y, $pW, $pH,
     @($pauseOk.Values | Where-Object { $_ }).Count, $pauseOk.Count)
   Write-Output ("  暂停外观预览：{0}" -f $outP)
+  Write-Output '=== 5y. 沉默态的右上角三个点（跳动省略号）==='
+  # 「它选择不说」以前只有"变灰 + 嘴角放平"两种静态表达，看着跟发呆一样。
+  # 现在沉默时右上角有一个会跳的三个点 —— 这一节钉住：非沉默不画、沉默画在右上、不越界。
+  $yprobe = New-Object DesktopGuide.PetForm -ArgumentList @([double]$script:UiScale, [string]$cfg.fontFamily, [double]$cfg.fontSize)
+  $null = $yprobe.Handle
+  if ($img) { $yprobe.SetImage($img) }
+  $yprobe.ShowMessage('（它选择不说）', 0)     # 以"（"开头 = 沉默态
+  $yBox = $yprobe.SilentDotsBox
+  $yW = $yprobe.Width; $yH = $yprobe.Height
+  $outY = Join-Path $runDir 'pet-preview-silent.png'
+  $yprobe.SavePreview($outY)
+  $yprobe.ShowMessage('好，我在听。', 0)        # 非沉默
+  $yNone = $yprobe.SilentDotsBox
+  $yprobe.Dispose()
+  # 「跳动」得能被证出来：把帧号设成两个不同值各截一张"三个点"区域，比较哈希 ——
+  # 一样就说明根本没动（这比"看图觉得像在动"可靠）。
+  $yprobe2 = New-Object DesktopGuide.PetForm -ArgumentList @([double]$script:UiScale, [string]$cfg.fontFamily, [double]$cfg.fontSize)
+  $null = $yprobe2.Handle
+  if ($img) { $yprobe2.SetImage($img) }
+  $yprobe2.ShowMessage('（它选择不说）', 0)
+  $yprobe2.TickFrame = 0
+  $d1 = $yprobe2.SnapshotDots()
+  $yprobe2.TickFrame = 4
+  $d2 = $yprobe2.SnapshotDots()
+  $yprobe2.Dispose()
+  $animDiff = $false
+  try {
+    if ($d1 -and $d2) {
+      $ms1 = New-Object System.IO.MemoryStream; $d1.Save($ms1, [System.Drawing.Imaging.ImageFormat]::Png)
+      $ms2 = New-Object System.IO.MemoryStream; $d2.Save($ms2, [System.Drawing.Imaging.ImageFormat]::Png)
+      $sha = [System.Security.Cryptography.SHA256]::Create()
+      $h1 = [System.BitConverter]::ToString($sha.ComputeHash($ms1.ToArray()))
+      $h2 = [System.BitConverter]::ToString($sha.ComputeHash($ms2.ToArray()))
+      $animDiff = ($h1 -ne $h2)
+      $ms1.Dispose(); $ms2.Dispose()
+    }
+  } catch { }
+  if ($d1) { $d1.Dispose() }
+  if ($d2) { $d2.Dispose() }
+  $yOk = [ordered]@{
+    '沉默时画出来'      = ($yBox.Width -gt 0)
+    '在右半边'          = ($yBox.Left -gt [int]($yW / 2))
+    '在上半边（头顶）'  = ($yBox.Top -lt [int]($yH / 2))
+    '不出窗口边界'      = ($yBox.Right -le $yW -and $yBox.Bottom -le $yH)
+    '非沉默就不画'      = ($yNone.Width -eq 0)
+    '两帧不一样（真在跳）' = $animDiff
+  }
+  foreach ($k in $yOk.Keys) { Write-Output ("  {0} {1}" -f $(if ($yOk[$k]) { '✔' } else { '✘' }), $k) }
+  Write-Output ("  三个点 {0}x{1} @({2},{3})｜窗口 {4}x{5}｜{6}/{7} 项通过" -f `
+    $yBox.Width, $yBox.Height, $yBox.X, $yBox.Y, $yW, $yH,
+    @($yOk.Values | Where-Object { $_ }).Count, $yOk.Count)
+  Write-Output ("  沉默外观预览：{0}" -f $outY)
   Write-Output '=== 5b. 选项交互预览 ==='
   $probe4 = New-Object DesktopGuide.PetForm -ArgumentList @([double]$script:UiScale, [string]$cfg.fontFamily, [double]$cfg.fontSize)
   $null = $probe4.Handle
@@ -5349,10 +5464,29 @@ function Edit-AllSettings {
   if (-not $values) { return }                       # 取消（$null）
   foreach ($k in $values.Keys) { $cfg[$k] = $values[$k] }
   $keys = @($values.Keys)
+  # 设置窗口也可能改了 agents.json（「和 DSH 同一个模型」那一行 / 派活模型）——
+  # 内存里那份 AgentCfg 是启动时读的，不重读的话菜单和派活还是旧的。
+  try {
+    $script:AgentCfg = Get-AgentConfig -Path $agentsConfig
+    Refresh-PetSettings
+  } catch { Write-Warning "重读 agents.json 失败：$($_.Exception.Message)" }
   Apply-PetConfigLive -Changed $keys
   Add-Interaction 'settings' ("{0} 项：{1}" -f $keys.Count, ($keys -join ','))
-  if ($keys.Count -eq 0) { $pet.ShowMessage('设置窗口关掉了，没有改动。', [int]$cfg.showSeconds) }
-  else { $pet.ShowMessage("设置已保存（$($keys.Count) 项）。", [int]$cfg.showSeconds) }
+  if ($keys.Count -eq 0) {
+    $pet.ShowMessage('设置窗口关掉了，没有改动。', [int]$cfg.showSeconds)
+  } elseif ($keys -contains 'brainKind') {
+    # 换了大脑就把"现在是谁在判断"说清楚 —— 这一项是六个键一起变的（含两条命令和超时），
+    # 只回一句"已保存 6 项"会让人不知道到底换没换成功。
+    $brainName = switch ([string]$cfg.brainKind) {
+      'dsh' { 'DSH 主 agent' }
+      'openai' { 'OpenAI 兼容端点' }
+      'ollama' { '本地 Ollama' }
+      default { '自定义命令' }
+    }
+    $pet.ShowMessage("大脑已切到$brainName，下一次判断就走它。", [int]$cfg.showSeconds)
+  } else {
+    $pet.ShowMessage("设置已保存（$($keys.Count) 项）。", [int]$cfg.showSeconds)
+  }
 }
 
 # 把刚保存的改动**当场落地**。多数键是每轮现读 $cfg 的，改了自然就生效；
