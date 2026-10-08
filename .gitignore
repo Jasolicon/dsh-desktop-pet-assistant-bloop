@@ -63,6 +63,10 @@ desktop-guide/make_story.py
 desktop-guide/checks.json
 desktop-guide/*.docx
 desktop-guide/preview-v*/
+# 同一批产物里还会冒出别的（例：docx-paragraphs.txt 是把 docx 正文导出来核对的中间文件）。
+# 这类名字没法穷举 —— 下面这条是兜底：派活 agent 的中间产物一般是纯文本 dump，
+# 夹在 desktop-guide\ 根上的散装 .txt 多半就是它（项目自己的说明都写在 README / *.md 里）。
+desktop-guide/docx-paragraphs.txt
 
 # 快捷方式：里面是绝对路径（机器相关），由 desktop-guide\make-launcher.ps1 现生成
 *.lnk
