@@ -128,45 +128,107 @@ if ($script:DgHome -ne $PSScriptRoot) {
 }
 if (-not $Config) { $Config = Join-Path $script:DgHome 'config.json' }
 
-function Get-RunningPetPid {
-  <# run\pet.pid 里记着当前桌宠的 PID。返回它还活着并且**确实是桌宠**的 PID，否则 0。
+function Test-PetProcess {
+  <# 这个 pid 现在是不是一个桌宠进程？
      为什么要确认命令行：PID 会被系统复用 —— 只看"这个号有没有活进程"，
      很容易把别的程序当桌宠，然后拒绝启动（那种 bug 最难查）。 #>
+  param([int]$ProcessId)
+  if ($ProcessId -le 0) { return $false }
+  if (-not (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue)) { return $false }
+  try {
+    $ci = Get-CimInstance Win32_Process -Filter "ProcessId=$ProcessId" -ErrorAction SilentlyContinue
+    return [bool]($ci -and ([string]$ci.CommandLine -match 'DesktopGuide\.ps1'))
+  } catch { return $false }
+}
+
+function Get-PetLockState {
+  <# 读机器级实例锁。返回锁内容（pid / form / home），**拿到的都是还活着的**：
+     死进程或坏文件一律当"没有锁"（否则会出现"锁着但没人跑"这种谁也起不来的状态）。 #>
+  $f = Get-DgLockPath
+  if (-not $f -or -not (Test-Path -LiteralPath $f)) { return $null }
+  try {
+    $o = Get-Content -LiteralPath $f -Raw -Encoding UTF8 | ConvertFrom-Json
+    if (Test-PetProcess -ProcessId ([int]$o.pid)) { return $o }
+  } catch { }
+  return $null
+}
+
+function Get-RunningPetPid {
+  <# 当前有没有桌宠在跑？返回它的 PID，没有就 0。
+
+     两道来源：
+       ① 机器级锁 %LOCALAPPDATA%\Bloop\pet.lock —— **跨形态**（独立运行 / 插件形态都写它）。
+          两种形态的状态根不同，光看各自状态根里的 pet.pid 是互相看不见的。
+       ② 状态根里的 run\pet.pid —— 老位置，兼容旧版本，也兜住"锁文件被手工删掉"的情况。 #>
   param([string]$RunDir = '')
+  $lock = Get-PetLockState
+  if ($lock) { return [int]$lock.pid }
   if (-not $RunDir) { $RunDir = Join-Path (Get-DgHome) 'run' }
   $f = Join-Path $RunDir 'pet.pid'
   if (-not (Test-Path -LiteralPath $f)) { return 0 }
   $other = 0
   try { $other = [int]((Get-Content -LiteralPath $f -Raw -Encoding UTF8).Trim()) } catch { return 0 }
-  if ($other -le 0) { return 0 }
-  if (-not (Get-Process -Id $other -ErrorAction SilentlyContinue)) { return 0 }
-  try {
-    $ci = Get-CimInstance Win32_Process -Filter "ProcessId=$other" -ErrorAction SilentlyContinue
-    if ($ci -and ([string]$ci.CommandLine -match 'DesktopGuide\.ps1')) { return $other }
-  } catch { }
+  if (Test-PetProcess -ProcessId $other) { return $other }
   return 0
+}
+
+function Set-PetInstanceLock {
+  <# 占锁：写自己的 pid + 形态 + 状态根，好让"后来那个"能一句话说清是谁在跑、怎么让位。 #>
+  param([string]$Form = '')
+  $f = Get-DgLockPath
+  if (-not $f) { return }
+  $existing = Get-PetLockState
+  if ($existing -and [int]$existing.pid -ne $PID) { return }   # 有别人的活实例：不抢（调用方已经拦掉了）
+  try {
+    $dir = Split-Path -Parent $f
+    if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
+    $info = [pscustomobject]@{
+      pid  = $PID
+      at   = (Get-Date).ToString('o')
+      form = [string]$Form
+      home = $script:DgHome
+    }
+    [System.IO.File]::WriteAllText($f, ($info | ConvertTo-Json -Compress), (New-Object System.Text.UTF8Encoding($false)))
+  } catch { }
+}
+
+function Clear-PetInstanceLock {
+  <# 只清**自己**的锁：别的实例活着时不去动它的文件。 #>
+  $f = Get-DgLockPath
+  if (-not $f -or -not (Test-Path -LiteralPath $f)) { return }
+  try {
+    $o = Get-Content -LiteralPath $f -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ([int]$o.pid -eq $PID) { Remove-Item -LiteralPath $f -Force }
+  } catch { }
 }
 
 # 已经在跑了就别起第二个 —— 双击快捷方式、开机启动 + 手动再点一次、手滑点两下，都会撞上。
 # 两个桌宠叠一起不只是难看：它们抢同一个会话写句柄、抢同一个托盘图标，还会互相抢点击
 #（这条还是桌宠自己观察出来的）。
+# ⚠️ 现在也**跨形态**拦：独立运行（快捷方式）和插件形态（DSH 外壳拉起）的状态根是两个不同目录，
+# 只比 run\pet.pid 是互相看不见的 —— 两个一起跑就是两只桌宠 + 双份模型开销。见 Get-DgLockPath。
 # 自检 / Dump / 可见性诊断不挡（那些本来就是"再起一个进程"的用法）。
 if (-not ($SelfTest -or $Dump -or $VisibleTest)) {
+  # 形态只说给人看（消息里要写清是谁在跑、怎么让位）
+  $script:PetForm = if ($script:DgHome -ne $PSScriptRoot) { "插件形态（状态根 $script:DgHome）" } else { '独立运行（快捷方式 / start.cmd）' }
   $runningPet = Get-RunningPetPid
   if ($runningPet -gt 0 -and $runningPet -ne $PID) {
-    Write-Host "桌宠已经在跑了（PID $runningPet），这次不重复启动。"
+    $lock = Get-PetLockState
+    $who = if ($lock) { [string]$lock.form } else { '（旧版实例，没有形态记录）' }
+    $msg = "桌宠已经在跑了：PID $runningPet`n形态：$who`n`n同一台机器只跑一只（两只 = 双份抓屏 + 双份模型开销）。`n要让这次启动生效：先把那只退出（右键菜单 → 退出），再启动这个。"
+    Write-Host "桌宠已经在跑了（PID $runningPet，$who），这次不重复启动。"
     if ($NotifyIfRunning) {
       try {
         Add-Type -AssemblyName System.Windows.Forms
-        [void][System.Windows.Forms.MessageBox]::Show(
-          "桌宠已经在跑了（PID $runningPet）。`n`n点它一下 = 让它说一句；要退出用右键菜单。",
-          '泡泡 · Bloop', 'OK', 'Information')
+        [void][System.Windows.Forms.MessageBox]::Show($msg, '泡泡 · Bloop', 'OK', 'Information')
       } catch { }
     } else {
       Start-Sleep -Seconds 2
     }
     exit 0
   }
+  # 没人跑 → 占锁。写在"确认要跑"之后：自检 / Dump 不该占锁（它们只是诊断）。
+  Set-PetInstanceLock -Form $script:PetForm
 }
 
 Add-Type -AssemblyName System.Windows.Forms
@@ -4407,14 +4469,63 @@ $probe3 = New-Object DesktopGuide.PetForm -ArgumentList @([double]$script:UiScal
   $xOk = @()
   $xTmp = Join-Path ([System.IO.Path]::GetTempPath()) ('bloop-pid-' + [guid]::NewGuid().ToString('N').Substring(0, 6))
   New-Item -ItemType Directory -Force -Path $xTmp | Out-Null
+  # ⚠️ 机器级锁现在优先于 run\pet.pid —— 自检期间先把它挪开（有真桌宠在跑时绝不覆盖它的锁），
+  # 测完原样还回去。不这么做的话，下面三条会被"真桌宠的锁"顶掉，变成假阴性。
+  $lockFile = Get-DgLockPath
+  $lockBackup = $null
+  if ($lockFile -and (Test-Path -LiteralPath $lockFile)) {
+    try { $lockBackup = Get-Content -LiteralPath $lockFile -Raw -Encoding UTF8 } catch { }
+    try { Add-Content -LiteralPath $lockFile -Value '' -ErrorAction SilentlyContinue } catch { }
+  }
   try {
+    if ($lockFile -and (Test-Path -LiteralPath $lockFile)) { try { Remove-Item -LiteralPath $lockFile -Force } catch { } }
     $xOk += ((Get-RunningPetPid -RunDir $xTmp) -eq 0)
     Set-Content -LiteralPath (Join-Path $xTmp 'pet.pid') -Value 999999 -Encoding UTF8
     $xOk += ((Get-RunningPetPid -RunDir $xTmp) -eq 0)
     Set-Content -LiteralPath (Join-Path $xTmp 'pet.pid') -Value $PID -Encoding UTF8
     $xOk += ((Get-RunningPetPid -RunDir $xTmp) -eq $PID)
-  } finally { try { Remove-Item -LiteralPath $xTmp -Recurse -Force -ErrorAction SilentlyContinue } catch { } }
+  } finally {
+    try { Remove-Item -LiteralPath $xTmp -Recurse -Force -ErrorAction SilentlyContinue } catch { }
+    # 还回原来的锁（没有就清掉）
+    try {
+      if ($lockBackup -and $lockFile) {
+        [System.IO.File]::WriteAllText($lockFile, $lockBackup, (New-Object System.Text.UTF8Encoding($false)))
+      } elseif ($lockFile -and (Test-Path -LiteralPath $lockFile)) {
+        Remove-Item -LiteralPath $lockFile -Force
+      }
+    } catch { }
+  }
   Write-Output ("  没有 pet.pid → 0；pid 是死进程 → 0；pid 是活桌宠 → 认出来  " + $(if (@($xOk) -notcontains $false) { '✔' } else { '✘' }))
+
+  Write-Output '=== 5x2. 机器级实例锁（跨形态互斥）==='
+  # 为什么单独测：桌宠有两种形态（快捷方式 / 插件），状态根是两个目录 —— 只比 run\pet.pid
+  # 互相看不见，同时起就是两只桌宠 + 双份模型开销。锁放在 %LOCALAPPDATA%\Bloop\ 就是为这个。
+  $lxOk = @()
+  $lFile = Get-DgLockPath
+  $lBackup = $null
+  if ($lFile -and (Test-Path -LiteralPath $lFile)) { try { $lBackup = Get-Content -LiteralPath $lFile -Raw -Encoding UTF8 } catch { } }
+  try {
+    if ($lFile -and (Test-Path -LiteralPath $lFile)) { try { Remove-Item -LiteralPath $lFile -Force } catch { } }
+    $lxOk += (-not (Get-PetLockState))                       # 没锁 → 没有实例
+    Set-PetInstanceLock -Form '自检用'
+    $st = Get-PetLockState
+    $lxOk += ([bool]$st -and [int]$st.pid -eq $PID)          # 占上了，而且是我的 pid
+    $lxOk += ((Get-RunningPetPid -RunDir (Join-Path $env:TEMP 'bloop-none')) -eq $PID)   # 跨形态：不看状态根也能认出来
+    $lxOk += ([string]$st.form -eq '自检用')
+    # 死进程的锁要当"没锁"（否则"锁着但没人跑"会把用户永久挡住）
+    [System.IO.File]::WriteAllText($lFile, (([pscustomobject]@{ pid = 999999; form = '死锁'; home = '' } | ConvertTo-Json -Compress)), (New-Object System.Text.UTF8Encoding($false)))
+    $lxOk += (-not (Get-PetLockState))
+    Set-PetInstanceLock -Form '自检用'
+    Clear-PetInstanceLock
+    $lxOk += (-not (Test-Path -LiteralPath $lFile))          # 清自己的锁
+  } finally {
+    try {
+      if ($lBackup -and $lFile) { [System.IO.File]::WriteAllText($lFile, $lBackup, (New-Object System.Text.UTF8Encoding($false))) }
+      elseif ($lFile -and (Test-Path -LiteralPath $lFile)) { Remove-Item -LiteralPath $lFile -Force }
+    } catch { }
+  }
+  Write-Output ("  没锁→没实例｜占锁→认得出（含跨状态根）｜死进程的锁当没锁｜只清自己的锁  " + $(if (@($lxOk) -notcontains $false) { '✔' } else { "✘（$(@($lxOk) -join ',')）" }))
+  Write-Output ("  锁文件：{0}" -f (Get-DgLockPath))
   $mkScript = Join-Path $PSScriptRoot 'make-launcher.ps1'
   $mkOut = ''
   try { $mkOut = (& pwsh -NoProfile -ExecutionPolicy Bypass -File $mkScript -SelfTest 2>&1 | Out-String) } catch { }
@@ -6306,6 +6417,8 @@ $pet.Add_FormClosing({
       $webCmd = ". '$PSScriptRoot\web-ui.ps1'; [void](Stop-WebUi)"
       Start-Process -FilePath 'pwsh' -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', $webCmd) -WindowStyle Hidden | Out-Null
     } catch { }
+    # 机器级实例锁也要还回去：不还的话下次启动会被自己的死锁挡住一拍（虽然会按"死进程"清掉，但那要等一次）。
+    try { Clear-PetInstanceLock } catch { }
     Save-PetState
   })
 

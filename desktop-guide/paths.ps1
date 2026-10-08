@@ -52,6 +52,19 @@ function Get-DgHomePath {
   return (Join-Path (Get-DgHome -Override $Override) $Name)
 }
 
+# 机器级实例锁的路径（**故意不放在状态根里**）。
+#
+# 为什么：桌宠现在有两种形态 —— 独立运行（快捷方式 / start.cmd，状态在脚本旁边）和
+# 插件形态（DSH 外壳拉起，状态在 <DSH_HOME>\bloop）。两者的 `run\pet.pid` 是两个不同的文件，
+# 光看那个是**互相看不见**的 —— 同时起就是两只桌宠、双份抓屏、双份模型开销。
+# 所以锁放在一个和形态无关的位置：%LOCALAPPDATA%\Bloop\。
+function Get-DgLockPath {
+  $base = $env:LOCALAPPDATA
+  if (-not $base) { $base = $env:TEMP }
+  if (-not $base) { return '' }
+  return (Join-Path $base 'Bloop\pet.lock')
+}
+
 # 读环境变量（去空白）；没设返回空串。
 function Get-DgEnv {
   param([string]$Name)

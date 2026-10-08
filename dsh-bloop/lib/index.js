@@ -111,6 +111,7 @@ export function apply(ctx, input = {}) {
   let gaveUp = false;
   let stopped = false;
   let startedAt = null;
+  let lastExit = null;
   const engineLog = join(home, 'engine.log');
 
   function startEngine() {
@@ -142,6 +143,16 @@ export function apply(ctx, input = {}) {
     child.on('error', (e) => log(`[engine] error：${e && e.message}`));
     child.on('exit', (code, signal) => {
       log(`[engine] 退出 code=${code} signal=${signal}`);
+      lastExit = { at: new Date().toISOString(), code, signal };
+      // 退出码 0 = 引擎"正常退出"，**不该重启**。两种正常情形：
+      //   ① 机器级实例锁把它拦住了（另有一只在跑 —— 常见的是独立运行那份）：
+      //      它打印一句"桌宠已经在跑了"就退；重启只会让它反复被拦，还把日志打满。
+      //   ② 用户主动退出（右键菜单 → 退出）：那就别再给它拉起来。
+      // 只有非 0（真的崩了）才按崩溃处理。
+      if (code === 0) {
+        log('[engine] 正常退出，不重启（另有一只在跑，或用户主动退出）');
+        return;
+      }
       if (stopped || gaveUp) return;
       restarts += 1;
       if (restarts > MAX_RESTARTS) {
@@ -172,6 +183,7 @@ export function apply(ctx, input = {}) {
         startedAt,
         restarts,
         gaveUp,
+        lastExit,
         log: engineLog,
       },
       routes: [`${ROUTE_PREFIX}/state`, `${ROUTE_PREFIX}/say`, `${ROUTE_PREFIX}/pause`, `${ROUTE_PREFIX}/resume`],
