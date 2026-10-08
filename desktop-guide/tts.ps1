@@ -63,6 +63,11 @@ $script:TtsCuteDefault  = 'zh-CN-XiaoyiNeural'       # 卡通/活泼的女声；
 
 $script:TtsRoot = $PSScriptRoot   # dot-source 时记下来，函数里不能再依赖 $PSScriptRoot
 
+# 状态根（DG_HOME）：venv / 运行产物写它；脚本本身（tts-edge-say.py）仍在包目录。
+# 不设 DG_HOME 时它 == TtsRoot（本地跑和以前一样）。见 paths.ps1 的 Get-DgHome。
+if (-not (Get-Command Get-DgHome -ErrorAction SilentlyContinue)) { . (Join-Path $script:TtsRoot 'paths.ps1') }
+$script:TtsHome = Get-DgHome
+
 function Get-TtsCfg {
   <# 配置既可能是 [ordered]@{}（DesktopGuide 内部），也可能是 ConvertFrom-Json 出来的对象 #>
   param($Config, [string]$Key, $Default)
@@ -141,7 +146,7 @@ function Resolve-TtsEdge {
   if (-not (Test-Path $script:TtsEdgeScript)) { return $false }
   $cands = @()
   if ($Python) { $cands += $Python }
-  $cands += (Join-Path $Root '.tts\venv\Scripts\python.exe')
+  $cands += (Join-Path $script:TtsHome '.tts\venv\Scripts\python.exe')
   foreach ($c in $cands) {
     if ($c -and (Test-Path $c)) { $script:TtsEdgePython = (Resolve-Path $c).Path; return $true }
   }
@@ -350,7 +355,7 @@ function Initialize-Tts {
   $voiceCfg               = [string](Get-TtsCfg $Config 'ttsVoice' '')
   $pythonCfg              = [string](Get-TtsCfg $Config 'ttsPython' '')
 
-  $script:TtsEdgeDir = Join-Path $script:TtsRoot 'run\tts'
+  $script:TtsEdgeDir = Join-Path $script:TtsHome 'run\tts'
   if (-not (Test-Path $script:TtsEdgeDir)) {
     try { New-Item -ItemType Directory -Path $script:TtsEdgeDir -Force | Out-Null } catch { }
   }

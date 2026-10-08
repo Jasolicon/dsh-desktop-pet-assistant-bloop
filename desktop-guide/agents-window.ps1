@@ -65,13 +65,17 @@ function Show-DgAgents {
   )
   try { [System.Windows.Forms.Application]::EnableVisualStyles() } catch { }
 
-  $runDir = Join-Path $Root 'run'
-  $logDir = Join-Path $Root 'logs'
+  # 状态根（DG_HOME）：run / logs / agents.json 都从这走。
+  # ⚠️ `-Root` 仍然指**包目录**（要读包里的出厂默认、presets 等）；状态一律看 DG_HOME。
+  if (-not (Get-Command Get-DgHome -ErrorAction SilentlyContinue)) { . (Join-Path $Root 'paths.ps1') }
+  $dgHome = Get-DgHome
+  $runDir = Join-Path $dgHome 'run'
+  $logDir = Join-Path $dgHome 'logs'
   if (-not (Test-Path $runDir)) { New-Item -ItemType Directory -Force -Path $runDir | Out-Null }
   if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Force -Path $logDir | Out-Null }
 
   $agentCfg = $null
-  try { $agentCfg = Get-Content -LiteralPath (Join-Path $Root 'agents.json') -Raw -Encoding UTF8 | ConvertFrom-Json } catch { }
+  try { $agentCfg = Get-Content -LiteralPath (Join-Path $dgHome 'agents.json') -Raw -Encoding UTF8 | ConvertFrom-Json } catch { }
   $modelNames = @(); $accessNames = @()
   if ($agentCfg) {
     $modelNames = @($agentCfg.models | ForEach-Object { [string]$_.name })

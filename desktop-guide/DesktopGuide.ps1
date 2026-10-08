@@ -23,7 +23,16 @@
 # 朗读（tts.ps1）：把结论句念出来。默认开，右键「朗读」可静音，双击宠物可打断。
 
 param(
-  [string]$Config = (Join-Path $PSScriptRoot 'config.json'),
+  # 状态根目录：留空 = DG_HOME 环境变量 → 脚本目录（本地这样跑，跟以前一样）。
+  # 装成 DSH 插件时外壳会传 -DgHome <DSH_HOME>\bloop，见下面那段。
+  #
+  # ⚠️ 参数名不能叫 `Home`：`$HOME` 是 PowerShell 的**只读自动变量**，绑定参数会直接
+  # "Cannot overwrite variable Home" 然后把脚本打断（实测：引擎以退出码 1 静默失败）。
+  [string]$DgHome = '',
+  [string]$Config = '',        # 留空 = <状态根>\config.json
+  # 宿主 pid（插件外壳传进来）：外壳被**硬杀**时 dispose 不会跑，桌宠得自己发现"爹没了"然后退出，
+  # 否则会留下一个还在抓屏、还在花钱的孤儿进程。0 = 不启用（本地自己跑就是 0）。
+  [int]$HostPid = 0,
   [switch]$SelfTest,
   [switch]$Dump,
   [switch]$VisibleTest,
@@ -77,12 +86,54 @@ if ($PSVersionTable.PSVersion.Major -lt 7) {
   exit 1
 }
 
+# ---------------------------------------------------------------------------
+# 机器相关路径 + 状态根（DG_HOME）
+#
+# ⚠️ 这两段必须放在**最前面**：下面的 Get-RunningPetPid（"已经在跑就别起第二个"）在 113 行
+# 左右就会被调用，而它要用 Get-DgHome。原来 paths.ps1 的 dot-source 排在 129 行，于是插件形态下
+# 一启动就报 "Get-DgHome 不是 cmdlet"、引擎退出码 1 —— 外壳连着重启 6 次才发现（探针实测）。
+#
+# 为什么要有状态根：桌宠原来把 config.json / run / logs / 录音 全写在**脚本旁边**。本机自己跑没问题，
+# 但装成 DSH 插件后引擎住在 node_modules 里 —— 插件一升级 pnpm 会把整个目录换掉，用户的配置、
+# 记忆、录音会一起没。所以：**要写的一律写到状态根**，脚本目录只留"只读的包内容"
+# （assets / presets / *.ps1）。
+#
+# 不设 = 就是脚本目录（本地这样跑和以前完全一样，不会偷偷把已有状态搬走）；
+# 外壳显式传 -DgHome 或设 DG_HOME 才外置。子进程（advisor / chat-panel / brain / stt / tts / web-ui）
+# 靠 **DG_HOME 环境变量**继承同一个根。
+# ---------------------------------------------------------------------------
+if (-not (Get-Command Get-DgDshPaths -ErrorAction SilentlyContinue)) { . (Join-Path $PSScriptRoot 'paths.ps1') }
+# 注意：参数叫 -DgHome（不能叫 -Home —— $HOME 是 PowerShell 的只读自动变量，绑定参数会直接打断脚本）
+if ($DgHome) { $env:DG_HOME = $DgHome }
+$script:DgHome = Get-DgHome -Override $DgHome
+if (-not $env:DG_HOME) { $env:DG_HOME = $script:DgHome }
+if ($script:DgHome -ne $PSScriptRoot) {
+  if (-not (Test-Path -LiteralPath $script:DgHome)) { New-Item -ItemType Directory -Force -Path $script:DgHome | Out-Null }
+  # 首次运行：把包里的默认配置"种"过去；之后一切以状态根下的为准（包里那份只是出厂默认）
+  foreach ($f in @('config.json', 'agents.json')) {
+    $dst = Join-Path $script:DgHome $f
+    $src = Join-Path $PSScriptRoot $f
+    if (-not (Test-Path -LiteralPath $dst) -and (Test-Path -LiteralPath $src)) { Copy-Item -LiteralPath $src -Destination $dst -Force }
+  }
+  # system-prompt.txt 是"当前生效的那份"（由 presets\<风格>.txt 复制出来的），也跟着状态走
+  $promptDst = Join-Path $script:DgHome 'system-prompt.txt'
+  if (-not (Test-Path -LiteralPath $promptDst)) {
+    $style = 'coach'
+    try { $style = [string]((Get-Content -LiteralPath (Join-Path $script:DgHome 'config.json') -Raw -Encoding UTF8 | ConvertFrom-Json).speakStyle) } catch { }
+    if (-not $style) { $style = 'coach' }
+    $preset = Join-Path $PSScriptRoot "presets\$style.txt"
+    if (-not (Test-Path -LiteralPath $preset)) { $preset = Join-Path $PSScriptRoot 'presets\coach.txt' }
+    if (Test-Path -LiteralPath $preset) { Copy-Item -LiteralPath $preset -Destination $promptDst -Force }
+  }
+}
+if (-not $Config) { $Config = Join-Path $script:DgHome 'config.json' }
+
 function Get-RunningPetPid {
   <# run\pet.pid 里记着当前桌宠的 PID。返回它还活着并且**确实是桌宠**的 PID，否则 0。
      为什么要确认命令行：PID 会被系统复用 —— 只看"这个号有没有活进程"，
      很容易把别的程序当桌宠，然后拒绝启动（那种 bug 最难查）。 #>
   param([string]$RunDir = '')
-  if (-not $RunDir) { $RunDir = Join-Path $PSScriptRoot 'run' }
+  if (-not $RunDir) { $RunDir = Join-Path (Get-DgHome) 'run' }
   $f = Join-Path $RunDir 'pet.pid'
   if (-not (Test-Path -LiteralPath $f)) { return 0 }
   $other = 0
@@ -120,10 +171,6 @@ if (-not ($SelfTest -or $Dump -or $VisibleTest)) {
 
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
-
-# 机器相关路径（DSH 装在哪、node/edge 在哪、角色图用哪张）统一走 paths.ps1。
-# 别在本文件里写绝对路径 —— 换台机器就哑，而且报错只会说「找不到文件」。
-if (-not (Get-Command Get-DgDshPaths -ErrorAction SilentlyContinue)) { . (Join-Path $PSScriptRoot 'paths.ps1') }
 
 # ---------------------------------------------------------------------------
 # 原生互操作 + 桌宠本体（C#，因为要自绘和精确控制窗口样式）
@@ -2066,8 +2113,9 @@ if (Test-Path $Config) {
   ($cfg | ConvertTo-Json -Depth 5) | Set-Content -LiteralPath $Config -Encoding UTF8
 }
 
-$runDir = Join-Path $PSScriptRoot 'run'
-$logDir = Join-Path $PSScriptRoot 'logs'
+# 状态目录一律从状态根（DG_HOME）出发 —— 插件形态下它就是 <DSH_HOME>\bloop
+$runDir = Join-Path $script:DgHome 'run'
+$logDir = Join-Path $script:DgHome 'logs'
 foreach ($d in @($runDir, $logDir)) { if (-not (Test-Path $d)) { New-Item -ItemType Directory -Path $d | Out-Null } }
 $payloadPath = Join-Path $runDir 'payload.json'
 $advisorOut = Join-Path $runDir 'advisor.out.txt'
@@ -2685,7 +2733,7 @@ function Complete-BackgroundCapture {
 #        - 用户行为：在同一个环境里**反复唤醒**（点它/长按/打字）说明当前太慢了 → 调低
 #   4. 学习值**覆盖**手写规则里的采样率，但手写规则里的 hint（这类任务该怎么帮）保留。
 # ---------------------------------------------------------------------------
-$script:taskSamplesPath = Join-Path $PSScriptRoot 'task-samples.json'
+$script:taskSamplesPath = Join-Path $script:DgHome 'task-samples.json'
 $script:taskSamples = $null          # @{ <key> = @{ sampleSeconds; source; evidence; updatedAt; why } }
 $script:wakeCounts = @{}             # 本进程内的唤醒计数（不进表，只是触发条件）
 $script:jumpStreak = 0               # 连续几次采样之间画面大跳变（= 采样太慢的信号）
@@ -4753,7 +4801,7 @@ $pet.SilentCount = [int]$script:silentTotal
 $pet.RegionSet = [bool]($cfg.region -and $cfg.region.w)
 
 # ---- DSH agent 引擎（外壳 + 引擎：我们出界面，DSH 出 agent 能力）----
-$agentsConfig = Join-Path $PSScriptRoot 'agents.json'
+$agentsConfig = Join-Path $script:DgHome 'agents.json'
 
 # 原始观察日志轮换：只保留最近 logKeepDays 天（默认 7）。
 # 一天的日志能到几 MB，不清理会一直涨。记忆只读最近 memoryHours，所以留几天足够回溯。
@@ -5150,7 +5198,7 @@ function Clear-MonitorRegion {
 function Set-SpeakStyle {
   param([ValidateSet('guard', 'coach', 'roast')][string]$Style)
   $src = Join-Path $PSScriptRoot "presets\$Style.txt"
-  $dst = Join-Path $PSScriptRoot 'system-prompt.txt'
+  $dst = Join-Path $script:DgHome 'system-prompt.txt'
   if (Test-Path $src) {
     $text = Get-Content -LiteralPath $src -Raw -Encoding UTF8
     Set-Content -LiteralPath $dst -Value $text -Encoding UTF8
@@ -5216,7 +5264,8 @@ function Apply-PetConfigLive {
   if ($Changed -contains 'speakStyle') {
     try {
       $src = Join-Path $PSScriptRoot ("presets\$($cfg.speakStyle).txt")
-      if (Test-Path -LiteralPath $src) { Copy-Item -LiteralPath $src -Destination (Join-Path $PSScriptRoot 'system-prompt.txt') -Force }
+      # 写到状态根下那份"当前生效的 prompt"（不是包里的出厂默认）
+      if (Test-Path -LiteralPath $src) { Copy-Item -LiteralPath $src -Destination (Join-Path $script:DgHome 'system-prompt.txt') -Force }
     } catch { }
   }
   # 任务规则表变了 → 之前攒的截图/任务档判据都过期了（顺带清环，反正马上会重新抓）
@@ -5313,7 +5362,7 @@ function Edit-ApiKey {
 }
 
 function Edit-SystemPrompt {
-  $file = Join-Path $PSScriptRoot 'system-prompt.txt'
+  $file = Join-Path $script:DgHome 'system-prompt.txt'
   if (-not (Test-Path $file)) { Set-Content -LiteralPath $file -Value '' -Encoding UTF8 }
   $f = New-Object System.Windows.Forms.Form
   $f.Text = '改 system prompt —— 你的指令优先级最高'
@@ -6149,12 +6198,114 @@ $ttsTimer.Interval = 120
 $ttsTimer.Add_Tick({ try { Update-Tts } catch { } })
 $ttsTimer.Start()
 
+# ---------------------------------------------------------------------------
+# 外部指令通道（给「插件外壳 / 别的插件」用）
+#
+# 为什么走文件、不让桌宠自己开端口：桌宠是桌面程序，少开一个监听就少一个被扫的面。
+# 外壳那边本来就有 HTTP 路由（`/dsh-bloop/say` 之类），它把请求落成 `run\ext-cmd\<id>.json`，
+# 这里每 500ms 扫一次 —— 和 `run\ask` 是同一个思路（那个方向相反：DSH 问人，桌宠回答）。
+#
+# 指令（认不出来的一律回 error，不静默吞）：
+#   { "cmd": "say",    "text": "..." }       说一句：气泡 + 朗读（走它自己开口那套出口）
+#   { "cmd": "pause" } / { "cmd": "resume" } 暂停 / 继续观察（等价于托盘那两项）
+#   { "cmd": "status" }                      只回执；状态请读外壳的 /state
+# 每条处理完写 `done-<id>.json`（外壳据此决定 HTTP 返回什么），原文件删掉。
+# ---------------------------------------------------------------------------
+$script:extCmdDir = Join-Path $runDir 'ext-cmd'
+try { if (-not (Test-Path -LiteralPath $script:extCmdDir)) { New-Item -ItemType Directory -Force -Path $script:extCmdDir | Out-Null } } catch { }
+
+function Invoke-ExtCommand {
+  param($Cmd)
+  $name = [string]$Cmd.cmd
+  switch ($name) {
+    'say' {
+      $text = [string]$Cmd.text
+      if ([string]::IsNullOrWhiteSpace($text)) { return @{ ok = $false; error = 'text 为空' } }
+      # 走它自己开口的同一套出口：先压纯文本（气泡不渲染 Markdown），再上气泡，再按需朗读
+      $shown = ConvertTo-PlainText $text
+      $pet.ShowMessage($shown, [int]$cfg.showSeconds)
+      [void](Speak-Text $shown)
+      Add-Interaction 'ext_say' (Shorten-Text $text 40)
+      return @{ ok = $true; chars = $shown.Length }
+    }
+    'pause' { Set-PetPaused -Paused $true -Reason 'ext-cmd'; return @{ ok = $true; paused = $true } }
+    'resume' { Set-PetPaused -Paused $false -Reason 'ext-cmd'; return @{ ok = $true; paused = $false } }
+    'status' { return @{ ok = $true; paused = [bool]$script:paused; standby = [bool]$script:standby } }
+    'quit' {
+      # 优雅退出：**先回执、再退**。直接 Application.Exit() 会把回执那一拍掐掉，
+      # 外壳就只会看到超时（实测）。延迟 300ms 是给回执落盘留的时间窗口。
+      $t = New-Object System.Windows.Forms.Timer
+      $t.Interval = 300
+      $t.Add_Tick({ try { $t.Stop(); $t.Dispose(); [System.Windows.Forms.Application]::Exit() } catch { } })
+      $t.Start()
+      return @{ ok = $true; quitting = $true }
+    }
+    default { return @{ ok = $false; error = "不认识的指令：$name" } }
+  }
+}
+
+function Receive-ExtCommands {
+  if (-not (Test-Path -LiteralPath $script:extCmdDir)) { return }
+  $files = @(Get-ChildItem -LiteralPath $script:extCmdDir -Filter '*.json' -File -ErrorAction SilentlyContinue |
+      Where-Object { $_.Name -notlike 'done-*' } | Sort-Object Name)
+  foreach ($f in $files) {
+    $id = [System.IO.Path]::GetFileNameWithoutExtension($f.Name)
+    $result = $null
+    try {
+      $cmd = Get-Content -LiteralPath $f.FullName -Raw -Encoding UTF8 | ConvertFrom-Json
+      $result = Invoke-ExtCommand -Cmd $cmd
+    } catch {
+      $result = @{ ok = $false; error = [string]$_.Exception.Message }
+    }
+    # 回执先落盘再删请求：外壳是按 done-<id>.json 决定 HTTP 返回什么，顺序反了会读不到
+    try {
+      $result['id'] = $id
+      $result['at'] = (Get-Date).ToString('o')
+      ([pscustomobject]$result | ConvertTo-Json -Depth 4 -Compress) |
+        Set-Content -LiteralPath (Join-Path $script:extCmdDir ("done-$id.json")) -Encoding UTF8
+    } catch { }
+    try { Remove-Item -LiteralPath $f.FullName -Force } catch { }
+  }
+}
+
+$extTimer = New-Object System.Windows.Forms.Timer
+$extTimer.Interval = 500
+$extTimer.Add_Tick({ try { Receive-ExtCommands } catch { } })
+$extTimer.Start()
+
+# 宿主看门狗：只在被插件外壳拉起来时启用（-HostPid）。
+# 外壳被硬杀（任务管理器结束进程 / 崩溃）时它的 dispose 根本不会跑 —— 桌宠得自己发现
+# "爹没了"然后退出，否则就是一个还在抓屏、还在花钱的孤儿。做法和探针、dsh-pet 的 helper 一致。
+if ($HostPid -gt 0) {
+  $hostTimer = New-Object System.Windows.Forms.Timer
+  $hostTimer.Interval = 2000
+  $hostTimer.Add_Tick({
+      try {
+        if (-not (Get-Process -Id $HostPid -ErrorAction SilentlyContinue)) {
+          Add-Interaction 'host_gone' "$HostPid"
+          [System.Windows.Forms.Application]::Exit()
+        }
+      } catch { }
+    })
+  $hostTimer.Start()
+}
+
 $pet.Add_FormClosing({
     try { Stop-Tts | Out-Null } catch { }
     # 托盘图标不显式收掉的话，进程没了它还会挂在通知区里，要等鼠标划过才消失
     try { if ($script:tray) { $script:tray.Visible = $false; $script:tray.Dispose() } } catch { }
     # 退出时把常驻大脑收掉（它自己也有 pet.pid 看门狗，双保险）
     try { if ($cfg.brainTransport) { Stop-Brain -RunDir $runDir } } catch { }
+    # 🔴 退出时必须把**对话窗口那个 DSH Web 服务**也收掉。
+    # 这条是补的：原来只收了 TTS/托盘/大脑，对话服务一直留着 —— 每退一次桌宠就漏一个
+    # DSH 进程（Electron，几百 MB），还占着 run\webui.json 与 .webui-profile（实测：替插件外壳
+    # 做端到端时就撞上了一个这样的孤儿，它把状态根里的文件锁住）。
+    # ⚠️ 不能用 `Stop-WebUi` 直接调：引擎进程里根本没有它 —— 预热是**另一个 pwsh** dot-source
+    # web-ui.ps1 起的（见文件末尾那段）。所以这里再起一个短命子进程去收，它靠 DG_HOME 找到同一个状态根。
+    try {
+      $webCmd = ". '$PSScriptRoot\web-ui.ps1'; [void](Stop-WebUi)"
+      Start-Process -FilePath 'pwsh' -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', $webCmd) -WindowStyle Hidden | Out-Null
+    } catch { }
     Save-PetState
   })
 

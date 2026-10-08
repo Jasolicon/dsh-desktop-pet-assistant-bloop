@@ -36,7 +36,12 @@ $script:Root =
 
 . (Join-Path $script:Root 'dsh-sdk.ps1')
 
-$runDir = Join-Path $script:Root 'run'
+# 状态根（DG_HOME）：run / config.json / agents.json 都从这走；不设时 == 包目录。
+# 大脑是常驻进程，DG_HOME 由桌宠主进程通过环境变量传进来（见 DesktopGuide.ps1 顶部那段）。
+if (-not (Get-Command Get-DgHome -ErrorAction SilentlyContinue)) { . (Join-Path $script:Root 'paths.ps1') }
+$dgHome = Get-DgHome
+
+$runDir = Join-Path $dgHome 'run'
 $brainDir = Join-Path $runDir 'brain'
 $stageFile = Join-Path $runDir 'stage.txt'
 if (-not (Test-Path $brainDir)) { New-Item -ItemType Directory -Force -Path $brainDir | Out-Null }
@@ -46,12 +51,12 @@ function Write-Stage([string]$Text) {
 }
 
 function Get-BrainConfig {
-  try { return (Get-Content -LiteralPath (Join-Path $script:Root 'config.json') -Raw -Encoding UTF8 | ConvertFrom-Json) } catch { return $null }
+  try { return (Get-Content -LiteralPath (Join-Path $dgHome 'config.json') -Raw -Encoding UTF8 | ConvertFrom-Json) } catch { return $null }
 }
 
 # ---- 起运行时（一次）----
 $cfg = Get-BrainConfig
-$agentsCfgPath = Join-Path $script:Root 'agents.json'
+$agentsCfgPath = Join-Path $dgHome 'agents.json'
 $model = [pscustomobject]@{ provider = 'deepseek-account'; model = 'deepseek-flash'; effort = 'low' }
 try {
   $ac = Get-Content -LiteralPath $agentsCfgPath -Raw -Encoding UTF8 | ConvertFrom-Json

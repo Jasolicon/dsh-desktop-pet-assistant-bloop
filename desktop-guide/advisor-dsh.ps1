@@ -26,12 +26,16 @@ trap {
 }
 
 $root = $PSScriptRoot
-$runDir = Join-Path $root 'run'
-$logDir = Join-Path $root 'logs'
+# 状态根（DG_HOME）：run / logs / agents.json / system-prompt.txt 都从这走。
+# 不设 DG_HOME 时 == $root（本地跑和以前一样，也保证 config 不变）。见 paths.ps1 的 Get-DgHome。
+if (-not (Get-Command Get-DgHome -ErrorAction SilentlyContinue)) { . (Join-Path $root 'paths.ps1') }
+$dgHome = Get-DgHome
+$runDir = Join-Path $dgHome 'run'
+$logDir = Join-Path $dgHome 'logs'
 foreach ($d in @($runDir, $logDir)) { if (-not (Test-Path $d)) { New-Item -ItemType Directory -Path $d | Out-Null } }
 
 . (Join-Path $root 'dsh-agents.ps1')
-$cfg = Get-AgentConfig -Path (Join-Path $root 'agents.json')
+$cfg = Get-AgentConfig -Path (Join-Path $dgHome 'agents.json')
 
 $mcfg = $cfg.mainAgent
 $model = $cfg.models | Where-Object { $_.name -eq $mcfg.model } | Select-Object -First 1
@@ -198,7 +202,7 @@ try { Get-ChildItem $shotDir -File | Sort-Object LastWriteTime -Descending | Sel
 $prompt = ($lines -join "`n")
 
 # 用户自定义 system prompt：最高优先级追加在后面
-$overrideFile = Join-Path $root 'system-prompt.txt'
+$overrideFile = Join-Path $dgHome 'system-prompt.txt'
 if ((Test-Path $overrideFile) -and ((Get-Item $overrideFile).Length -gt 0)) {
   $custom = (Get-Content -LiteralPath $overrideFile -Raw -Encoding UTF8).Trim()
   if ($custom) {

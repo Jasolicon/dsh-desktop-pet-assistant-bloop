@@ -17,6 +17,10 @@ $script:LedgerRoot =
   elseif ($MyInvocation.MyCommand.Path) { Split-Path -Parent $MyInvocation.MyCommand.Path }
   else { (Get-Location).Path }
 
+# 状态根（DG_HOME）：api key 与本地账本都写它。不设时 == LedgerRoot（本地跑和以前一样）。
+if (-not (Get-Command Get-DgHome -ErrorAction SilentlyContinue)) { . (Join-Path $script:LedgerRoot 'paths.ps1') }
+$script:LedgerHome = Get-DgHome
+
 function Get-DeepSeekBalance {
   <#
     自己查余额。
@@ -36,7 +40,7 @@ function Get-DeepSeekBalance {
       # 依次试两个文件：专用文件优先；再试 advisor-openai 那个（它打的也是 DeepSeek 接口，
       # 里面装的本来就是 DeepSeek 的 key —— 老用户不用为了账本再填一遍）。
       foreach ($name in @('deepseek.key', 'openai.key')) {
-        $kf = Join-Path $script:LedgerRoot (Join-Path 'run' $name)
+        $kf = Join-Path $script:LedgerHome (Join-Path 'run' $name)
         if (Test-Path -LiteralPath $kf) {
           $v = (Get-Content -LiteralPath $kf -Raw -Encoding UTF8).Trim()
           if ($v) { $ApiKey = $v; break }
@@ -154,7 +158,7 @@ function Format-LedgerCard {
 # 这是最小可用版：够算"今天花了多少"和"是不是充值了"，不做多账户/校正那套。
 # 观测只在余额**变化**时落盘，避免每 20 秒写一行把文件撑大。
 # ---------------------------------------------------------------------------
-$script:localLedgerPath = Join-Path $PSScriptRoot 'ledger.json'
+$script:localLedgerPath = Join-Path $script:LedgerHome 'ledger.json'
 
 function Get-TodayStartBalance {
   <# 今天第一笔观测的余额（= 今天的起点）。没有就返回 0。 #>

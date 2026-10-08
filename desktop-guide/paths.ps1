@@ -14,6 +14,10 @@
 #   3. 自动探测：PATH → 常见安装位置 → 从已知文件反推根目录
 #
 # 环境变量一览（都可选，不设就自动探测）：
+#   DG_HOME       **状态根目录**（config.json / run / logs / 语音模型 / 录音都在这下面）。
+#                 不设 = 就用脚本所在目录（本地这样跑，跟以前完全一样）。
+#                 装成 DSH 插件时必须设它 —— 引擎住在 node_modules 里，插件一升级 pnpm 会把
+#                 整个目录换掉，配置和记忆写在脚本旁边会一起没。外壳会指向 <DSH_HOME>\bloop。
 #   DG_DSH_ROOT   DSH 安装根目录（装在别处时设这个最省事）
 #   DG_DSH_EXE    DeepSeek Harness.exe 完整路径
 #   DG_DSH_CLI    dsh-desktop-host/lib/cli.js 完整路径
@@ -28,6 +32,25 @@
 $script:DgRoot = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
 
 function Get-DgRoot { return $script:DgRoot }
+
+# 状态根目录（见文件头 DG_HOME 那段）。**只有这一处**决定状态写在哪。
+#
+# 解析顺序：参数覆盖 → DG_HOME → 脚本目录。
+# 特意**不**自动回落到 <DSH_HOME>\bloop：那样会在用户没准备的时候把已有状态"搬走"，
+# 表现就是"配置突然重置了"。谁要外置（插件外壳）谁显式设 DG_HOME。
+function Get-DgHome {
+  param([string]$Override = '')
+  if ($Override) { return $Override }
+  $fromEnv = Get-DgEnv 'DG_HOME'
+  if ($fromEnv) { return $fromEnv }
+  return $script:DgRoot
+}
+
+# 某个状态文件的完整路径（run\webui.json、config.json 之类都从这走）
+function Get-DgHomePath {
+  param([Parameter(Mandatory = $true)][string]$Name, [string]$Override = '')
+  return (Join-Path (Get-DgHome -Override $Override) $Name)
+}
 
 # 读环境变量（去空白）；没设返回空串。
 function Get-DgEnv {

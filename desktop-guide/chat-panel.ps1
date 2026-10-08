@@ -30,7 +30,9 @@ try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false) } catc
 # 没法替它往输入框里塞字，所以那条路继续走自绘版。
 if (-not $PayloadFile) {
   $chatCfg = $null
-  try { $chatCfg = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'config.json') -Raw -Encoding UTF8 | ConvertFrom-Json } catch { }
+  # 状态根（DG_HOME）：配置从状态根读；不设时 == 脚本目录
+  if (-not (Get-Command Get-DgHome -ErrorAction SilentlyContinue)) { . (Join-Path $PSScriptRoot 'paths.ps1') }
+  try { $chatCfg = Get-Content -LiteralPath (Join-Path (Get-DgHome) 'config.json') -Raw -Encoding UTF8 | ConvertFrom-Json } catch { }
   $chatUi = 'dsh'
   if ($chatCfg -and ($chatCfg.PSObject.Properties.Name -contains 'chatUi') -and $chatCfg.chatUi) { $chatUi = [string]$chatCfg.chatUi }
   if ($chatUi -ne 'bubbles') {
@@ -235,15 +237,18 @@ namespace DesktopGuide {
 # 配置 / 会话
 # ---------------------------------------------------------------------------
 $root = $PSScriptRoot
-$runDir = Join-Path $root 'run'
-$logDir = Join-Path $root 'logs'
+# 状态根（DG_HOME）：run / logs / agents.json / config.json 都从这走；不设时 == $root
+if (-not (Get-Command Get-DgHome -ErrorAction SilentlyContinue)) { . (Join-Path $root 'paths.ps1') }
+$dgHome = Get-DgHome
+$runDir = Join-Path $dgHome 'run'
+$logDir = Join-Path $dgHome 'logs'
 . (Join-Path $root 'dsh-agents.ps1')
 # 会话绑定的工作目录：必须和当初建这个 session 时一致，否则 dsh 会拒绝续跑。
 $workspace = Get-AgentWorkspace -RunDir $runDir
 # 对话气泡同样是自绘纯文本，不编译 Markdown —— 进气泡前先压成纯文本（和桌宠共用一套规则）。
 . (Join-Path $root 'md-plain.ps1')
-$cfg = Get-AgentConfig -Path (Join-Path $root 'agents.json')
-$petCfgPath = Join-Path $root 'config.json'
+$cfg = Get-AgentConfig -Path (Join-Path $dgHome 'agents.json')
+$petCfgPath = Join-Path $dgHome 'config.json'
 $petCfg = Get-Content -LiteralPath $petCfgPath -Raw -Encoding UTF8 | ConvertFrom-Json
 $uiFamily = if ($petCfg.fontFamily) { [string]$petCfg.fontFamily } else { 'Microsoft YaHei UI' }
 $uiSize = if ($petCfg.fontSize) { [double]$petCfg.fontSize } else { 9.5 }

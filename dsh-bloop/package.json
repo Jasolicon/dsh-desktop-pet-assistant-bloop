@@ -1,0 +1,35 @@
+{
+  "name": "dsh-bloop",
+  "version": "0.1.0",
+  "description": "泡泡 · Bloop —— DSH 里的主动式桌面助手（看屏幕、判断要不要开口、派活给 agent）。这是插件外壳：装它、拉起引擎、把状态和对外接口接上。",
+  "type": "module",
+  "main": "lib/index.js",
+  "license": "PolyForm-Noncommercial-1.0.0",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "engine",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build:engine": "node scripts/build-engine.mjs",
+    "prepack": "node scripts/build-engine.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web"
+    }
+  }
+}

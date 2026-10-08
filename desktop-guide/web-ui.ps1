@@ -29,6 +29,10 @@ $script:WebUiRoot =
 # 机器相关路径统一走 paths.ps1
 if (-not (Get-Command Get-DgDshPaths -ErrorAction SilentlyContinue)) { . (Join-Path $script:WebUiRoot 'paths.ps1') }
 
+# 状态根（DG_HOME）：run\webui.json 与 Edge 的用户数据目录都写它；
+# 不设 DG_HOME 时 == 包目录（本地跑和以前一样）。见 paths.ps1 的 Get-DgHome。
+$script:DgHome = Get-DgHome
+
 function Get-WebUiPlan {
   param($Config)
   $get = {
@@ -48,10 +52,10 @@ function Get-WebUiPlan {
     Edge         = $edge
     Port         = [int](& $get 'webPort' 4319)
     Profile      = 'web'
-    RunDir       = Join-Path $script:WebUiRoot 'run'
-    StateFile    = Join-Path $script:WebUiRoot 'run\webui.json'
-    ModelPatch   = Join-Path $script:WebUiRoot 'run\webui-model.patch.yml'
-    BrowserData  = Join-Path $script:WebUiRoot '.webui-profile'
+    RunDir       = Join-Path $script:DgHome 'run'
+    StateFile    = Join-Path $script:DgHome 'run\webui.json'
+    ModelPatch   = Join-Path $script:DgHome 'run\webui-model.patch.yml'
+    BrowserData  = Join-Path $script:DgHome '.webui-profile'
     Width        = [int](& $get 'webWindowWidth' 560)
     Height       = [int](& $get 'webWindowHeight' 780)
   }

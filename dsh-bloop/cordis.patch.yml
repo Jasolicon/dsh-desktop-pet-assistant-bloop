@@ -1,0 +1,4 @@
+# 只做一件事：把外壳挂进 profile。真正的活儿（拉起引擎）在 lib/index.js 的 apply 里。
+- insert:
+    - id: bloop
+      name: dsh-bloop

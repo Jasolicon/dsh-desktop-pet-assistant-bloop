@@ -42,6 +42,11 @@ $script:SttRoot =
   elseif ($MyInvocation.MyCommand.Path) { Split-Path -Parent $MyInvocation.MyCommand.Path }
   else { (Get-Location).Path }
 
+# 状态根（DG_HOME）：模型 / 录音 / 运行产物都写它，脚本目录只放只读包内容。
+# 不设 DG_HOME 时它 == SttRoot（本地跑和以前一样）。见 paths.ps1 的 Get-DgHome。
+if (-not (Get-Command Get-DgHome -ErrorAction SilentlyContinue)) { . (Join-Path $script:SttRoot 'paths.ps1') }
+$script:SttHome = Get-DgHome
+
 $script:Stt = [pscustomobject]@{
   Ready       = $false
   Reason      = ''
@@ -314,10 +319,10 @@ function Initialize-Stt {
   $script:Stt.SampleRate = [int](Get-SttConfigValue $Config 'sttSampleRate' 44100)
   $script:Stt.Node = Resolve-SttNode ([string](Get-SttConfigValue $Config 'sttNode' ''))
   $script:Stt.SherpaDir = [string](Get-SttConfigValue $Config 'sttSherpaDir' '')
-  if (-not $script:Stt.SherpaDir) { $script:Stt.SherpaDir = Join-Path $script:SttRoot '.stt\sherpa\sherpa-onnx-node' }
+  if (-not $script:Stt.SherpaDir) { $script:Stt.SherpaDir = Join-Path $script:SttHome '.stt\sherpa\sherpa-onnx-node' }
 
   $dir = [string](Get-SttConfigValue $Config 'sttModelDir' '')
-  if (-not $dir) { $dir = Join-Path $script:SttRoot '.stt\model' }
+  if (-not $dir) { $dir = Join-Path $script:SttHome '.stt\model' }
   $script:Stt.ModelDir = $dir
 
   $missing = @(Get-SttMissingAssets)
@@ -446,7 +451,7 @@ function Stop-SttRecording {
   $engine = $script:Stt.Engine
   $script:Stt.Recording = $false
   if (-not $OutFile) {
-    $dir = Join-Path $script:SttRoot 'run\mic'
+    $dir = Join-Path $script:SttHome 'run\mic'
     if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
     $OutFile = Join-Path $dir ("mic-{0}.wav" -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
   }
@@ -488,8 +493,8 @@ function Start-SttTranscribe {
   param([Parameter(Mandatory = $true)][string]$WavPath, [int]$TimeoutSeconds = 60)
   if (-not (Test-Path -LiteralPath $WavPath)) { throw "录音文件不存在：$WavPath" }
 
-  $outFile = Join-Path $script:SttRoot 'run\stt.out.json'
-  $errFile = Join-Path $script:SttRoot 'run\stt.err.txt'
+  $outFile = Join-Path $script:SttHome 'run\stt.out.json'
+  $errFile = Join-Path $script:SttHome 'run\stt.err.txt'
   Remove-Item -LiteralPath $outFile, $errFile -Force -ErrorAction SilentlyContinue
 
   # 变量别叫 $args：那是 PowerShell 的自动变量，同名会出事。
@@ -566,7 +571,7 @@ function Test-Stt {
   #>
   param([string]$Wav, [int]$Count = 2)
   $ok = $true
-  if (-not $script:Stt.ModelDir) { [void](Initialize-Stt -Config (Get-Content -LiteralPath (Join-Path $script:SttRoot 'config.json') -Raw -Encoding UTF8 | ConvertFrom-Json)) }
+  if (-not $script:Stt.ModelDir) { [void](Initialize-Stt -Config (Get-Content -LiteralPath (Join-Path $script:SttHome 'config.json') -Raw -Encoding UTF8 | ConvertFrom-Json)) }
   Write-Output (Get-SttStatus)
   if (-not $script:Stt.Ready) { return $false }
 
@@ -574,7 +579,7 @@ function Test-Stt {
   if ($Wav) {
     $cases += [pscustomobject]@{ Wav = $Wav; Expect = '' }
   } else {
-    $ttsDir = Join-Path $script:SttRoot 'run\tts'
+  $ttsDir = Join-Path $script:SttHome 'run\tts'
     if (Test-Path -LiteralPath $ttsDir) {
       # 按编号排（否则 say-1、say-10、say-11 会挤到前面）
       $files = Get-ChildItem -LiteralPath $ttsDir -Filter 'say-*.wav' |

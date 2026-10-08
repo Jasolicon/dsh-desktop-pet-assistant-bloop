@@ -1,0 +1,4 @@
+# 引擎是按需从 ../desktop-guide 组装进来的（唯一源码在那），不进仓库 ——
+# 仓库里放第二份迟早漂移。发布时 prepack 也会重新组装。
+engine/
+node_modules/

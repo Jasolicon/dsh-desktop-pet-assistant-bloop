@@ -22,7 +22,12 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-$keyFile = Join-Path $PSScriptRoot 'run\openai.key'
+# 状态根（DG_HOME）：key / config.json / logs / system-prompt.txt 都从这走；
+# 不设 DG_HOME 时 == 脚本目录（本地跑和以前一样）。见 paths.ps1 的 Get-DgHome。
+if (-not (Get-Command Get-DgHome -ErrorAction SilentlyContinue)) { . (Join-Path $PSScriptRoot 'paths.ps1') }
+$dgHome = Get-DgHome
+
+$keyFile = Join-Path $dgHome 'run\openai.key'
 $apiKey = $env:OPENAI_API_KEY
 if ([string]::IsNullOrWhiteSpace($apiKey) -and (Test-Path $keyFile)) {
   $apiKey = (Get-Content -LiteralPath $keyFile -Raw -Encoding UTF8).Trim()
@@ -94,7 +99,7 @@ $system = @'
 '@
 
 # 和另两条路保持一致：用户改的 system prompt（陪练模式等）走同一个文件，三条路都读。
-$overrideFile = Join-Path $PSScriptRoot 'system-prompt.txt'
+$overrideFile = Join-Path $dgHome 'system-prompt.txt'
 if ((Test-Path $overrideFile) -and ((Get-Item $overrideFile).Length -gt 0)) {
   $custom = (Get-Content -LiteralPath $overrideFile -Raw -Encoding UTF8).Trim()
   if ($custom) { $system += "`n`n=== 用户自定义指令（最高优先级，与你上面的规则冲突时以这一节为准）===`n$custom" }
@@ -105,7 +110,7 @@ if ((Test-Path $overrideFile) -and ((Get-Item $overrideFile).Length -gt 0)) {
 # 窗口长度和「清空记忆」的时间点都在 config.json 里，便于调整。
 . (Join-Path $PSScriptRoot 'memory.ps1')
 $memHours = 4; $memSince = [datetime]::MinValue
-$petCfgFile = Join-Path $PSScriptRoot 'config.json'
+$petCfgFile = Join-Path $dgHome 'config.json'
 if (Test-Path $petCfgFile) {
   try {
     $pc = Get-Content -LiteralPath $petCfgFile -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -113,7 +118,7 @@ if (Test-Path $petCfgFile) {
     if ($pc.memorySince) { try { $memSince = [datetime]$pc.memorySince } catch { } }
   } catch { }
 }
-$memoryText = Get-ContextMemory -LogDir (Join-Path $PSScriptRoot 'logs') -Hours $memHours -Since $memSince
+$memoryText = Get-ContextMemory -LogDir (Join-Path $dgHome 'logs') -Hours $memHours -Since $memSince
 if ($memoryText) { [void]$lines.Add(''); [void]$lines.Add($memoryText) }
 
 # ---- 没有截图时，禁止"照标题脑补"（与 advisor-dsh.ps1 同一套口径）----
@@ -142,7 +147,7 @@ $imageCount = 0
 if ($useVision -and $payload.shots) {
   # 发几张图由 config.json 的 fastImageCount 决定（越小越快，但可能看不到关键变化）
   $shotCount = 2
-  $petCfg2 = Join-Path $PSScriptRoot 'config.json'
+  $petCfg2 = Join-Path $dgHome 'config.json'
   if (Test-Path $petCfg2) {
     try { $c2 = Get-Content -LiteralPath $petCfg2 -Raw -Encoding UTF8 | ConvertFrom-Json; if ($c2.fastImageCount) { $shotCount = [int]$c2.fastImageCount } } catch { }
   }

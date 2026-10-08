@@ -28,7 +28,11 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-$keyFile = Join-Path $PSScriptRoot 'run\minimax.key'
+# 状态根（DG_HOME）：key / system-prompt.txt 都从这走；不设时 == 脚本目录（和以前一样）
+if (-not (Get-Command Get-DgHome -ErrorAction SilentlyContinue)) { . (Join-Path $PSScriptRoot 'paths.ps1') }
+$dgHome = Get-DgHome
+
+$keyFile = Join-Path $dgHome 'run\minimax.key'
 $apiKey = $env:MINIMAX_API_KEY
 if ([string]::IsNullOrWhiteSpace($apiKey) -and (Test-Path $keyFile)) {
   $apiKey = (Get-Content -LiteralPath $keyFile -Raw -Encoding UTF8).Trim()
@@ -161,7 +165,7 @@ $system = @'
 
 # 和 DSH 路径保持一致：用户改的 system prompt 走同一个文件，两条路都读。
 # （之前只有 advisor-dsh 读它 —— 结果切了陪练模式，快速路径还在保守模式里沉默。）
-$overrideFile = Join-Path $PSScriptRoot 'system-prompt.txt'
+$overrideFile = Join-Path $dgHome 'system-prompt.txt'
 if ((Test-Path $overrideFile) -and ((Get-Item $overrideFile).Length -gt 0)) {
   $custom = (Get-Content -LiteralPath $overrideFile -Raw -Encoding UTF8).Trim()
   if ($custom) { $system += "`n`n=== 用户自定义指令（最高优先级，与你上面的规则冲突时以这一节为准）===`n$custom" }
