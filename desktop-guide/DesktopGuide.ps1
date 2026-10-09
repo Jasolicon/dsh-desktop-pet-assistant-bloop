@@ -675,6 +675,10 @@ namespace DesktopGuide {
     /** 用户点了第几个选项；-1 = 超时/取消 */
     public int LastOptionIndex = -1;
     public event EventHandler Dropped;
+    /** 被点了一下（单击本体）。内置是弹一下；如果配了 petActionCommand，改由外部动作提供者接管。 */
+    public event EventHandler PetPoked;
+    /** 这次动作叫什么（现在只有 "click"）。外部提供者按它决定播哪个动作。 */
+    public string LastAction = "";
     public event EventHandler TtsChanged;
     public event EventHandler InterruptRequested;
     public event EventHandler ReplayRequested;
@@ -809,6 +813,7 @@ namespace DesktopGuide {
     string message = "";
     DateTime messageUntil = DateTime.MinValue;
     string state = "idle";        // idle | thinking | speaking | silent
+    DateTime pokeStart = DateTime.MinValue;   // 被摸了一下 → 弹性动作的起点
     int tick = 5;   // 从非眨眼帧开始，免得第一眼看到的是闭眼
     bool dragging;
     bool moved;
@@ -1265,7 +1270,12 @@ namespace DesktopGuide {
             case 2: Fire(TypeRequested); break;      // 打字派活：和长按说话同一条下游
             case 3: Fire(PickRegionRequested); break;
             case 4: Fire(HistoryRequested); break;
-            default: LastAskSource = "click"; Fire(AskRequested); break;
+            // 单击本体：**不再是「问一句」**，而是「摸一下」有反应。
+            // 为什么改：问一句有按钮条上的「问一句」、右键菜单、Ctrl+Alt+G 三个入口，
+            // 而"摸它有反应"只有点本体这一条路 —— 后者更像一只宠物，前者更像一个按钮。
+            // 弹不弹由 PowerShell 那边决定：配了 petActionCommand 就交给它（Live2D / 动作集），
+            // 没配就调 Poke() 走内置的弹性动作。
+            default: LastAction = "click"; Fire(PetPoked); break;
           }
         }
       }
@@ -1523,6 +1533,20 @@ namespace DesktopGuide {
       }
     }
 
+    /// 被摸了一下的弹性动作：阻尼弹簧 —— 先被按下去，再弹两下收住。
+    /// 只有静态角色图会走这条（原桌宠那种「有生命感」的做法）；
+    /// 用户配了 petActionCommand（Live2D / 动作集）就由那边播，这里不掺和。
+    public void Poke() { pokeStart = DateTime.Now; Render(); }
+
+    int PokeOffset() {
+      if (pokeStart == DateTime.MinValue) return 0;
+      double t = (DateTime.Now - pokeStart).TotalSeconds;
+      const double dur = 0.9;
+      if (t >= dur) { pokeStart = DateTime.MinValue; return 0; }
+      double damp = Math.Exp(-4.2 * t);          // 越到后面越小 = 收住
+      return (int)(Math.Sin(t * 15.5) * S(9) * damp);
+    }
+
     void DrawAll(Graphics g) {
       g.SmoothingMode = SmoothingMode.AntiAlias;
 
@@ -1532,7 +1556,7 @@ namespace DesktopGuide {
 
       // 有现成角色图：画图 + 状态光晕，然后收工（下面的代码绘制是备用方案）
       if (petImage != null) {
-        int bob = (int)(Math.Sin(tick / 12.0) * 3);
+        int bob = (int)(Math.Sin(tick / 12.0) * 3) + PokeOffset();
         var slot = new Rectangle(px - 16, py + 2 + bob, PetW + 32, PetH - 2);
         var dest = FitInto(petImage.Width, petImage.Height, slot);
         // 气泡按**角色图的实际上边缘**定位（不是按槽位），否则会飘太高
@@ -2128,6 +2152,10 @@ $defaults = [ordered]@{
   taskBrief             = $true
   taskBriefCommand      = 'pwsh -NoProfile -ExecutionPolicy Bypass -File "{root}\advisor-openai.ps1" -Brief'
   taskBriefTimeoutSeconds = 25
+  # 单击宠物的动作：留空 = 内置弹性动作（把静态角色图弹一下，像原桌宠那样）。
+  # 填一条命令 = 交给外部动作提供者（Live2D / 动作集），约定：命令 + 参数 1 = 动作名
+  # （现在只会传 "click"）。这一条就是给 Live2D 那条路预留的接口。
+  petActionCommand     = ''
   # 大脑来源：dsh | openai | ollama | custom。它不是运行时开关，而是**设置窗口的翻译层** ——
   # 选了它就会把下面 advisor / advisorFast 两行改写成对应脚本（见 settings-window.ps1 的 Resolve-DgBrainCommands）。
   brainKind             = 'dsh'
@@ -6355,6 +6383,28 @@ $pet.Add_PromptRequested({
 $pet.Add_StyleGuardRequested({ try { Set-SpeakStyle -Style 'guard' } catch { } })
 $pet.Add_StyleCoachRequested({ try { Set-SpeakStyle -Style 'coach' } catch { } })
 $pet.Add_StyleRoastRequested({ try { Set-SpeakStyle -Style 'roast' } catch { } })
+
+# 单击本体 = 摸一下，**不再问一句**（问一句还有按钮条 / 右键菜单 / Ctrl+Alt+G 三个入口）。
+#   · 没配 petActionCommand → 内置弹性动作（只有静态角色图能用：把图弹一下）
+#   · 配了 → 交给外部动作提供者（Live2D / 动作集），约定：命令 + 参数 1 = 动作名
+#     （现在只有 "click"；以后可以加 "poke_happy"、"drag_start" 之类）
+$pet.Add_PetPoked({
+    try {
+      Note-UserAction 'poke'
+      Add-Interaction 'pet_action' $pet.LastAction
+      $actionCmd = Expand-DgTokens ([string]$cfg.petActionCommand)
+      if ([string]::IsNullOrWhiteSpace($actionCmd)) {
+        $pet.Poke()
+      } else {
+        try {
+          Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', ('{0} {1}' -f $actionCmd, $pet.LastAction) -NoNewWindow | Out-Null
+        } catch {
+          # 外部提供者没起来就退回内置动作 —— 摸它总要有点反应
+          try { $pet.Poke() } catch { }
+        }
+      }
+    } catch { }
+  })
 
 # 拖东西到宠物身上 = 发给 agent（打开对话栏并把内容填进去，直接发）
 $pet.Add_Dropped({
