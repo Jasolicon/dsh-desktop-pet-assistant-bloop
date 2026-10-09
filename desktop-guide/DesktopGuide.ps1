@@ -1533,18 +1533,23 @@ namespace DesktopGuide {
       }
     }
 
-    /// 被摸了一下的弹性动作：阻尼弹簧 —— 先被按下去，再弹两下收住。
-    /// 只有静态角色图会走这条（原桌宠那种「有生命感」的做法）；
-    /// 用户配了 petActionCommand（Live2D / 动作集）就由那边播，这里不掺和。
+    /// 被摸一下的弹性动作：**压扁再回弹**（缩放宽高），不是整体位移。
+    ///
+    /// 参考 dsh-whale-widget：它的 .dshwv-body 是
+    ///   transform-origin:50% 100%;  transition:transform .22s cubic-bezier(.34,1.56,.64,1)
+    /// 也就是"锚在**底部中心**把宽高缩一下，带过冲地弹回来" —— 这是压皮球的手感。
+    /// 这里用等价的阻尼正弦（先压扁 → 再拉长 → 衰减收住），锚点同样是底部中心。
     public void Poke() { pokeStart = DateTime.Now; Render(); }
 
-    int PokeOffset() {
-      if (pokeStart == DateTime.MinValue) return 0;
+    void PokeSquash(out double sx, out double sy) {
+      sx = 1.0; sy = 1.0;
+      if (pokeStart == DateTime.MinValue) return;
       double t = (DateTime.Now - pokeStart).TotalSeconds;
-      const double dur = 0.9;
-      if (t >= dur) { pokeStart = DateTime.MinValue; return 0; }
-      double damp = Math.Exp(-4.2 * t);          // 越到后面越小 = 收住
-      return (int)(Math.Sin(t * 15.5) * S(9) * damp);
+      const double dur = 0.8;                     // 比 .22s 长一点：GDI 这边每 90ms 才重绘一帧
+      if (t >= dur) { pokeStart = DateTime.MinValue; return; }
+      double s = Math.Sin(t * 14.0) * Math.Exp(-3.6 * t);   // 先正（压扁）后负（拉长），衰减
+      sy = 1.0 - 0.16 * s;      // 压扁时变矮
+      sx = 1.0 + 0.14 * s;      // 同时变宽 —— 这才是"球被按"而不是"整体缩小"
     }
 
     void DrawAll(Graphics g) {
@@ -1556,14 +1561,20 @@ namespace DesktopGuide {
 
       // 有现成角色图：画图 + 状态光晕，然后收工（下面的代码绘制是备用方案）
       if (petImage != null) {
-        int bob = (int)(Math.Sin(tick / 12.0) * 3) + PokeOffset();
+        int bob = (int)(Math.Sin(tick / 12.0) * 3);
         var slot = new Rectangle(px - 16, py + 2 + bob, PetW + 32, PetH - 2);
         var dest = FitInto(petImage.Width, petImage.Height, slot);
         // 气泡按**角色图的实际上边缘**定位（不是按槽位），否则会飘太高
         if (!string.IsNullOrEmpty(message)) DrawBubble(g, dest.X + dest.Width / 2, dest.Top);
         DrawGlow(g, slot);
+        // 被摸一下：以**底边中点**为锚，压扁/拉长。气泡和光晕仍按未变形的 dest 走，
+        // 免得弹一下把气泡也带着抖。
+        double sx, sy;
+        PokeSquash(out sx, out sy);
+        int dw = (int)Math.Round(dest.Width * sx), dh = (int)Math.Round(dest.Height * sy);
+        var draw = new Rectangle(dest.X + (dest.Width - dw) / 2, dest.Bottom - dh, dw, dh);
         g.InterpolationMode = InterpolationMode.HighQualityBicubic;
-        g.DrawImage(petImage, dest);
+        g.DrawImage(petImage, draw);
         DrawPauseMark(g, dest);
         DrawSilentDots(g, dest);
         DrawButtons(g);
