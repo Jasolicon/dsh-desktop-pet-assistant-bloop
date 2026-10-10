@@ -4240,7 +4240,9 @@ $probe3 = New-Object DesktopGuide.PetForm -ArgumentList @([double]$script:UiScal
     '卡片（常驻）有 ×'      = ($cCard.Width -gt 0)
     '× 不出气泡右边界'      = ($cCard.Right -le $cw - 4)
     '× 落在气泡顶部区域'    = ($cCard.Top -lt (24 * $script:UiScale))
-    '自动消失的气泡没有 ×'  = ($cTimed.Width -eq 0)
+    # 这条原来是「自动消失的气泡没有 ×」—— 按用户要求改成**所有气泡都给 ×** 了
+    #（因为最该关的「正在想… Ns」恰好是"永不消失 + thinking 态"，原来反而不给）。
+    '自动消失的气泡也有 ×'  = ($cTimed.Width -gt 0)
     '等回答的选项气泡没有 ×' = ($cOpt.Width -eq 0)
   }
   foreach ($k in $closeOk.Keys) { Write-Output ("  {0} {1}" -f $(if ($closeOk[$k]) { '✔' } else { '✘' }), $k) }
