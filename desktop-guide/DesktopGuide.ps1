@@ -5730,6 +5730,13 @@ function Start-PetTask {
           '  那个目录已经被 git 忽略，随便放、不用清理。项目目录里不要留散件 —— 会被当成源码或噪音。'
           '- 最终交付物：用户指定了位置就按用户的；没指定就放同一个目录，并在结论里给出完整路径。'
           '- 结论只给一句人话 + 产物路径，不要复述过程。'
+          '- 如果目标文件正被 Office/WPS 打开：**优先用 COM 操作那个正在运行的应用**'
+          '  （WPS 表格 → KET.Application；WPS 文字 → KWPS.Application；MS Office → Excel/Word.Application），'
+          '  拿选区、改内容都在应用里做。**不要**去改盘上的文件 —— 文件被打开时，盘上改了会被应用保存时覆盖。'
+          '  ⚠️ PowerShell 7 里 [Marshal]::GetActiveObject 不存在（.NET Core 移除了），替代：'
+          '  [Type]::GetTypeFromProgID(...) + [Activator]::CreateInstance(...)，或 P/Invoke 去 ROT 里找。'
+          '- 需要用户确认/选择时**必须用 ask 工具**（会弹到桌宠气泡上变成可点按钮），不要用纯文本提问 ——'
+          '  用户很可能已经离开屏幕去干别的了，纯文本问句他回来才看得到、而且没有可点的地方。'
         ) -join "`n")
     }
 
