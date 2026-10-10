@@ -355,6 +355,36 @@ function Find-WebUiWindow {
   return 0
 }
 
+function Stop-WebUiWindows {
+  <#
+    把"我们那个 profile 的对话窗口"收干净 —— 退出桌宠时用。
+
+    为什么按 profile 扫、而不是只关记账里那一个：异常情况下可能留下**没记上账**的窗口
+    （曾经有过：某一版代码在记账之前就失败了，窗口开出来了、账却没写），
+    只关记账那个就会漏一个 —— 而 DSH Web 服务一收摊，那个窗口就只剩"打不开"的页面。
+    这个 profile（--user-data-dir=<状态根>\.webui-profile）是桌宠专属的，扫它不会误伤别的浏览器窗口。
+    只发 WM_CLOSE（优雅关窗），不杀进程 —— 强杀会让 Chromium 下次开窗时弹"恢复页面"。
+  #>
+  param($Plan)
+  if (-not $Plan) { $Plan = Get-WebUiPlan }
+  if (-not $Plan.BrowserData) { return 0 }
+  $pids = @()
+  try {
+    $pids = @(Get-CimInstance Win32_Process -Filter "Name='msedge.exe' OR Name='chrome.exe' OR Name='brave.exe'" -ErrorAction SilentlyContinue |
+        Where-Object { $_.CommandLine -and ($_.CommandLine -like "*$($Plan.BrowserData)*") } |
+        Select-Object -ExpandProperty ProcessId)
+  } catch { }
+  if (-not $pids.Count) { return 0 }
+  $n = 0
+  foreach ($h in [Bloop.WebWin]::ListVisible()) {
+    if ($pids -contains [int][Bloop.WebWin]::PidOf($h)) {
+      [void][Bloop.WebWin]::PostMessage([IntPtr]$h, [Bloop.WebWin]::WM_CLOSE, [IntPtr]::Zero, [IntPtr]::Zero)
+      $n++
+    }
+  }
+  return $n
+}
+
 function Get-WebUiWindowState {
   <# 记着的那个对话窗口（没有 = 不知道有窗口）。 #>
   param($Plan)

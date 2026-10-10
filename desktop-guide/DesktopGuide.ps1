@@ -7477,10 +7477,12 @@ $pet.Add_FormClosing({
     # ⚠️ 不能用 `Stop-WebUi` 直接调：引擎进程里根本没有它 —— 预热是**另一个 pwsh** dot-source
     # web-ui.ps1 起的（见文件末尾那段）。所以这里再起一个短命子进程去收，它靠 DG_HOME 找到同一个状态根。
     try {
-      $webCmd = ". '$PSScriptRoot\web-ui.ps1'; [void](Stop-WebUi)"
+      $webCmd = ". '$PSScriptRoot\web-ui.ps1'; [void](Stop-WebUi); [void](Stop-WebUiWindows)"
       Start-Process -FilePath 'pwsh' -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', $webCmd) -WindowStyle Hidden | Out-Null
     } catch { }
     # 对话窗口也一起关掉：上面的 DSH Web 服务都收摊了，留个窗口在那儿只会显示"打不开"。
+    # 两步：先就地关掉记账里那个（快、同步），再让下面的子进程按 profile 扫一遍收漏网的
+    #（比如某一版代码在记账前就失败过、或别的东西也开了同一个 profile 的窗口）。
     try { Close-ChatWindow } catch { }
     # 机器级实例锁也要还回去：不还的话下次启动会被自己的死锁挡住一拍（虽然会按"死进程"清掉，但那要等一次）。
     try { Clear-PetInstanceLock } catch { }
