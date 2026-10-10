@@ -395,6 +395,14 @@ namespace DesktopGuide {
       if (hwnd == 0) return false;
       try { return IsWindow(new IntPtr(hwnd)); } catch { return false; }
     }
+    // 收起 / 显回来 / 关掉**别人的**窗口 —— 底部「对话」按钮用它（那个窗口是 Edge 的独立进程）。
+    [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+    [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr w, IntPtr l);
+    public const int SW_HIDE = 0;
+    public const int SW_SHOW = 5;
+    public const uint WM_CLOSE = 0x0010;
+    public static bool AliveHwnd(long h) { return h != 0 && IsWindow(new IntPtr(h)); }
+    public static bool VisibleHwnd(long h) { return h != 0 && IsWindowVisible(new IntPtr(h)); }
     // 距上次键鼠输入过了多久（毫秒）。Windows 自己就在算这个 —— 免费的 AFK 探测器。
     // 有了它才能把「等程序跑完」和「人不在」分开：前者画面可能在动但人没动，后者两者都静止。
     [StructLayout(LayoutKind.Sequential)] public struct LASTINPUTINFO { public uint cbSize; public uint dwTime; }
@@ -625,6 +633,9 @@ namespace DesktopGuide {
     public event EventHandler AskRequested;
     public event EventHandler AutoChanged;
     public event EventHandler HistoryRequested;
+    /** 只是"我要看判断记录"这条意图（右键菜单里那条明确的「看它判过什么」）。
+        底部那个按钮走 HistoryRequested —— 它是**开/关**（点一次开、再点一次关），语义不同，别混。 */
+    public event EventHandler HistoryShowRequested;
     public event EventHandler CollapseRequested;
     public event EventHandler Moved;
     public event EventHandler AgentListRequested;
@@ -742,10 +753,40 @@ namespace DesktopGuide {
       set { if (regionSet != value) { regionSet = value; Render(); } }
     }
 
+    /** 当前这一屏气泡画的是不是「判断记录卡片」。
+        为什么要单独记：底部「看它判过什么」那格要根据"卡片还开着没有"来亮灯，
+        而卡片和别的消息共用同一个气泡 —— 只要有人往气泡里写了别的东西（消息、选项、思考进度），
+        卡片就实际上没了，灯也必须跟着灭。所以这里由 ShowCard 点灯、其余所有写气泡的入口一律灭灯，
+        外层只读它，不用自己维护一份"卡片刻还在不在"。 */
+    bool cardMode;
+    public bool CardMode { get { return cardMode; } }
+
     /** 自检用：底部按钮条里第 i 格的矩形（还没排版时是空矩形）。 */
     public Rectangle ButtonRectAt(int i) {
       if (i < 0 || i >= buttonRects.Length) return Rectangle.Empty;
       return buttonRects[i];
+    }
+
+    /**
+     * 第 i 格现在是不是"开着"（画成高亮）。自检和外面都读这个。
+     * 三种来源合成一个答案，免得"同一格有两份状态"：
+     *   · 框选（3）：真的设了监控区域（regionSet）→ 外层本来就在推这个属性；
+     *   · 卡片（4）：气泡里现在画的正是卡片（cardMode，由 ShowCard 点、别的写气泡入口灭）；
+     *   · 其余（对话 / 输入框）：外层用 SetButtonActive 点灯 —— 它们的状态在 PowerShell 那侧。
+     */
+    public bool ButtonActiveAt(int i) {
+      if (i < 0 || i >= buttonActive.Length) return false;
+      if (i == RegionBtnIdx && regionSet) return true;
+      if (i == CardBtnIdx && cardMode) return true;
+      return buttonActive[i];
+    }
+
+    /** 点灯 / 熄灯（对话窗口、打字输入框这种"开关状态在 PowerShell 侧"的按钮用它）。不是高亮状态来源的别调。 */
+    public void SetButtonActive(int i, bool on) {
+      if (i < 0 || i >= buttonActive.Length) return;
+      if (buttonActive[i] == on) return;
+      buttonActive[i] = on;
+      Render();
     }
 
     // 逻辑尺寸（96 DPI 下的像素），实际使用时会乘 uiScale
@@ -767,9 +808,15 @@ namespace DesktopGuide {
     static readonly string[] BtnLabels = new string[] { "问一句", "对话", "打字派活", "框选监控区域", "看它判过什么" };
     // 「框选」在这一排里的下标。要跟上面两个数组的顺序一致（OnMouseUp 的 switch 也是按下标分的）
     const int RegionBtnIdx = 3;
+    // 「看它判过什么」在这一排里的下标（卡片开着时那一格要亮）
+    const int CardBtnIdx = 4;
     // 长度跟着 BtnIcons 走，别再写死数字（写死的话加按钮会下标越界）
     Rectangle[] buttonRects = new Rectangle[5];
     int hotButton = -1;
+    // 哪些按钮"开着"（点一次开、再点一次关）→ 那一格画成高亮，用户一眼看得出再点一下会发生什么。
+    // 只有"开关状态在 PowerShell 那侧"的按钮靠它（对话窗口 / 打字输入框）；框选和卡片各有自己的真状态
+    // （regionSet / cardMode），见 ButtonActiveAt。
+    bool[] buttonActive = new bool[5];
     // 待选选项（agent 提出的、等用户点的是/否）
     string[] pendingOptions;
     Rectangle[] optionRects;
@@ -890,7 +937,9 @@ namespace DesktopGuide {
       menu.Items.Add(new ToolStripSeparator());
 
       moreMenu = new ToolStripMenuItem("更多");
-      moreMenu.DropDownItems.Add(MakeMenuItem("看它判过什么", HistoryRequested));
+      // 菜单这条是「要看」不是「开关」：卡片已经被别的东西顶掉就重新铺一遍。
+      // 底部那格按钮才是开/关（点一次开、再点一次关），它走 HistoryRequested。
+      moreMenu.DropDownItems.Add(MakeMenuItem("看它判过什么", HistoryShowRequested));
       moreMenu.DropDownItems.Add(MakeMenuItem("收起气泡", CollapseRequested));
       moreMenu.DropDownItems.Add(new ToolStripSeparator());
       moreMenu.DropDownItems.Add(MakeMenuItem("框选监控区域…", PickRegionRequested));
@@ -1265,6 +1314,9 @@ namespace DesktopGuide {
           int hit = -1;
           for (int i = 0; i < buttonRects.Length; i++) if (buttonRects[i].Contains(e.Location)) { hit = i; break; }
           switch (hit) {
+            // 「问一句」是一次动作、**没有可关闭的面板**（用户拍板选 A）——所以它不参与开/关、
+            // 也从不亮灯。要"再点一下收起来"的东西是气泡，而气泡的主人可能是自动播报/朗读，
+            // 让这一格去管它只会让"再点一下会发生什么"变得没法预测。
             case 0: LastAskSource = "button"; Fire(AskRequested); break;
             case 1: Fire(ChatRequested); break;
             case 2: Fire(TypeRequested); break;      // 打字派活：和长按说话同一条下游
@@ -1286,6 +1338,7 @@ namespace DesktopGuide {
 
     // ---- 对外接口 ----
     public void ShowMessage(string text, int seconds) {
+      cardMode = false;   // 气泡换主人了 = 卡片那屏已经不在屏幕上，底部那格灯跟着灭
       message = text ?? "";
       messageUntil = seconds > 0 ? DateTime.Now.AddSeconds(seconds) : DateTime.MaxValue;
       state = message.StartsWith("（") ? "silent" : "speaking";
@@ -1293,7 +1346,16 @@ namespace DesktopGuide {
       Render();
     }
 
+    /** 「看它判过什么」的卡片专用入口：和 ShowMessage 的唯一区别是**记住这一屏是卡片**，
+        底部那一格据此亮着；外层再点一下就是"收掉卡片"（走 ClearMessage）。 */
+    public void ShowCard(string text) {
+      ShowMessage(text, 0);
+      cardMode = true;
+      Render();   // 亮灯要重画一次（ShowMessage 那一画还发生在点灯之前）
+    }
+
     public void SetThinking() {
+      cardMode = false;
       message = "";
       state = "thinking";
       Render();
@@ -1301,6 +1363,7 @@ namespace DesktopGuide {
 
     /** 录音中：红晕 + 气泡里写"正在听…"。松开才停，所以这里不设自动消失时间。 */
     public void ShowListening(string text) {
+      cardMode = false;
       message = text ?? "";
       messageUntil = DateTime.MaxValue;
       state = "listening";
@@ -1313,6 +1376,7 @@ namespace DesktopGuide {
      * 用一个刻意"安静"的外观（暗灰蓝、光晕很淡、不跳），因为它现在本来就不该打扰你。
      */
     public void ShowSleeping(string text) {
+      cardMode = false;
       message = text ?? "";
       messageUntil = DateTime.MaxValue;
       state = "sleeping";
@@ -1327,6 +1391,7 @@ namespace DesktopGuide {
       // 不挡的话会出现"正在想… 23s"配着「允许/拒绝/稍后」三个按钮（实测踩过）：
       // 问题每秒被盖一次，按钮却还在，用户根本看不到自己在回答什么。
       if (OptionPending()) return;
+      cardMode = false;
       message = text ?? "";
       messageUntil = DateTime.MaxValue;
       state = "thinking";
@@ -1336,6 +1401,7 @@ namespace DesktopGuide {
 
     /** agent 提出选项：气泡下面渲染成可点按钮，带倒计时，到点自动取消。 */
     public void ShowPrompt(string text, string[] options, int seconds) {
+      cardMode = false;
       message = text ?? "";
       messageUntil = DateTime.MaxValue;
       pendingOptions = (options == null || options.Length == 0) ? null : options;
@@ -1364,6 +1430,7 @@ namespace DesktopGuide {
     /// 只清文字会留下还能点的按钮（气泡没了按钮还在），所以必须走这里。
     public void CancelPrompt() {
       ClearOptions();
+      cardMode = false;
       message = "";
       state = "idle";
       FitToBubble();
@@ -1371,6 +1438,7 @@ namespace DesktopGuide {
     }
 
     public void ClearMessage() {
+      cardMode = false;
       message = "";
       state = "idle";
       FitToBubble();
@@ -1749,9 +1817,10 @@ namespace DesktopGuide {
             path.AddArc(r.X, r.Y, rad, rad, 90, 180);
             path.AddArc(r.Right - rad, r.Y, rad, rad, 270, 180);
             path.CloseFigure();
-            if (i == RegionBtnIdx && regionSet) {
-              // 淡黄高亮：黄在深色气泡上要够亮才看得出来，所以底板给到 205 的不透明度；
-              // 描边再黄一档，免得跟旁边那几个白底按钮糊在一起。单独的刷子只给这一格建。
+            if (ButtonActiveAt(i)) {
+              // 淡黄高亮 = "这格开着"（框选了区域 / 卡片开着 / 对话窗口开着 / 输入框开着）。
+              // 黄在深色气泡上要够亮才看得出来，所以底板给到 205 的不透明度；
+              // 描边再黄一档，免得跟旁边那几个白底按钮糊在一起。单独的刷子只给亮着的那格建。
               using (var f2 = new SolidBrush(Color.FromArgb(i == hotButton ? 235 : 205, 255, 240, 150)))
               using (var l2 = new Pen(Color.FromArgb(200, 255, 205, 60), 1f)) {
                 g.FillPath(f2, path);
@@ -2602,7 +2671,8 @@ function Format-DecisionCard {
 
 function Show-DecisionCard {
   Set-PetWidth 430
-  $pet.ShowMessage((Format-DecisionCard -History $script:history -Interactions $script:interactions -Skipped $script:judgeSkipped), 0)
+  # 用 ShowCard：那一屏要能被「看它判过什么」按钮认出来（底部那格据此亮灯 = 点一下能收掉）。
+  $pet.ShowCard((Format-DecisionCard -History $script:history -Interactions $script:interactions -Skipped $script:judgeSkipped))
 }
 
 function Get-ProcessNameSafe {
@@ -3969,7 +4039,7 @@ function Set-AutoStartValue {
 #
 # ⚠️ 定义位置有约束：`if ($SelfTest)` 是**顶层代码**，在它之前执行。所以用它的那段自检
 # （5j）要能跑，本函数必须定义在 `if ($SelfTest) {` **之前** —— 挪到后面会在自检里报
-# "New-TaskInputForm 不是 cmdlet"。同理 Read-AgentTask 一起放在这儿。
+# "New-TaskInputForm 不是 cmdlet"。同理 Open-TaskInput / Close-TaskInput / Submit-TaskInput 一起放在这儿。
 # ---------------------------------------------------------------------------
 function New-TaskInputForm {
   param(
@@ -4141,19 +4211,102 @@ function New-TaskInputForm {
   return $f
 }
 
-function Read-AgentTask {
-    # 提示语必须 ≤6 字：输入框只有气泡那么宽（见 New-TaskInputForm 里那条注释）
-    param([string]$Title = '新建 DSH agent', [string]$Hint = '它会自己干活', [string]$OkText = '开工')
-  $f = New-TaskInputForm -Title $Title -Hint $Hint -OkText $OkText
-  $box = if ($f.Tag) { $f.Tag.Box } else { $null }
-  try {
-    $result = $f.ShowDialog($pet)
-    $text = if ($box) { [string]$box.Text } else { '' }
-    if ($result -ne 'OK') { return '' }
-    return $text.Trim()
-  } finally {
-    $f.Dispose()
+# ---- 底部「打字派活」那个输入框：点一次开、再点一次关 ------------------------------
+# 为什么不再是 ShowDialog：模态对话框会把桌宠整个禁用，框开着的时候第二次点根本点不到 ——
+# 那样"再点一次关掉输入框"就是一句空话。现在改成**非模态**：桌宠还能点，第二次点就把它收掉，
+# 底部那一格也跟着亮/灭（SetButtonActive(2, ...)），用户看得见它现在是不是开着。
+#
+# 状态全放 $script: 作用域 —— 事件处理器里取"定义时的局部变量"不可靠（这个坑这个文件里踩过），
+# 而输入框的提交是**之后**从消息循环里回调进来的。
+$script:taskInput = $null
+$script:taskInputMode = ''       # 'task' = 打字派活；'agent' = 起一个后台 agent
+$script:taskInputModel = $null   # 起 agent 用哪个模型（'task' 模式用不到）
+
+function Test-TaskInputOpen {
+  $f = $script:taskInput
+  return ($null -ne $f -and -not $f.IsDisposed -and $f.Visible)
+}
+
+function Close-TaskInput {
+  # 唯一的"关"出口：再点一下按钮 / Esc / 提交完之后，全走这里 —— 灯也只在这里灭，
+  # 不会出现"框关了灯还亮着"这种骗人的状态。
+  $f = $script:taskInput
+  $script:taskInput = $null
+  if ($f) {
+    try { if (-not $f.IsDisposed) { $f.Close() } } catch { }
+    try { if (-not $f.IsDisposed) { $f.Dispose() } } catch { }
   }
+  try { $pet.SetButtonActive(2, $false) } catch { }
+}
+
+function Submit-TaskInput {
+  # 用户敲完（回车 / 点发送）之后真的去干活。两种入口分岔在这里，别在事件处理器里另外写一份。
+  param([string]$Text)
+  $mode = [string]$script:taskInputMode
+  $model = $script:taskInputModel
+  $script:taskInputMode = ''
+  $script:taskInputModel = $null
+  if ([string]::IsNullOrWhiteSpace($Text)) { return }
+  if ($mode -eq 'agent') {
+    if (-not $model) { return }
+    try {
+      $access = $script:AgentCfg.access | Where-Object { $_.name -eq $script:AgentCfg.workAgent.access } | Select-Object -First 1
+      if (-not $access) { $access = $script:AgentCfg.access[1] }
+      $rec = Start-DshAgent -Task $Text -Model $model -Access $access `
+        -RunDir $runDir -LogDir $logDir -Config $agentsConfig -MaxConcurrent ([int]$script:AgentCfg.maxConcurrent)
+      Add-Interaction 'agent_start' "$($rec.id)|$($model.name)"
+      $pet.ShowMessage("已起 agent $($rec.id)`n模型 $($model.name) · $($rec.access)`n右键 →「Agent 列表」看进度", [int]$cfg.showSeconds)
+    } catch {
+      $pet.ShowMessage("起 agent 失败：$($_.Exception.Message)", [int]$cfg.showSeconds)
+    }
+    return
+  }
+  # 打字派活：和长按说话**完全同一条下游**（区别只是字是键盘敲的）。
+  Add-Interaction 'type' ("text=$($Text.Length)")
+  Start-PetTask -Task $Text
+}
+
+function Open-TaskInput {
+  <#
+    打开输入框（非模态）。同一时刻只允许一个：已经开着就只是把它带到前面（幂等）。
+    两个入口共用同一个框，所以文案/样式只在这一个函数里出现 —— 不会再出现"改了一处、
+    另一处没跟着改"的那种幽灵 bug。
+    提示语必须 ≤6 字：输入框宽度 = 气泡宽度（320 逻辑像素），里面只放得下约 6 个汉字
+    （见 New-TaskInputForm 里那条注释和自检 5j 的约束断言）。
+  #>
+  param(
+    [string]$Title = '打字派活',
+    [string]$Hint = '请输入',
+    [string]$OkText = '发送',
+    [ValidateSet('task', 'agent')][string]$Mode = 'task',
+    $Model = $null
+  )
+  if (Test-TaskInputOpen) { try { $script:taskInput.Activate() } catch { }; return }
+  $f = New-TaskInputForm -Title $Title -Hint $Hint -OkText $OkText
+  $script:taskInput = $f
+  $script:taskInputMode = $Mode
+  $script:taskInputModel = $Model
+  $ok = @($f.Controls | Where-Object { $_ -is [System.Windows.Forms.Button] -and $_.Text })[0]
+  $cancel = @($f.Controls | Where-Object { $_ -is [System.Windows.Forms.Button] -and -not $_.Text })[0]
+  # 提交/取消都只碰 $script: 状态，不碰这里的局部变量（回调是之后从消息循环进来的）
+  $ok.Add_Click({
+      if (-not (Test-TaskInputOpen)) { return }
+      $text = [string]$script:taskInput.Tag.Box.Text
+      Close-TaskInput
+      try { Submit-TaskInput -Text $text } catch { Write-Warning "派活失败了：$($_.Exception.Message)" }
+    })
+  # Esc = 关掉。非模态下 CancelButton 的 DialogResult 是空的（它只在 ShowDialog 里结束对话框），
+  # 所以这里显式接：取消按钮被 PerformClick（Esc 走的就是它）和表单直接收到 Esc，都走同一件事。
+  if ($cancel) { $cancel.Add_Click({ Close-TaskInput }) }
+  $f.Add_KeyDown({
+      param($sender, $e)
+      if ($e.KeyCode -eq [System.Windows.Forms.Keys]::Escape) { $e.SuppressKeyPress = $true; Close-TaskInput }
+    })
+  # 窗体自己关掉（被别的路径关）时把状态一起收干净，别留下"灯亮着但没有框"的假象
+  $f.Add_FormClosed({ param($sender, $e) if ($script:taskInput -eq $sender) { Close-TaskInput } })
+  $f.Show($pet)          # 非模态：桌宠还能点 —— 这正是"再点一次能关掉"的前提
+  try { $pet.SetButtonActive(2, $true) } catch { }
+  try { $f.Tag.Box.Focus(); $f.Tag.Box.SelectAll() } catch { }
 }
 
 # 设置改完要写回 config.json。
@@ -4669,6 +4822,11 @@ $probe3 = New-Object DesktopGuide.PetForm -ArgumentList @([double]$script:UiScal
     '外框是真圆角（Region）' = ($null -ne $tif.Region)
     '按钮是真圆角（Region）' = ($null -ne $tiBtn.Region)
     '按钮文字是发送'         = ($tiBtn.Text -eq '发送')
+    # 输入框是**非模态**的（点一次开、再点一次关）：模态会把桌宠整个禁用，第二次点根本点不到。
+    # 这里只钉得住"开关那套函数在、而且此刻是关着的"；"再点一下真能关掉"要靠人工点一遍确认。
+    '有 Open/Close-TaskInput 这套开关' = (@('Open-TaskInput', 'Close-TaskInput', 'Test-TaskInputOpen', 'Submit-TaskInput') |
+        Where-Object { -not (Get-Command $_ -ErrorAction SilentlyContinue) }).Count -eq 0
+    '此刻输入框是关着的'     = (-not (Test-TaskInputOpen))
   }
   $tiBad = @($tiChecks.Keys | Where-Object { -not $tiChecks[$_] }).Count
   foreach ($k in $tiChecks.Keys) { Write-Output ("  {0} {1}" -f $(if ($tiChecks[$k]) { '✔' } else { '✘' }), $k) }
@@ -5216,6 +5374,70 @@ $probe3 = New-Object DesktopGuide.PetForm -ArgumentList @([double]$script:UiScal
   } else {
     Write-Output '  判定：✘ 高亮没生效、或者亮到了别的格子上'
   }
+  Write-Output '=== 5ac. 底部功能按钮的「开着」高亮（点一次开、再点一次关）==='
+  # 用户的要求：那一排每个按钮"开着"的时候，它自己得看得出来 —— 否则不知道再点一下会发生什么。
+  # 高亮统一走 ButtonActiveAt：框选/卡片用它们自己的真状态，对话/输入框由 PowerShell 侧点灯。
+  # 和 5ab 同一套办法落到像素上：真渲染两张，数黄色像素占比；再单独钉一遍"谁亮谁不亮"的逻辑。
+  $tprobe = New-Object DesktopGuide.PetForm -ArgumentList @([double]$script:UiScale, [string]$cfg.fontFamily, [double]$cfg.fontSize)
+  $null = $tprobe.Handle
+  if ($img) { $tprobe.SetImage($img) }
+  $outT0 = Join-Path $runDir 'pet-preview-toggle-off.png'
+  $outT1 = Join-Path $runDir 'pet-preview-toggle-on.png'
+  $tprobe.SetButtonActive(1, $false)     # 1 = 对话
+  $tprobe.SetButtonActive(2, $false)     # 2 = 打字派活
+  $apiOffOk = (-not $tprobe.ButtonActiveAt(1)) -and (-not $tprobe.ButtonActiveAt(2))
+  $tprobe.SavePreview($outT0)
+  $btnChat = $tprobe.ButtonRectAt(1)
+  $btnType = $tprobe.ButtonRectAt(2)
+  $tprobe.SetButtonActive(2, $true)      # 只开「打字派活」
+  $apiOnOk = ($tprobe.ButtonActiveAt(2)) -and (-not $tprobe.ButtonActiveAt(1))
+  $tprobe.SavePreview($outT1)
+  # 卡片那一格不该靠外层点灯：ShowCard 点亮、ClearMessage 灭掉（别人抢了气泡也一样）
+  $tprobe.ShowCard('判断记录（自检）')
+  $cardOnOk = ($tprobe.CardMode) -and ($tprobe.ButtonActiveAt(4))
+  $tprobe.ClearMessage()
+  $cardOffOk = (-not $tprobe.CardMode) -and (-not $tprobe.ButtonActiveAt(4))
+  $tprobe.Dispose()
+  $tOffType = & $yellowShare $outT0 $btnType
+  $tOnType = & $yellowShare $outT1 $btnType
+  $tOnChat = & $yellowShare $outT1 $btnChat
+  $toggleOk = [ordered]@{
+    'SetButtonActive 点灯/熄灯（API）' = ($apiOffOk -and $apiOnOk)
+    '卡片自己管自己的灯（ShowCard/ClearMessage）' = ($cardOnOk -and $cardOffOk)
+    '关着时那一格不黄'                 = ($tOffType -ge 0 -and $tOffType -le 0.05)
+    '开了的那一格真的变黄（≥半格）'     = ($tOnType -ge 0.5)
+    '只亮该亮的那一格（旁边的没跟着亮）' = ($tOnChat -ge 0 -and $tOnChat -le 0.05)
+  }
+  foreach ($k in $toggleOk.Keys) { Write-Output ("  {0} {1}" -f $(if ($toggleOk[$k]) { '✔' } else { '✘' }), $k) }
+  Write-Output ("  黄色像素占比：关着 {0}｜开了「打字派活」{1}（旁边「对话」{2}）｜预览：{3}｜{4}" -f `
+      $tOffType, $tOnType, $tOnChat, $outT1, $outT0)
+  Write-Output ("  5ac {0}/{1} 项通过" -f @($toggleOk.Values | Where-Object { $_ }).Count, $toggleOk.Count)
+
+  Write-Output '=== 5ad. 底部「对话」按钮 = 开/关那个独立窗口（收起 → 下次显回来复用）==='
+  # 窗口是 Edge 的独立进程：桌宠靠 run\webui-window.json 找到它（web-ui.ps1 开窗时写的）。
+  # 这条钉四件事：①两边用的是**同一份**记账文件名（改一边忘另一边 = 功能静默失效，最像这次的坑）；
+  # ②没有记账 / 句柄是 0 时一律当"关着"（否则第二下会被当成"收起"，窗口永远打不开）；
+  # ③收起 / 关掉两个入口都在，而且走的是真的 Win32（ShowWindow / WM_CLOSE），不是自欺欺人；
+  # ④web-ui.ps1 那边确实会把已存在的窗口显回来（复用），而不是又开一个。
+  # 注：这组函数定义在文件下半部分（跟着「对话」那段走），自检跑在上半部分调不到它们 ——
+  # 所以这里钉**文件内容 + Native 能力**这两件能钉住的事：改动一边忘另一边 = 功能静默失效。
+  $webUiText = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'web-ui.ps1') -Raw -Encoding UTF8
+  $dgText = Get-Content -LiteralPath $PSCommandPath -Raw -Encoding UTF8
+  $chatNeed = @('Hide-ChatWindow', 'Test-ChatWindowVisible', 'Get-ChatWindowStatePath', 'Close-ChatWindow')
+  # 注意：要拿 Type 对象调反射得先赋值给变量 —— `[类型]::GetMethod(...)` 会被 PowerShell
+  # 当成"在类上找名叫 GetMethod 的成员"，直接报 does not contain a method named 'GetMethod'（实测）。
+  $nativeType = [DesktopGuide.Native]
+  $chatOk = [ordered]@{
+    '记账文件名两处一致'   = ($dgText -match 'webui-window\.json') -and ($webUiText -match 'webui-window\.json')
+    '句柄 0 一律算关着'     = (-not ([DesktopGuide.Native]::AliveHwnd(0))) -and (-not ([DesktopGuide.Native]::VisibleHwnd(0)))
+    '收起/查状态/关窗入口都在' = (@($chatNeed | Where-Object { $dgText -notmatch ("function " + [regex]::Escape($_)) }).Count -eq 0)
+    '用的是真的 Win32 收窗口' = ($null -ne $nativeType.GetMethod('ShowWindow')) -and ($null -ne $nativeType.GetMethod('PostMessage'))
+    'web-ui 会把窗口显回来复用' = ($webUiText -match 'ShowWindow\([^)]*SW_SHOW') -and ($webUiText -match 'Get-WebUiWindowState')
+    '老会话缺 key 有兜底'   = ($webUiText -match 'Get-WebUiDeepSeekKey') -and ($webUiText -match 'DEEPSEEK_API_KEY')
+  }
+  foreach ($k in $chatOk.Keys) { Write-Output ("  {0} {1}" -f $(if ($chatOk[$k]) { '✔' } else { '✘' }), $k) }
+  Write-Output ("  5ad {0}/{1} 项通过" -f @($chatOk.Values | Where-Object { $_ }).Count, $chatOk.Count)
+
   Write-Output '=== 6. 朗读（TTS）==='
   # -Check 只列音色，不出声（自检不该在半夜突然开口）。
   [void](Initialize-Tts -Config $cfg)
@@ -5380,18 +5602,10 @@ if ($script:AgentCfg -and $cfg.brainTransport) {
 
 function Start-AgentFromPet {
   param($Model)
-  $task = Read-AgentTask -Hint ("用「{0}」起一个后台 agent。它会自己在这个工作区里干活。" -f $Model.name)
-  if ([string]::IsNullOrWhiteSpace($task)) { return }
-  try {
-    $access = $script:AgentCfg.access | Where-Object { $_.name -eq $script:AgentCfg.workAgent.access } | Select-Object -First 1
-    if (-not $access) { $access = $script:AgentCfg.access[1] }
-    $rec = Start-DshAgent -Task $task -Model $Model -Access $access `
-      -RunDir $runDir -LogDir $logDir -Config $agentsConfig -MaxConcurrent ([int]$script:AgentCfg.maxConcurrent)
-    Add-Interaction 'agent_start' "$($rec.id)|$($Model.name)"
-    $pet.ShowMessage("已起 agent $($rec.id)`n模型 $($Model.name) · $($rec.access)`n右键 →「Agent 列表」看进度", [int]$cfg.showSeconds)
-  } catch {
-    $pet.ShowMessage("起 agent 失败：$($_.Exception.Message)", [int]$cfg.showSeconds)
-  }
+  # 复用底部「打字派活」那个非模态输入框（点一次开、再点一次关）：这里是"问答不同步"的 ——
+  # 用户敲完回车才由 Submit-TaskInput 去起 agent，所以点完菜单先看到的是一个输入框，不是"卡住"。
+  Open-TaskInput -Title '新建 DSH agent' -Hint ("用「{0}」起一个后台 agent。它会自己在这个工作区里干活。" -f $Model.name) `
+    -OkText '开工' -Mode 'agent' -Model $Model
 }
 
 # ---- 语音/拖入把事派出去做（不再开那个自绘对话窗口）----
@@ -6216,6 +6430,49 @@ function Edit-SystemPrompt {
   }
 }
 
+# ---- 底部「对话」按钮：点一次开、再点一次收起（收的是窗口，会话还在）----------------------
+# 那个窗口是 Edge 的独立进程，句柄记在 run\webui-window.json 里（web-ui.ps1 开窗时写的；
+# 两边共用状态根，所以文件名必须一致）。桌宠这边只做三件事：读句柄、判"开着没有"、收起/关掉。
+#
+# 灯 = 那个窗口**真的存在且可见**：由下面 1 秒一拍的对账来同步。所以用窗口自己的 × 关掉、
+# 或窗口崩了，灯都会自己灭 —— 不会留下"亮着但点不动"的假象。
+function Get-ChatWindowStatePath { return (Join-Path $runDir 'webui-window.json') }
+
+function Get-ChatWindowState {
+  $f = Get-ChatWindowStatePath
+  if (Test-Path -LiteralPath $f) {
+    try { return Get-Content -LiteralPath $f -Raw -Encoding UTF8 | ConvertFrom-Json } catch { }
+  }
+  return $null
+}
+
+function Get-ChatWindowHwnd {
+  $st = Get-ChatWindowState
+  if ($st -and $st.hwnd) { return [long]$st.hwnd }
+  return 0
+}
+
+function Test-ChatWindowVisible {
+  $h = Get-ChatWindowHwnd
+  return ($h -ne 0 -and [DesktopGuide.Native]::AliveHwnd($h) -and [DesktopGuide.Native]::VisibleHwnd($h))
+}
+
+function Hide-ChatWindow {
+  $h = Get-ChatWindowHwnd
+  if ($h -eq 0) { return $false }
+  try { [void][DesktopGuide.Native]::ShowWindow([IntPtr]$h, [DesktopGuide.Native]::SW_HIDE) } catch { return $false }
+  return $true
+}
+
+function Close-ChatWindow {
+  # 退出桌宠时用：DSH Web 服务都要收摊了，留个窗口在那儿只会显示"打不开"。
+  $h = Get-ChatWindowHwnd
+  if ($h -ne 0) {
+    try { [void][DesktopGuide.Native]::PostMessage([IntPtr]$h, [DesktopGuide.Native]::WM_CLOSE, [IntPtr]::Zero, [IntPtr]::Zero) } catch { }
+  }
+  try { [System.IO.File]::Delete((Get-ChatWindowStatePath)) } catch { }
+}
+
 function Open-ChatPanel {
   param([string]$Text = '', [string[]]$Files = @(), [switch]$Send)
   # 空白内容 = 用户只是想跟它聊天 → 直接开 **DSH 自己的界面**（不再用自绘气泡栏）。
@@ -6421,8 +6678,31 @@ $pet.Add_MainSessionRequested({
 
 $pet.Add_ChatRequested({
     Note-UserAction 'chat'
-    Add-Interaction 'chat'
-    Open-ChatPanel
+    try {
+      # 点一次开、再点一次**收起**（收的是窗口，会话还在）—— 用户拍的 B：下次点直接显回来复用。
+      if (Test-ChatWindowVisible) {
+        Add-Interaction 'chat' 'hide'
+        [void](Hide-ChatWindow)
+        $pet.SetButtonActive(1, $false)
+        return
+      }
+      Add-Interaction 'chat' 'show'
+      # 服务没重启、只是被我们收起来了 → 直接显回来（快）。要比 url：它是**一次性 token**，
+      # url 变了说明 DSH Web 服务重启过，那个隐藏的窗口已经失效 —— 交给 chat-panel 关掉重开。
+      $svc = $null
+      try { $svc = Get-Content -LiteralPath (Join-Path $runDir 'webui.json') -Raw -Encoding UTF8 | ConvertFrom-Json } catch { }
+      $st = Get-ChatWindowState
+      if ($st -and $st.hwnd -and $svc -and $svc.url -and ([string]$st.url -eq [string]$svc.url) -and
+          [DesktopGuide.Native]::AliveHwnd([long]$st.hwnd)) {
+        try {
+          [void][DesktopGuide.Native]::ShowWindow([IntPtr][long]$st.hwnd, [DesktopGuide.Native]::SW_SHOW)
+          $pet.SetButtonActive(1, $true)
+          return
+        } catch { }
+      }
+      Open-ChatPanel
+      # 灯不在这儿点：等 1 秒一拍的对账确认窗口**真的可见**了再亮（没开起来就不该亮）。
+    } catch { $pet.ShowMessage("开对话窗口失败：$($_.Exception.Message)", 8) }
   })
 
 # ---- 桌面应答器：DSH 要问人的事（权限审批 / 提问 / 计划评审）在这里弹按钮 ----
@@ -6527,7 +6807,12 @@ $pet.Add_OptionChosen({
   })
 
 $pet.Add_PickRegionRequested({
-    try { Select-MonitorRegion } catch { $pet.ShowMessage("框选失败：$($_.Exception.Message)", [int]$cfg.showSeconds) }
+    # 点一次开、再点一次关：这一格的"开/关"就是**有没有设监控区域**（黄灯 = 有）。
+    # 为什么"关"落在区域上而不是"关掉正在选的那层"：框选那层是**模态**全屏层（选的时候桌宠被禁用、
+    # 根本点不到），所以第二次点只可能发生在选择层已经收掉之后 —— 那时唯一还"开着"的东西就是区域本身。
+    try {
+      if ($pet.RegionSet) { Clear-MonitorRegion } else { Select-MonitorRegion }
+    } catch { $pet.ShowMessage("框选失败：$($_.Exception.Message)", [int]$cfg.showSeconds) }
   })
 
 $pet.Add_ClearRegionRequested({
@@ -6648,13 +6933,17 @@ $pet.Add_ApiKeyRequested({
 $pet.Add_TypeRequested({
     Note-UserAction 'type'
     try {
-      $text = Read-AgentTask -Title '打字派活' -OkText '发送' `
-    # ⚠️ 这里和 4600 行那处**是同一个输入框的两个入口**。上次只改了那边，
-    # 于是"重启了没变化" —— 用户看到的正是这一处。改文案时**两处都要改**。
-    -Hint '请输入'
-      if ([string]::IsNullOrWhiteSpace($text)) { return }
-      Add-Interaction 'type' ("text=$($text.Length)")
-      Start-PetTask -Task $text
+      # 点一次开、再点一次关：框已经开着 → 这一下是收起来，不再往下走。
+      if (Test-TaskInputOpen) {
+        Add-Interaction 'type' 'close'
+        Close-TaskInput
+        return
+      }
+      Add-Interaction 'type' 'open'
+      # ⚠️ 输入框的文案只在这里和「起 agent」那处出现（两处都走 Open-TaskInput）——
+      # 不会再出现"改了一处、另一处没跟着改"（原来 New-TaskInputForm 有两个调用点，
+      # 只改一处就会出现"明明改了、重启了却没变化"）。
+      Open-TaskInput -Title '打字派活' -Hint '请输入' -OkText '发送' -Mode 'task'
     } catch { $pet.ShowMessage("打字派活失败：$($_.Exception.Message)", 8) }
   })
 
@@ -6725,8 +7014,24 @@ $sttTimer.Add_Tick({
   })
 
 $pet.Add_HistoryRequested({
+    # 点一次开、再点一次关：$pet.CardMode = 现在气泡里画的就是那张卡片。
+    # 灯不用手动关 —— ClearMessage 一清，C# 侧就认卡片没了，那格自己灭（别人抢了气泡也一样）。
+    if ($pet.CardMode) {
+      Note-UserAction 'history'
+      Add-Interaction 'card' 'close'
+      try { Set-PetWidth 292; if (-not $pet.PromptPending) { $pet.ClearMessage() } } catch { }
+      return
+    }
     Note-UserAction 'history'
-    Add-Interaction 'card'
+    Add-Interaction 'card' 'open'
+    try { Show-DecisionCard } catch { Write-Warning "打开记录失败：$($_.Exception.Message)" }
+  })
+
+# 右键菜单里那条「看它判过什么」= 明确要看（不是开关）：不看状态，直接铺一遍卡片。
+# 想收掉有另外两条路：底部那格按钮再点一下、或者菜单里的「收起气泡」。
+$pet.Add_HistoryShowRequested({
+    Note-UserAction 'history'
+    Add-Interaction 'card' 'show'
     try { Show-DecisionCard } catch { Write-Warning "打开记录失败：$($_.Exception.Message)" }
   })
 
@@ -7031,6 +7336,22 @@ $pollTimer.Interval = 500
 $pollTimer.Add_Tick({ try { Complete-AdvisorIfDone } catch { } })
 $pollTimer.Start()
 
+# 「对话」那一格的灯 = 对话窗口现在是不是真的开着且可见。1 秒对一次账：
+# 用户用窗口自己的 × 关掉、窗口崩了、或我们把服务重启导致 url 变了 → 灯自己灭/灭掉等重开。
+$script:chatWinOn = $false
+$chatWinTimer = New-Object System.Windows.Forms.Timer
+$chatWinTimer.Interval = 1000
+$chatWinTimer.Add_Tick({
+    try {
+      $on = Test-ChatWindowVisible
+      if ($on -ne $script:chatWinOn) {
+        $script:chatWinOn = $on
+        $pet.SetButtonActive(1, $on)
+      }
+    } catch { }
+  })
+$chatWinTimer.Start()
+
 # 朗读是「两段式」的（Edge：先合成成 wav，再播），靠这个定时器推进状态机。
 # 没有它 edge 后端就只会合成、永远不出声。
 $ttsTimer = New-Object System.Windows.Forms.Timer
@@ -7159,6 +7480,8 @@ $pet.Add_FormClosing({
       $webCmd = ". '$PSScriptRoot\web-ui.ps1'; [void](Stop-WebUi)"
       Start-Process -FilePath 'pwsh' -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', $webCmd) -WindowStyle Hidden | Out-Null
     } catch { }
+    # 对话窗口也一起关掉：上面的 DSH Web 服务都收摊了，留个窗口在那儿只会显示"打不开"。
+    try { Close-ChatWindow } catch { }
     # 机器级实例锁也要还回去：不还的话下次启动会被自己的死锁挡住一拍（虽然会按"死进程"清掉，但那要等一次）。
     try { Clear-PetInstanceLock } catch { }
     Save-PetState

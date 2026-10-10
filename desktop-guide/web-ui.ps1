@@ -281,6 +281,101 @@ function Start-WebUi {
   return (Get-WebUiUrl $plan)
 }
 
+# ---------------------------------------------------------------------------
+# 对话窗口的「记账」：句柄是多少、开它时用的哪条 url、现在可不可见
+#
+# 为什么要记：窗口是 Edge 的**独立进程**，桌宠要点第二次时得能找到它（收起 / 显回来）。
+# 而且只能在**开窗这个进程**里认窗口 —— Start-Process 返回的是启动器 pid，未必是拥有窗口的那个
+# 进程（Chromium 会转交给同 user-data-dir 的既有浏览器进程）。所以认出来就写进状态根，
+# 桌宠读同一个文件。（状态根是两边共享的：见 paths.ps1 的 Get-DgHome。）
+# ---------------------------------------------------------------------------
+if (-not ('Bloop.WebWin' -as [type])) {
+  Add-Type -TypeDefinition @'
+using System; using System.Collections.Generic; using System.Runtime.InteropServices;
+namespace Bloop {
+  public static class WebWin {
+    delegate bool EnumProc(IntPtr h, IntPtr p);
+    [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc cb, IntPtr p);
+    [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
+    [DllImport("user32.dll")] static extern bool IsWindow(IntPtr h);
+    [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+    [DllImport("user32.dll")] static extern int GetWindowLong(IntPtr h, int i);
+    [DllImport("user32.dll")] static extern int GetWindowTextLength(IntPtr h);
+    [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int cmd);
+    [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
+    [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h, uint msg, IntPtr w, IntPtr l);
+    public const int SW_HIDE = 0;
+    public const int SW_SHOW = 5;
+    public const uint WM_CLOSE = 0x0010;
+    /// <summary>可见的顶层窗口（有标题、非工具窗）—— 用来"开之前 / 开之后"对比认窗。</summary>
+    public static long[] ListVisible() {
+      var list = new List<long>();
+      EnumWindows((h, p) => {
+        if (!IsWindowVisible(h)) return true;
+        if ((GetWindowLong(h, -20) & 0x00000080) != 0) return true;   // WS_EX_TOOLWINDOW
+        if (GetWindowTextLength(h) <= 0) return true;
+        list.Add(h.ToInt64());
+        return true;
+      }, IntPtr.Zero);
+      return list.ToArray();
+    }
+    public static int PidOf(long h) { uint p; GetWindowThreadProcessId(new IntPtr(h), out p); return (int)p; }
+    public static bool Alive(long h) { return h != 0 && IsWindow(new IntPtr(h)); }
+    public static bool Visible(long h) { return h != 0 && IsWindowVisible(new IntPtr(h)); }
+  }
+}
+'@
+}
+
+# 记账文件名（桌宠那边读同一个名字；改这里就得同步改 DesktopGuide.ps1 的 Get-ChatWindowStatePath）
+# 记的是 { hwnd, pid, url, at } —— 只记"这是哪个窗口、开它时用的哪条 url"；
+# "现在开没开着"一律现场问系统（桌宠侧 VisibleHwnd），不记账，免得账和现实不一致。
+$script:WebUiWinFile = 'webui-window.json'
+
+function Find-WebUiWindow {
+  <#
+    按"专属 profile 路径"认我们那个窗口：Edge 的**浏览器进程**命令行里一定带着
+    --user-data-dir=<状态根>\.webui-profile，而桌宠这个窗口是它唯一的窗口。
+    比"开之前没有、开之后多出来"那条路稳（跨桌宠重启也能认出来），代价是一次 WMI 查询（几秒），
+    所以只在正常认窗失败时兜底用。
+  #>
+  param($Plan)
+  if (-not $Plan) { $Plan = Get-WebUiPlan }
+  if (-not $Plan.BrowserData) { return 0 }
+  $pids = @()
+  try {
+    $pids = @(Get-CimInstance Win32_Process -Filter "Name='msedge.exe' OR Name='chrome.exe' OR Name='brave.exe'" -ErrorAction SilentlyContinue |
+        Where-Object { $_.CommandLine -and ($_.CommandLine -like "*$($Plan.BrowserData)*") } |
+        Select-Object -ExpandProperty ProcessId)
+  } catch { }
+  if (-not $pids.Count) { return 0 }
+  foreach ($h in [Bloop.WebWin]::ListVisible()) {
+    if ($pids -contains [int][Bloop.WebWin]::PidOf($h)) { return $h }
+  }
+  return 0
+}
+
+function Get-WebUiWindowState {
+  <# 记着的那个对话窗口（没有 = 不知道有窗口）。 #>
+  param($Plan)
+  if (-not $Plan) { $Plan = Get-WebUiPlan }
+  $f = Join-Path $Plan.RunDir $script:WebUiWinFile
+  if (Test-Path -LiteralPath $f) {
+    try { return Get-Content -LiteralPath $f -Raw -Encoding UTF8 | ConvertFrom-Json } catch { }
+  }
+  return $null
+}
+
+function Save-WebUiWindowState {
+  # ⚠️ 参数别叫 $Pid —— PowerShell 的 $PID 是**只读**自动变量（不区分大小写），
+  #    叫这个名字会在绑定时直接抛 "Cannot overwrite variable Pid because it is read-only or constant"（实测踩到）。
+  param($Plan, $Hwnd, $ProcId, [string]$Url = '')
+  if (-not $Plan) { $Plan = Get-WebUiPlan }
+  if (-not (Test-Path -LiteralPath $Plan.RunDir)) { New-Item -ItemType Directory -Force -Path $Plan.RunDir | Out-Null }
+  ([pscustomobject]@{ hwnd = [long]$Hwnd; pid = [int]$ProcId; url = $Url; at = (Get-Date).ToString('o') } |
+    ConvertTo-Json -Compress) | Set-Content -LiteralPath (Join-Path $Plan.RunDir $script:WebUiWinFile) -Encoding UTF8
+}
+
 function Show-WebUi {
   <#
     起服务 + 开一个无地址栏的 Edge 窗口。
@@ -291,6 +386,22 @@ function Show-WebUi {
   $url = Start-WebUi -Config $Config -Wait:$Wait
   if (-not $plan.Edge) { Start-Process $url; return $url }
 
+  # 窗口已经开着、而且它开的时候用的就是现在这条 url → 直接显回来复用，别再开第二个。
+  # url 不一样 = DSH 服务重启过（token 是一次性的），旧窗口已经失效 → 关掉重开。
+  # 这是"点一次开、再点一次收起"那一半的落地：桌宠收起的窗口，下次点就靠这里显回来。
+  $win = Get-WebUiWindowState -Plan $plan
+  if ($win -and $win.hwnd -and [Bloop.WebWin]::Alive([long]$win.hwnd)) {
+    if ([string]$win.url -and ([string]$win.url -eq [string]$url)) {
+      $h = [IntPtr][long]$win.hwnd
+      [void][Bloop.WebWin]::ShowWindow($h, [Bloop.WebWin]::SW_SHOW)
+      [void][Bloop.WebWin]::SetForegroundWindow($h)
+      Save-WebUiWindowState -Plan $plan -Hwnd $win.hwnd -ProcId $win.pid -Url $win.url
+      return $url
+    }
+    [void][Bloop.WebWin]::PostMessage([IntPtr][long]$win.hwnd, [Bloop.WebWin]::WM_CLOSE, [IntPtr]::Zero, [IntPtr]::Zero)
+  }
+
+  $before = [Bloop.WebWin]::ListVisible()   # 认窗靠"开之前没有、开之后多出来"
   $args = @(
     "--app=$url",
     "--window-size=$($plan.Width),$($plan.Height)",
@@ -301,6 +412,34 @@ function Show-WebUi {
   )
   if ($X -ge 0 -and $Y -ge 0) { $args += "--window-position=$X,$Y" }
   Start-Process -FilePath $plan.Edge -ArgumentList $args -WindowStyle Normal | Out-Null
+
+  # Edge 是独立进程，桌宠那边要能找到这个窗口（收起 / 显回来），所以把句柄记进状态根。
+  # 只能在**这个进程**里认：Start-Process 返回的是启动器 pid，未必是拥有窗口的那个进程。
+  $hwnd = 0
+  $deadline = (Get-Date).AddSeconds(15)
+  while ((Get-Date) -lt $deadline) {
+    foreach ($h in [Bloop.WebWin]::ListVisible()) {
+      if ($before -notcontains $h) {
+        $pn = ''
+        try { $pn = (Get-Process -Id ([Bloop.WebWin]::PidOf($h)) -ErrorAction Stop).ProcessName } catch { }
+        if ($pn -match 'msedge|chrome|brave|browser') { $hwnd = $h; break }
+      }
+    }
+    if ($hwnd) { break }
+    Start-Sleep -Milliseconds 250
+  }
+  if ($hwnd) {
+    Save-WebUiWindowState -Plan $plan -Hwnd $hwnd -ProcId ([Bloop.WebWin]::PidOf($hwnd)) -Url $url
+  } else {
+    # 兜底：按"专属 profile 路径"再认一次（跨重启也认得出）。
+    $hwnd = Find-WebUiWindow -Plan $plan
+    if ($hwnd) {
+      Save-WebUiWindowState -Plan $plan -Hwnd $hwnd -ProcId ([Bloop.WebWin]::PidOf($hwnd)) -Url $url
+    } else {
+      # 都认不出来不是致命错：窗口本身是开着的，只是桌宠第二次点会当成"没开"。
+      Write-Warning '没能认出对话窗口句柄（桌宠的「收起」会失灵，窗口本身正常）'
+    }
+  }
   return $url
 }
 
