@@ -90,6 +90,32 @@ function Get-WebUiModel {
   return $models[0]
 }
 
+function Get-WebUiDeepSeekKey {
+  <#
+    官方路由（deepseek-official，= api.deepseek.com）要的那把 key。
+
+    为什么要它：我们给 dsh web 的 --patch 只能改"**新会话**的默认模型"（deepseek-account），
+    改不了**老会话里已经记死的模型选择** —— 用户点开一个更早建的会话时，它自己记着
+    provider=deepseek-official，于是每一轮都 MISSING_CREDENTIAL（实测：会话 40957180 就是这样）。
+    那把 key 桌宠本来就有：run\openai.key 就是给 api.deepseek.com 用的（余额播报那条路也用它）。
+
+    这里只读、只作为**进程级环境变量**传给这个服务，绝不写进任何配置文件。
+    顺序：环境变量 DEEPSEEK_API_KEY → run\deepseek.key → run\openai.key；都没有就返回空
+    （那只意味着"记着官方路由的旧会话"不能用，账号路由不受影响）。
+  #>
+  if (-not [string]::IsNullOrWhiteSpace($env:DEEPSEEK_API_KEY)) { return [string]$env:DEEPSEEK_API_KEY }
+  foreach ($n in @('deepseek.key', 'openai.key')) {
+    $f = Join-Path $script:DgHome (Join-Path 'run' $n)
+    if (Test-Path -LiteralPath $f) {
+      try {
+        $v = (Get-Content -LiteralPath $f -Raw -Encoding UTF8).Trim()
+        if ($v) { return $v }
+      } catch { }
+    }
+  }
+  return ''
+}
+
 function Write-WebUiModelPatch {
   <# 把选中的模型写成一份 --patch 覆盖文件（启动 dsh web 时用）。 #>
   param($Plan, $Model)
@@ -220,6 +246,13 @@ function Start-WebUi {
     $launchArgs = @('--expose-internals', $plan.Cli, '--profile', $plan.Profile)
     if ($patch) { $launchArgs += @('--patch', $patch) }
     $launchArgs += @('--port', "$($plan.Port)", '--no-open')
+    # 老会话里可能记着"官方路由"（deepseek-official = api.deepseek.com），那要 DEEPSEEK_API_KEY。
+    # 桌宠手上就有一把（见 Get-WebUiDeepSeekKey），顺手给这个服务备上 ——
+    # 否则用户一点开那种会话就是 MISSING_CREDENTIAL（实测撞过）。
+    # 只设进程级环境变量（不写配置文件），而且用完就还原，免得漏给别的子进程。
+    $oldKey = $env:DEEPSEEK_API_KEY
+    $dsKey = Get-WebUiDeepSeekKey
+    if ($dsKey) { $env:DEEPSEEK_API_KEY = $dsKey }
     $old = $env:ELECTRON_RUN_AS_NODE
     $env:ELECTRON_RUN_AS_NODE = '1'
     try {
@@ -229,6 +262,7 @@ function Start-WebUi {
         -WindowStyle Hidden -PassThru
     } finally {
       if ($null -eq $old) { Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue } else { $env:ELECTRON_RUN_AS_NODE = $old }
+      if ($null -eq $oldKey) { Remove-Item Env:DEEPSEEK_API_KEY -ErrorAction SilentlyContinue } else { $env:DEEPSEEK_API_KEY = $oldKey }
     }
     $announced = Read-WebUiAnnouncedUrl -Plan $plan -TimeoutSeconds $(if ($Wait) { $WaitSeconds } else { 20 })
     if (-not $announced) { $announced = "http://127.0.0.1:$($plan.Port)/" }
