@@ -3951,7 +3951,9 @@ function New-TaskInputForm {
   $s = [double]$script:UiScale
   # 尺寸对齐**气泡宽度**（桌宠窗口就是气泡的宽度），别做成一整条；
   # 位置在下面统一放到**桌宠头顶**（用户要的：贴着它、别飘到别处）。
-  $w = [int](320 * $s); $h = [int](56 * $s); $rad = [int](14 * $s)
+  # 苹果那种**胶囊**形状：圆角半径 = 高度的一半（不是"稍微圆一点"）。
+  # 输入框和发送按钮都在这个胶囊里横排 —— 左边是输入区，右边是蓝色药丸按钮。
+  $w = [int](320 * $s); $h = [int](56 * $s); $rad = [int]($h / 2)
 
   # 画边框要用到，供 Paint 处理器读（事件处理器里取局部变量不可靠，走 script 作用域）
   $script:TaskInputStyle = @{ Scale = $s; Radius = $rad }
@@ -6589,7 +6591,9 @@ $pet.Add_TypeRequested({
     Note-UserAction 'type'
     try {
       $text = Read-AgentTask -Title '打字派活' -OkText '发送' `
-        -Hint '说一句，它去做，做完报结论'
+    # ⚠️ 这里和 4600 行那处**是同一个输入框的两个入口**。上次只改了那边，
+    # 于是"重启了没变化" —— 用户看到的正是这一处。改文案时**两处都要改**。
+    -Hint '请输入'
       if ([string]::IsNullOrWhiteSpace($text)) { return }
       Add-Interaction 'type' ("text=$($text.Length)")
       Start-PetTask -Task $text
