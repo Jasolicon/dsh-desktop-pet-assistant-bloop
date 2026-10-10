@@ -5437,14 +5437,26 @@ function Stop-AdvisorProcess {
     只 Kill 最外层的话，里面那个 dsh 会变成孤儿、继续占着会话写句柄，
     下一次判断立刻撞 "already owned by an active write handle"。
     （双击打断那条路原来只用 Kill()，这里统一成 taskkill /T /F。）
+    ⚠️ 杀进程**还得把锁还了**：内联那一轮是桌宠自己拿的主会话锁（$script:advisorLock），
+    进程死了不等于锁没了。不放的话，在**这个桌宠进程活着的整段时间**里，后面每一轮都抢不到锁。
+    实测踩过：18:06 那一轮被用户操作打断 → 锁一直挂在 run\main.lock → 后面连续 5 轮全部退回命令式；
+    而那条命令式兜底当时也是坏的（见 advisor-dsh.ps1 的注释），于是用户连着看到「主 agent 内部错误」。
   #>
   if (-not $script:advisorProc) { return $false }
+  $killed = $false
   try {
-    if ($script:advisorProc.HasExited) { return $false }
-    try { taskkill /PID $script:advisorProc.Id /T /F 2>&1 | Out-Null } catch { }
-    if (-not $script:advisorProc.HasExited) { $script:advisorProc.Kill() }
-    return $true
-  } catch { return $false }
+    if (-not $script:advisorProc.HasExited) {
+      try { taskkill /PID $script:advisorProc.Id /T /F 2>&1 | Out-Null } catch { }
+      if (-not $script:advisorProc.HasExited) { $script:advisorProc.Kill() }
+      $killed = $true
+    }
+  } catch { }
+  # 不管有没有真杀掉：这一轮再也不会走到 Complete-InlineAdvisor 去收尾了，锁只能在这里还。
+  # 已经退出的那种也照样还 —— 落下的锁多半就是"退出时没来得及收"造成的。
+  if ($script:advisorLock) { try { Exit-AgentLock -LockPath $script:advisorLock } catch { } }
+  $script:advisorLock = $null
+  $script:advisorInlineOn = $false
+  return $killed
 }
 
 function Stop-AutoAdvisorForUser {

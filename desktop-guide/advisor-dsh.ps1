@@ -35,6 +35,20 @@ $runDir = Join-Path $dgHome 'run'
 $logDir = Join-Path $dgHome 'logs'
 foreach ($d in @($runDir, $logDir)) { if (-not (Test-Path $d)) { New-Item -ItemType Directory -Path $d | Out-Null } }
 
+# ⚠️ 这个模块必须在**脚本作用域** dot-source：本文件下面要 Enter-AgentLock / Exit-AgentLock
+#    （排队等主会话写完）和 Get-AgentWorkspace。
+#    89dca62 把原来那行删掉时漏了这几处用法；advisor-core.ps1 里确实也有一处 dot-source，
+#    但那是在 **Get-JudgeContext 函数内部** —— 定义只落进那个函数的作用域，函数一返回就没了，
+#    所以外面照样"not recognized"。症状是：内联抢不到锁 → 退回命令式 → 一进来就报
+#    「主 agent 内部错误：The term 'Enter-AgentLock' is not recognized…」（实测踩过）。
+#    外加一道守卫：真接不上就当场说清是哪根线断了，而不是等到用它的那一行才炸。
+. (Join-Path $root 'dsh-agents.ps1')
+foreach ($need in @('Enter-AgentLock', 'Exit-AgentLock', 'Get-AgentWorkspace')) {
+  if (-not (Get-Command $need -ErrorAction SilentlyContinue)) {
+    throw "判断链路接线坏了：dsh-agents.ps1 没给出 $need（dot-source 没接上）。"
+  }
+}
+
 . (Join-Path $root 'advisor-core.ps1')
 
 $cfgPath = Join-Path $dgHome 'config.json'
