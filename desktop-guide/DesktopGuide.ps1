@@ -5468,6 +5468,43 @@ function New-TaskTextFromDrop {
   return ($parts -join "`n")
 }
 
+function Invoke-FreshObservation {
+  <#
+    派活（或任何要"看屏幕"的动作）之前：如果手里的观察是空的或过期的，就**当场抓一张**。
+
+    为什么必须有这一步：暂停/待机时采样是停的，截图缓冲是空的 —— 于是派出去的 agent
+    收到的是"images 为空、shotCount 为 0、前台窗口标题也为空"，它只能回一句
+    「我没有收到任何截图，请重新附上」然后把球踢回给用户。用户为此必须站在屏幕前，
+    这正好废掉了它存在的意义（"你去忙别的，我看完告诉你"）。
+
+    而用户**按下派活的那一刻正坐在屏幕前** —— 那就是最好的取景时机。所以这里现抓一张，
+    并顺手刷新前台窗口/轨迹（采样停了的话 $script:currentKey 也是旧的）。
+  #>
+  param([int]$FreshSeconds = 20)
+
+  # 1) 前台窗口/轨迹先刷新一次（采样停着的话 currentKey 是上一次的，甚至空）
+  try { Sample-Once } catch { }
+
+  # 2) 截图：手里没有、或最新那张比 FreshSeconds 还旧 → 现抓
+  $stale = $true
+  try {
+    if ($script:shots.Count -gt 0) {
+      $age = ((Get-Date) - [datetime]$script:shots[$script:shots.Count - 1].at).TotalSeconds
+      if ($age -le $FreshSeconds) { $stale = $false }
+    }
+  } catch { }
+  if (-not $stale) { return }
+
+  try {
+    $b64 = [DesktopGuide.Capture]::GrabJpegBase64([int]$cfg.screenshotMaxWidth, [long]$cfg.jpegQuality)
+    if ($b64) {
+      [void]$script:shots.Add([pscustomobject]@{ at = (Get-Date).ToString('o'); jpegBase64 = $b64 })
+      while ($script:shots.Count -gt [int]$cfg.maxScreenshots) { $script:shots.RemoveAt(0) }
+      Add-Interaction 'fresh_shot' ("派活前现抓了一张（约 {0} KB）" -f [int]($b64.Length * 3 / 4 / 1024))
+    }
+  } catch { }
+}
+
 function Get-OpenFileFacts {
   <#
     「目标文件现在被谁开着」—— 派活前必须让模型知道这条事实。
@@ -5607,6 +5644,9 @@ function Start-PetTask {
   # 注意这段是**同步**的（会在 UI 线程上跑 3–5 秒），所以先把气泡立起来再跑 ——
   # 否则用户说完话会看到界面僵住、一点反馈都没有。（把它挪进 runspace 记在「待优化清单」里。）
   if ($cfg.taskBrief) { try { $pet.ShowMessage('正在把这句话整理成任务…', 0) } catch { } }
+  # 先保证手里有**此刻的**观察：暂停/待机时采样是停的，不补这一下，
+  # agent 收到的就是空载荷（它只能回"我没有收到任何截图"）。见 Invoke-FreshObservation。
+  try { Invoke-FreshObservation } catch { }
   try {
     $brief = Get-TaskBriefing -Task $Task
     $Task = [string]$brief.Text
