@@ -18,7 +18,10 @@
 #    两条都保留：内联是提速用的，这条是兜底 / 也是别的工具单独调用的入口。
 
 param(
-  [Parameter(Mandatory = $true, Position = 0)][string]$PayloadPath
+  [Parameter(Mandatory = $true, Position = 0)][string]$PayloadPath,
+  # 抢不到主会话锁时最多等多久。默认 90 秒（手动「问一句」/ 别的工具值得等）；
+  # 自动判断那条路会传 2 —— 自动判断是"晚一点说也没损失"的东西，不值得为它排 90 秒队。
+  [int]$LockWaitSeconds = 90
 )
 
 $ErrorActionPreference = 'Stop'
@@ -66,8 +69,16 @@ $errFile = Join-Path $runDir 'main-agent.err.txt'
 $taskFile = Join-Path $runDir 'main-agent.task.txt'
 try { Set-Content -LiteralPath (Join-Path $runDir 'stage.txt') -Value '正在启动 DSH…' -Encoding UTF8 } catch { }
 
-# 会话是单写者：和对话栏抢同一个 session 时必须排队
-$lockPath = Enter-AgentLock -RunDir $runDir -Name 'main' -TimeoutSeconds 90
+# 会话是单写者：和对话栏抢同一个 session 时必须排队。
+# ⚠️ 但"排不到"不算内部错误：主会话正被别人写着（对话栏 / 回选项 / 上一轮任务）是**正常状态**。
+#    以前这里直接冒到上面的 trap，用户看到的是「（主 agent 内部错误：第 56 行 · 主 agent 正忙…）」，
+#    自动轮次还会把它当成一句正常建议冒泡 + 进朗读。现在改成 SKIP 行：
+#    桌宠按"这一轮没判成"处理 —— 不进沉默统计、不朗读，自动轮次只留一行 judge_skip。
+try { $lockPath = Enter-AgentLock -RunDir $runDir -Name 'main' -TimeoutSeconds $LockWaitSeconds }
+catch {
+  Write-Output 'SKIP: 主 agent 正忙，这一轮先不判了'
+  exit 0
+}
 try {
   # 任务走 stdin（CLI 的 `-` 就是这个意思）。走命令行参数会被 Start-Process 的引号处理拆碎。
   Set-Content -LiteralPath $taskFile -Value $prompt -Encoding UTF8

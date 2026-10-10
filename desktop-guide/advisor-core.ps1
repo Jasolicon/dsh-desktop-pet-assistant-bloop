@@ -262,3 +262,21 @@ function ConvertTo-JudgeOutcome {
   if (-not [string]::IsNullOrWhiteSpace($options)) { [void]$out.Add("OPTIONS: $options") }
   return @($out)
 }
+
+function Get-JudgeSkipReason {
+  <#
+    「这一轮没判成」的那一行：SKIP: 理由。没有就返回空串（两条判断路径共用同一个口径）。
+
+    为什么要单独一条通道：抢不到会话锁（主会话正被别的写入者占着）既不是"它说了什么"，
+    也不是"它选择不说" —— 混进沉默会把沉默率那片标注数据污染掉（按项目总纲，那是要攒的资产，
+    不是运行日志）。所以拿到 SKIP 就当"这一轮不存在"：不进 utterances、不朗读；
+    自动轮次只留一行 judge_skip，手动问的那次才提示用户一句。
+  #>
+  param([string]$Text)
+  if ([string]::IsNullOrWhiteSpace($Text)) { return '' }
+  foreach ($row in @($Text -split "`r?`n")) {
+    $t = $row.Trim()
+    if ($t -match '^SKIP[:：]') { return (($t -replace '^SKIP[:：]\s*', '').Trim()) }
+  }
+  return ''
+}

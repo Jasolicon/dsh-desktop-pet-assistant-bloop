@@ -3562,8 +3562,12 @@ function Start-Advisor {
   # 内联只留最后那个 dsh。提示词实现仍是 advisor-core.ps1，和命令式**同一份**。
   #
   # 任何一步失败都当场退回命令式 —— 判断是桌宠的核心功能，不能因为提速把它弄丢。
-  # 注意会话锁用 TimeoutSeconds=0：等锁会卡住桌宠的 UI；抢不到就直接退回命令式，
-  # 让 advisor-dsh 在**它自己的进程**里排队等（那种等待不影响界面）。
+  # 注意会话锁用 TimeoutSeconds=0：等锁会卡住桌宠的 UI。
+  # ⚠️ 唯独"抢不到锁"这一种失败不该退回命令式：那条路会排 90 秒队，而自动判断本来就是
+  #    "晚一点说也没损失"的东西 —— 白等 90 秒，最后多半只等到一句"主 agent 正忙"。
+  #    所以自动判断抢不到锁 → 直接放弃这一拍（记一条 judge_skip，下一拍 / 用户停手后的补跑再来）；
+  #    其它失败才退回命令式。手动「问一句」走 advisorFast，根本不进这条路。
+  $script:advisorLockBusy = $false
   $inlineWanted = ($cfg.advisorInline -ne $false) -and ($cmd -match 'advisor-dsh\.ps1')
   if ($inlineWanted) {
     try {
@@ -3575,7 +3579,10 @@ function Start-Advisor {
       if (Test-Path -LiteralPath $advisorOut) { Remove-Item -LiteralPath $advisorOut -Force }
       if (Test-Path -LiteralPath $advisorErr) { Remove-Item -LiteralPath $advisorErr -Force }
 
-      $lock = Enter-AgentLock -RunDir $runDir -Name 'main' -TimeoutSeconds 0
+      # 单独接住抢锁这一步：只有它失败时才走"自动判断直接放弃"那条分支。
+      $lock = $null
+      try { $lock = Enter-AgentLock -RunDir $runDir -Name 'main' -TimeoutSeconds 0 }
+      catch { $script:advisorLockBusy = $true; throw }
       try {
         $agentWs = Get-AgentWorkspace -RunDir $runDir
         $dshArgs = @('--expose-internals', $ctx.DshCli, '--profile', $ctx.Profile, '--patch', $ctx.PatchPath)
@@ -3614,6 +3621,14 @@ function Start-Advisor {
     } catch {
       $script:advisorInlineOn = $false
       $script:advisorLock = $null
+      if ($Auto -and $script:advisorLockBusy) {
+        # 自动判断抢不到主会话锁 → 这一拍放弃，不退回命令式（那边会排 90 秒队）。
+        # 自动判断晚一拍没有任何损失：autoTimer 下一拍、或用户停手后的补跑还会再来。
+        $why = '主 agent 正忙，这一轮先不判了'
+        if ($why -ne $script:lastSkipReason) { Add-Interaction 'judge_skip' $why; $script:lastSkipReason = $why }
+        $script:autoAsk = $false
+        return
+      }
       Add-Interaction 'advisor_inline_fallback' $_.Exception.Message
       # 落到下面：走命令式（advisor-dsh.ps1），行为退回到提速之前
     }
@@ -3624,6 +3639,8 @@ function Start-Advisor {
   # 注意：不要把整条 advisor 命令再包一层引号 —— 它自己通常已经带引号（-File "路径"），
   # 外面再包一层会让 cmd /c 把它当成一个程序名，参数全丢。这里只给 payload 路径加引号。
   $cmdLine = '{0} "{1}"' -f $cmd, $payloadPath
+  # 自动判断不排队：让命令式那边只等 2 秒就放弃（默认 90 秒留给手动 / 别的工具调用）。
+  if ($Auto -and $cmd -match 'advisor-dsh\.ps1') { $cmdLine += ' -LockWaitSeconds 2' }
   $script:advisorProc = Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', $cmdLine -NoNewWindow -PassThru -RedirectStandardOutput $advisorOut -RedirectStandardError $advisorErr
   $script:thinking = $true
   $script:advisorT0 = Get-Date
@@ -3709,6 +3726,18 @@ function Complete-AdvisorIfDone {
       $msg = if ([string]::IsNullOrWhiteSpace($err)) { '（大脑没有输出）' } else { "（大脑报错）$err" }
       $pet.ShowMessage($msg, [int]$cfg.showSeconds)
     }
+    $script:autoAsk = $false
+    return
+  }
+
+  # 「这一轮没判成」（抢不到会话锁）单独一条路：既不是沉默、也不是建议。
+  # 混进沉默会把沉默率那片标注数据污染掉（按项目总纲那是要攒的资产，不是运行日志）。
+  # 自动轮次只留一行 judge_skip；手动问的那次得让用户看见"它现在正忙"。
+  $skipWhy = Get-JudgeSkipReason $text
+  if ($skipWhy) {
+    Add-Interaction 'judge_skip' $skipWhy
+    $script:lastSkipReason = $skipWhy
+    if (-not $script:autoAsk) { $pet.ShowMessage("（$skipWhy）", [int]$cfg.showSeconds) }
     $script:autoAsk = $false
     return
   }
@@ -4594,6 +4623,23 @@ $probe3 = New-Object DesktopGuide.PetForm -ArgumentList @([double]$script:UiScal
   $wrong  = @($notSilent  | Where-Object { Test-SilentText $_ })
   Write-Output ("  沉默串 {0}/{1} 识别{2}" -f ($silentTruth.Count - $missed.Count), $silentTruth.Count, $(if ($missed.Count -eq 0) { ' ✔' } else { ' ✘ 漏判：' + ($missed -join ' / ') }))
   Write-Output ("  非沉默串 {0}/{1} 不误判{2}" -f ($notSilent.Count - $wrong.Count), $notSilent.Count, $(if ($wrong.Count -eq 0) { ' ✔' } else { ' ✘ 误判：' + ($wrong -join ' / ') }))
+
+  Write-Output '=== 5l2. 「这一轮没判成」（SKIP）既不是沉默、也不是建议 ==='
+  # 抢不到会话锁（主会话正被别的写入者占着）时 advisor 吐一行 SKIP。
+  # 它既不是"它说了什么"、也不是"它选择不说"：混进沉默会污染沉默率那片标注数据
+  #（按项目总纲，那是要攒的资产）。这条钉四件事：认得出 SKIP、SKIP 不算沉默、
+  # 普通建议/沉默句里不会误认、以及 advisor-dsh 真的用 SKIP 报"忙"而不是冒成"内部错误"。
+  $skipOk = [ordered]@{
+    'SKIP 行认得出理由'   = ((Get-JudgeSkipReason 'SKIP: 主 agent 正忙') -eq '主 agent 正忙')
+    '全角冒号也认'        = ((Get-JudgeSkipReason 'SKIP：主 agent 正忙') -eq '主 agent 正忙')
+    'SKIP 不算沉默'       = (-not (Test-SilentText 'SKIP: 主 agent 正忙'))
+    '建议里没有 SKIP'     = ((Get-JudgeSkipReason '把第三行的选择器改一下') -eq '')
+    '沉默句里没有 SKIP'   = ((Get-JudgeSkipReason '（它选择不说）') -eq '')
+    'advisor-dsh 用 SKIP 报忙' = ((Get-Content -LiteralPath (Join-Path $PSScriptRoot 'advisor-dsh.ps1') -Raw -Encoding UTF8) -match 'SKIP: 主 agent 正忙')
+  }
+  foreach ($k in $skipOk.Keys) { Write-Output ("  {0} {1}" -f $(if ($skipOk[$k]) { '✔' } else { '✘' }), $k) }
+  Write-Output ("  5l2 {0}/{1} 项通过" -f @($skipOk.Values | Where-Object { $_ }).Count, $skipOk.Count)
+
   Write-Output '=== 5j. 打字派活输入条（一个圆角长框 + 一个发送按钮）==='
   # 这条路径只干一件事：敲一句话派出去。所以界面上只有两个东西 —— 长框和按钮。
   # 布局用断言核对，不靠肉眼看图（截图会受 DPI 缩放影响，坐标对不准）。
