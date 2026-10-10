@@ -4044,7 +4044,10 @@ function New-TaskInputForm {
   $hintLbl.ForeColor = [System.Drawing.Color]::FromArgb(255, 152, 158, 170)
   $hintLbl.BackColor = $f.BackColor
   $hintLbl.TextAlign = 'MiddleLeft'
-  # 这台机器 200% 缩放下输入框大约只放得下 16 个汉字；放不下时用省略号，别硬切一半
+  # ⚠️ 输入框宽度 = 气泡宽度（320 逻辑像素）之后，**只剩约 6 个汉字的位置**。
+  # 原来那句"放得下 16 个汉字"是 560 宽时的数字，早就不成立了 ——
+  # 提示语一长就被截成「说一句，它…」（用户截屏报的）。所以提示语一律 ≤6 字。
+  # 放不下时用省略号，别硬切一半。
   $hintLbl.AutoEllipsis = $true
   $hintLbl.Cursor = 'IBeam'
   $hintLbl.Location = $box.Location
@@ -4108,7 +4111,8 @@ function New-TaskInputForm {
 }
 
 function Read-AgentTask {
-  param([string]$Title = '新建 DSH agent', [string]$Hint = '它会自己在这个工作区里干活。', [string]$OkText = '开工')
+    # 提示语必须 ≤6 字：输入框只有气泡那么宽（见 New-TaskInputForm 里那条注释）
+    param([string]$Title = '新建 DSH agent', [string]$Hint = '它会自己干活', [string]$OkText = '开工')
   $f = New-TaskInputForm -Title $Title -Hint $Hint -OkText $OkText
   $box = if ($f.Tag) { $f.Tag.Box } else { $null }
   try {
@@ -4591,7 +4595,7 @@ $probe3 = New-Object DesktopGuide.PetForm -ArgumentList @([double]$script:UiScal
   Write-Output '=== 5j. 打字派活输入条（一个圆角长框 + 一个发送按钮）==='
   # 这条路径只干一件事：敲一句话派出去。所以界面上只有两个东西 —— 长框和按钮。
   # 布局用断言核对，不靠肉眼看图（截图会受 DPI 缩放影响，坐标对不准）。
-  $tif = New-TaskInputForm -Title '打字派活' -Hint '说一句，它去做，做完报结论' -OkText '发送'
+  $tif = New-TaskInputForm -Title '打字派活' -Hint '说一句它去做' -OkText '发送'
   $null = $tif.Handle
   $tiBox = $tif.Controls | Where-Object { $_ -is [System.Windows.Forms.TextBox] } | Select-Object -First 1
   $tiBtn = $tif.Controls | Where-Object { $_ -is [System.Windows.Forms.Button] -and $_.Text } | Select-Object -First 1
