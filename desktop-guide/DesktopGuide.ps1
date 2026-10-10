@@ -2039,9 +2039,12 @@ namespace DesktopGuide {
     // 卡片（「看它判过什么」）这类消息没有自动消失时间，以前只能右键 →「收起气泡」。
     // 现在在这类气泡的右上角画一个 ×：点它就是收起，和菜单那条走同一个事件。
     bool CloseVisible() {
+      // 所有气泡都给 ×。原来是"只有不会自动消失的气泡才给"，结果最该给 × 的那种反而没有：
+      // 「正在想… Ns」是 messageUntil=MaxValue（永不消失）且 state=thinking（被排除），
+      // 于是它一直挂在屏幕上，还没有任何关闭入口（实测踩过 —— 待机时尤为明显）。
+      // 有选项按钮在等回答时不给 ×：那一屏的交互是那几个按钮。
       if (OptionPending() || string.IsNullOrEmpty(message)) return false;
-      if (messageUntil != DateTime.MaxValue) return false;    // 会自动消失的气泡不用 ×，免得挡字
-      return state == "speaking" || state == "silent";        // 排除 thinking / listening 这些过渡态
+      return true;
     }
 
     Rectangle CloseRect() {
@@ -3100,6 +3103,10 @@ function Enter-Standby {
   param([string]$Why = '信号', [string]$Kind = 'signal', [string]$Display = '')
   if ($script:standby) { return }
   $script:standby = $true
+  # 待机 = 屏幕黑了/锁了/人走了，气泡没有任何意义 —— 而且它很可能是
+  # 「正在想… Ns」那种 messageUntil=MaxValue 的（永不消失），会一直挂在黑屏上。
+  # 用户报的"待机会一直显示对话气泡"就是这个。醒来自会重新看一眼。
+  try { $pet.ClearMessage() } catch { }
   $script:standbyReason = $Kind
   $script:lastStandbyProbe = Get-Date
   Add-Interaction 'standby' "$Kind|$Display"
