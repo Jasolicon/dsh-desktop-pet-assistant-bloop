@@ -3949,7 +3949,9 @@ function New-TaskInputForm {
     [string]$OkText = '开工'
   )
   $s = [double]$script:UiScale
-  $w = [int](560 * $s); $h = [int](64 * $s); $rad = [int](14 * $s)
+  # 尺寸对齐**气泡宽度**（桌宠窗口就是气泡的宽度），别做成一整条；
+  # 位置在下面统一放到**桌宠头顶**（用户要的：贴着它、别飘到别处）。
+  $w = [int](320 * $s); $h = [int](56 * $s); $rad = [int](14 * $s)
 
   # 画边框要用到，供 Paint 处理器读（事件处理器里取局部变量不可靠，走 script 作用域）
   $script:TaskInputStyle = @{ Scale = $s; Radius = $rad }
@@ -4059,6 +4061,24 @@ function New-TaskInputForm {
   $f.Controls.Add($hintLbl)
   $f.Controls.Add($ok)
   $f.Controls.Add($cancel)
+
+  # 放到**桌宠头顶**（不是屏幕中央）：x 跟宠物左边缘对齐，y 贴它上沿往上让一点。
+  # 用户的原话：「位置在桌宠头上，大小与气泡长度差不多，不要太大」。
+  $f.StartPosition = 'Manual'
+  try {
+    if ($pet) {
+      $wa = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
+      $px = [int]$pet.Left
+      $py = [int]$pet.Top - $f.Height - [int](6 * $s)
+      if ($px -lt $wa.Left + [int](4 * $s)) { $px = $wa.Left + [int](4 * $s) }
+      if ($py -lt $wa.Top + [int](4 * $s)) {
+        # 头顶没地方（宠物贴在屏幕上沿）→ 让到它下方，总不能跑到屏幕外
+        $py = [int]$pet.Bottom + [int](6 * $s)
+      }
+      $f.Location = New-Object System.Drawing.Point $px, $py
+    }
+  } catch { }
+
   $f.AcceptButton = $ok
   $f.CancelButton = $cancel
   # 输入框与提示层挂到 Tag 上给调用方和事件处理器用 —— 事件处理器里取局部变量不可靠，走 Tag
