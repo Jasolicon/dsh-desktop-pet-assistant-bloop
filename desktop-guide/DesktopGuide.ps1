@@ -4611,7 +4611,10 @@ $probe3 = New-Object DesktopGuide.PetForm -ArgumentList @([double]$script:UiScal
     '输入框占宽度六成以上'   = ($tiBox.Width -gt ($tif.ClientSize.Width * 0.6))
     '两者都垂直居中'         = ([math]::Abs(($tiBox.Top + $tiBox.Height / 2) - $ch / 2) -le 2) -and ([math]::Abs(($tiBtn.Top + $tiBtn.Height / 2) - $ch / 2) -le 2)
     '按钮不出右边界'         = ($tiBtn.Right -le $tif.ClientSize.Width)
-    '提示语是自绘覆盖层'     = ($tiHintText -eq '说一句，它去做，做完报结论')
+    # 别把文案写死 —— 刚才改文案就把这条撞红了，而它其实什么都没保证。
+    # 真正要钉的是**约束**：提示语存在，而且短到放得下。输入框宽度 = 气泡宽度（320），
+    # 里面只够约 6 个汉字；超了就被截成「说一句，它…」（用户截屏报过这个）。
+    '提示语存在且 ≤6 字'     = ($tiHintText.Length -ge 1) -and ($tiHintText.Length -le 6)
     '提示层与输入框对齐'     = ($null -ne $tiHint) -and ($tiHint.Left -eq $tiBox.Left) -and ($tiHint.Width -eq $tiBox.Width) -and ($tiHint.Top -eq $tiBox.Top)
     '提示语放不下会省略'     = ($tiHint.AutoEllipsis -eq $true)
     '没有用原生 PlaceholderText' = (-not $tiBox.PlaceholderText)
