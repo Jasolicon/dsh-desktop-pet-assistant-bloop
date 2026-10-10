@@ -7028,10 +7028,21 @@ function Invoke-ExtCommand {
     'quit' {
       # 优雅退出：**先回执、再退**。直接 Application.Exit() 会把回执那一拍掐掉，
       # 外壳就只会看到超时（实测）。延迟 300ms 是给回执落盘留的时间窗口。
-      $t = New-Object System.Windows.Forms.Timer
-      $t.Interval = 300
-      $t.Add_Tick({ try { $t.Stop(); $t.Dispose(); [System.Windows.Forms.Application]::Exit() } catch { } })
-      $t.Start()
+      # ⚠️ 定时器必须挂在 $script: 上：事件处理器里取"定义时的局部变量"拿到的是 $null
+      #（本文件里踩过好几次，见 New-TaskInputForm 那条注释）。原来这里用的是局部 $t，
+      # 于是每一拍 $t.Stop() 都抛、被 catch 吞掉，Application.Exit() 永远执行不到 ——
+      # quit 指令是个**静默的空操作**：回执照写（ok=true），进程照跑。实测踩到。
+      $script:petQuitTimer = New-Object System.Windows.Forms.Timer
+      $script:petQuitTimer.Interval = 300
+      $script:petQuitTimer.Add_Tick({
+          try {
+            $timer = $script:petQuitTimer
+            $script:petQuitTimer = $null
+            if ($timer) { $timer.Stop(); $timer.Dispose() }
+            [System.Windows.Forms.Application]::Exit()
+          } catch { }
+        })
+      $script:petQuitTimer.Start()
       return @{ ok = $true; quitting = $true }
     }
     default { return @{ ok = $false; error = "不认识的指令：$name" } }
