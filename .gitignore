@@ -60,6 +60,9 @@ __pycache__/
 #    （tts-edge-say.py / tts-worker.py），写 *.py 会把它们一起打死。
 desktop-guide/check_docx.py
 desktop-guide/make_story.py
+# 2026-10-09 接着调那一版 docx 时又冒出来两个，同样是那次活的一次性工具，按名字挡掉
+desktop-guide/dump_docx.py
+desktop-guide/inspect_para.py
 desktop-guide/checks.json
 desktop-guide/*.docx
 desktop-guide/preview-v*/
