@@ -658,6 +658,8 @@ namespace DesktopGuide {
     public event EventHandler StyleCoachRequested;
     /** 损友模式：吐槽一句 + 一句有用的（风格文件 presets\roast.txt） */
     public event EventHandler StyleRoastRequested;
+    /** 找事模式：主动提一件它真能替用户做掉的事（风格文件 presets\scout.txt） */
+    public event EventHandler StyleScoutRequested;
     public event EventHandler OptionChosen;
     /** 长按开始（该开麦了） / 长按结束（该停止录音并识别了） */
     public event EventHandler LongPressStarted;
@@ -1123,6 +1125,7 @@ namespace DesktopGuide {
       styleMenu.DropDownItems.Add(MakeMenuItem("保守（只在明显问题时说）", StyleGuardRequested));
       styleMenu.DropDownItems.Add(MakeMenuItem("陪练（每次都给建议）", StyleCoachRequested));
       styleMenu.DropDownItems.Add(MakeMenuItem("损友（先吐槽再给建议）", StyleRoastRequested));
+      styleMenu.DropDownItems.Add(MakeMenuItem("找事（主动提一件它能替你做的）", StyleScoutRequested));
       settingsMenu.DropDownItems.Add(styleMenu);
       settingsMenu.DropDownItems.Add(ttsMenu);
       settingsMenu.DropDownItems.Add(autoItem);
@@ -3503,6 +3506,24 @@ function Test-WorthAutoJudge {
     return ''   # 画面没变也放行：这就是损友模式要的"直播效果"
   }
 
+  # ---- 找事模式：**画面没变也要能开口**，但节拍一分都不放松 ----
+  #   为什么画面那关要拆掉：「我能替你干这个」这件事不依赖画面变化 —— 用户坐着不动、
+  #   盯着一个东西发愁，往往正是可以派活的时候。损友模式放行是因为"无聊本身就是内容"，
+  #   找事模式放行是因为"活儿是可以主动找的"，理由不同，效果一样。
+  #   为什么别的不拆：主动提活比吐槽更需要克制，而研究文档那条"速率是第一约束"在这里更硬。
+  #   所以间隔照旧走任务档的 judgeMinSeconds + silentBackoffMax 退避，人不在照样不开口。
+  #   ⇒ 这一段和上面普通路径的唯一区别，就是少了一道"指纹几乎没变就跳过"。
+  if ($cfg.speakStyle -eq 'scout') {
+    if ($since -lt $need) {
+      return "距上次判断只有 $([int]$since)s（连续 $($script:silentStreak) 次没说 → 间隔放宽到 $([int]$need)s）"
+    }
+    $scoutIdle = [int]([DesktopGuide.Native]::IdleMs() / 1000)
+    if (($scoutIdle -ge [int]$cfg.judgeIdleSkipSeconds) -and (-not $winChanged)) {
+      return "人不在（$($scoutIdle)s 没有键鼠输入，窗口也没换）—— 提活也得有人在"
+    }
+    return ''
+  }
+
   if ((-not $winChanged) -and ($fpDist -lt $delta)) {
     return "画面几乎没变（差异 $fpDist < $delta），前台窗口也没换"
   }
@@ -4745,6 +4766,20 @@ $probe3 = New-Object DesktopGuide.PetForm -ArgumentList @([double]$script:UiScal
   $script:silentStreak = 0
   $cfg.speakStyle = $oldStyle
   $cfg.roastMinSeconds = $oldRoastGap
+  # ---- 找事模式：同样只换 speakStyle，专门钉住它和损友模式**差在哪** ----
+  # 找事模式也放行"画面没变"（理由是"活儿可以主动找"，和损友的"无聊本身就是内容"不同），
+  # 但**节拍一分都不放松** —— 间隔仍走任务档的 judgeMinSeconds（这里 60s）。
+  # 所以下面两行是：10 秒必须拦住、2 分钟必须放行。少了第二行，这个模式就只是"第二个陪练"。
+  $cfg.speakStyle = 'scout'
+  $script:silentStreak = 0
+  $script:lastFp = $zeroFp
+  $script:lastJudgedFp = $zeroFp
+  $script:lastJudgedKey = $script:currentKey
+  $script:lastJudgedAt = (Get-Date).AddSeconds(-10)
+  Write-Output ("  [找事] 画面没变、10 秒前 → " + (Test-WorthAutoJudge) + "  （该拦住：节拍没跟着放松）")
+  $script:lastJudgedAt = (Get-Date).AddMinutes(-2)
+  Write-Output ("  [找事] 画面没变、2 分钟前 → '" + (Test-WorthAutoJudge) + "'  （空 = 放行，画面没变也能提活）")
+  $cfg.speakStyle = $oldStyle
   $script:shots.Clear()      # 假截图用完就撤，别影响后面几节
   $script:lastFp = $fullFp
   $script:standby = $true
@@ -4970,12 +5005,12 @@ $probe3 = New-Object DesktopGuide.PetForm -ArgumentList @([double]$script:UiScal
   $evtA = [DesktopGuide.PetForm].GetMethod('add_AgentListRequested')
   $evtW = [DesktopGuide.PetForm].GetMethod('add_WakeRequested')
   Write-Output ("  事件接线：add_AgentListRequested = {0}｜add_WakeRequested = {1}" -f ($null -ne $evtA), ($null -ne $evtW))
-  Write-Output '=== 5u. 说话风格（保守 / 陪练 / 损友）==='
-  # 四件事一起盯：① 三份风格文件都在 ② 每份都带着「纯文本、不要 Markdown」那条硬约束
+  Write-Output '=== 5u. 说话风格（保守 / 陪练 / 损友 / 找事）==='
+  # 四件事一起盯：① 四份风格文件都在 ② 每份都带着「纯文本、不要 Markdown」那条硬约束
   # （自己写风格文件最容易漏的就是它 —— 漏了气泡里会原样显示一堆星号和井号）
-  # ③ 设置窗口的下拉里有三档 ④ 右键「设置 → 说话风格」里也有三条。
+  # ③ 设置窗口的下拉里有四档 ④ 右键「设置 → 说话风格」里也有四条。
   $styleOk = [ordered]@{}
-  foreach ($st in @('guard', 'coach', 'roast')) {
+  foreach ($st in @('guard', 'coach', 'roast', 'scout')) {
     $sp = Join-Path $PSScriptRoot "presets\$st.txt"
     $body = if (Test-Path $sp) { Get-Content -LiteralPath $sp -Raw -Encoding UTF8 } else { '' }
     $styleOk["$st 文件存在"] = ($body.Length -gt 120)
@@ -4986,16 +5021,22 @@ $probe3 = New-Object DesktopGuide.PetForm -ArgumentList @([double]$script:UiScal
   # 损友模式的卖点是"陪着说话"，不是"只在有问题时说" —— 这条定位得写在提示词里
   $roastBody = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'presets\roast.txt') -Raw -Encoding UTF8
   $styleOk['损友带"陪着说话"定位'] = ($roastBody -match '陪着.说话')
+  # 找事模式的卖点是"我来做"，不是"你应该" —— 这条分界线必须写在提示词里，
+  # 否则它只会退化成第三个陪练：一样地给建议，只是换了个名字。
+  $scoutBody = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'presets\scout.txt') -Raw -Encoding UTF8
+  $styleOk['找事带"我来"定位'] = ($scoutBody -match '我来')
+  $styleOk['找事不承诺操作键鼠'] = ($scoutBody -match '点鼠标敲键盘')
   $swStyle = $null
   foreach ($sec in $swSchema) { foreach ($it in $sec.Items) { if ($it.Key -eq 'speakStyle') { $swStyle = $it } } }
-  $styleOk['设置窗口有三档'] = ($null -ne $swStyle -and @($swStyle.Choices).Count -eq 3)
+  $styleOk['设置窗口有四档'] = ($null -ne $swStyle -and @($swStyle.Choices).Count -eq 4)
   $styleOk['设置窗口含损友'] = ($null -ne $swStyle -and @($swStyle.Choices | Where-Object { $_.Value -eq 'roast' }).Count -eq 1)
+  $styleOk['设置窗口含找事'] = ($null -ne $swStyle -and @($swStyle.Choices | Where-Object { $_.Value -eq 'scout' }).Count -eq 1)
   $sprobe = New-Object DesktopGuide.PetForm -ArgumentList @([double]$script:UiScale, [string]$cfg.fontFamily, [double]$cfg.fontSize)
   $null = $sprobe.Handle
   $sprobe.SetSettings(@('DeepSeek Flash'), 'DeepSeek Flash', @('只读'), '只读')
   $setMenu = $sprobe.ContextMenuStrip.Items | Where-Object { $_.Text -eq '设置' } | Select-Object -First 1
   $styleMenu = if ($setMenu) { $setMenu.DropDownItems | Where-Object { $_.Text -eq '说话风格' } | Select-Object -First 1 } else { $null }
-  $styleOk['右键菜单有三条'] = ($null -ne $styleMenu -and $styleMenu.DropDownItems.Count -eq 3)
+  $styleOk['右键菜单有四条'] = ($null -ne $styleMenu -and $styleMenu.DropDownItems.Count -eq 4)
   $sprobe.Dispose()
   foreach ($k in $styleOk.Keys) { Write-Output ("  {0} {1}" -f $(if ($styleOk[$k]) { '✔' } else { '✘' }), $k) }
   Write-Output ("  5u {0}/{1} 项通过" -f @($styleOk.Values | Where-Object { $_ }).Count, $styleOk.Count)
@@ -6205,7 +6246,7 @@ function Update-AutoTick {
 }
 
 function Set-SpeakStyle {
-  param([ValidateSet('guard', 'coach', 'roast')][string]$Style)
+  param([ValidateSet('guard', 'coach', 'roast', 'scout')][string]$Style)
   $src = Join-Path $PSScriptRoot "presets\$Style.txt"
   $dst = Join-Path $script:DgHome 'system-prompt.txt'
   if (Test-Path $src) {
@@ -6220,6 +6261,7 @@ function Set-SpeakStyle {
   switch ($Style) {
     'coach' { $pet.ShowMessage("已切到陪练模式：每次判断都会给出建议。`n$autoHint", [int]$cfg.showSeconds) }
     'roast' { $pet.ShowMessage("已切到损友模式：先吐槽一句再给建议 —— 只吐槽屏幕上那件事，不骂人。`n$(Format-AutoTickLabel)就有一次开口机会。`n$autoHint", [int]$cfg.showSeconds) }
+    'scout' { $pet.ShowMessage("已切到找事模式：它会主动提一件自己能替你做的活，并在气泡上给出「做 / 先不用」按钮 —— 你不点，它不动手。`n$autoHint", [int]$cfg.showSeconds) }
     default { $pet.ShowMessage('已切回保守模式：只在明显的问题、反复失败、或与目标冲突时开口。', [int]$cfg.showSeconds) }
   }
 }
@@ -6835,6 +6877,7 @@ $pet.Add_PromptRequested({
 $pet.Add_StyleGuardRequested({ try { Set-SpeakStyle -Style 'guard' } catch { } })
 $pet.Add_StyleCoachRequested({ try { Set-SpeakStyle -Style 'coach' } catch { } })
 $pet.Add_StyleRoastRequested({ try { Set-SpeakStyle -Style 'roast' } catch { } })
+$pet.Add_StyleScoutRequested({ try { Set-SpeakStyle -Style 'scout' } catch { } })
 
 # 单击本体 = 摸一下，**不再问一句**（问一句还有按钮条 / 右键菜单 / Ctrl+Alt+G 三个入口）。
 #   · 没配 petActionCommand → 内置弹性动作（只有静态角色图能用：把图弹一下）

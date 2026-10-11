@@ -333,8 +333,9 @@ function Get-DgSettingsSchema {
            [pscustomobject]@{ Value='coach'; Text='陪练 —— 每次判断都给建议' }
            [pscustomobject]@{ Value='guard'; Text='保守 —— 只在明显问题时说' }
            [pscustomobject]@{ Value='roast'; Text='损友 —— 先吐槽一句再给建议' }
+           [pscustomobject]@{ Value='scout'; Text='找事 —— 主动提一件它能替你做的' }
          )
-         Help='决定 presets\ 下哪份 system prompt 生效。保守 = 只在明显的问题、反复失败、或与目标冲突时开口；陪练 = 每轮都给建议；损友 = 先吐槽屏幕上的事再给建议（不骂人、不带脏字）。' }
+         Help='决定 presets\ 下哪份 system prompt 生效。保守 = 只在明显的问题、反复失败、或与目标冲突时开口；陪练 = 每轮都给建议；损友 = 先吐槽屏幕上的事再给建议（不骂人、不带脏字）；找事 = 主动找一件它真能替你做的事，并在气泡上给出「做 / 先不用」按钮 —— 你不点，它不动手（门控上和损友一样放行「画面没变」，但最小间隔仍走 judgeMinSeconds）。' }
     )
   })
 
