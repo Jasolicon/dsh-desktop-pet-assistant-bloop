@@ -111,7 +111,7 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\desktop-guide\DesktopGuide.ps1 -
 
 | 配置项 | 默认 | 说明 |
 | --- | --- | --- |
-| `speakStyle` | `coach` | 说话风格：`guard` 保守（只在明显问题时说）/ `coach` 陪练（每次都建议）/ `roast` 损友（画面没变也陪着说两句）/ `scout` 找事（主动提一件它真能替你做的事，气泡上给「做 / 先不用」） |
+| `speakStyle` | `roast` | 说话风格：`guard` 保守（只在明显问题时说）/ `coach` 陪练（每次都建议）/ `roast` 损友（画面没变也陪着说两句，出厂默认）/ `scout` 找事（主动提一件它真能替你做的事，气泡上给「做 / 先不用」） |
 | `roastMinSeconds` | `30` | 损友模式的最短间隔，同时也是它的检查节拍 |
 | `dailySpendCapYuan` | `50` | 每日消费上限，到线自动暂停；`0` = 不设上限 |
 | `autoMinutes` | `1` | 非损友模式下"自动看一眼"的节奏 |
