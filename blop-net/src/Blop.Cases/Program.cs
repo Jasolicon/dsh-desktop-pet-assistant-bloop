@@ -1,6 +1,8 @@
 #nullable enable
 using System;
+using System.Drawing;
 using System.IO;
+using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Blop.Core;
@@ -21,6 +23,9 @@ public static class Program
     {
         try
         {
+            // 中文输出：net48 控制台默认走系统码页，不设的话管道里读出来是乱码
+            try { Console.OutputEncoding = Encoding.UTF8; } catch { }
+            if (args.Length > 0 && args[0] == "--capture-smoke") return CaptureSmoke();
             return RunAll(args) == 0 ? 0 : 1;
         }
         catch (Exception ex)
@@ -49,9 +54,71 @@ public static class Program
 
         RunGate(Path.Combine(casesDir, "gate.json"), ref pass, ref fail);
         RunPaths(Path.Combine(casesDir, "paths.json"), ref pass, ref fail);
+        RunFingerprint(Path.Combine(casesDir, "fingerprint.json"), ref pass, ref fail);
 
         Console.WriteLine($"全部用例表：{pass}/{pass + fail} 项通过");
         return fail;
+    }
+
+    /// <summary>挖洞掩码的几何用例（与 PowerShell 侧自检 5y 跑的是同一张表）。</summary>
+    private static void RunFingerprint(string path, ref int pass, ref int fail)
+    {
+        using var doc = JsonDocument.Parse(File.ReadAllText(path));
+        var root = doc.RootElement;
+
+        Console.WriteLine("=== fingerprint.json：挖洞掩码的几何 ===");
+        foreach (var c in root.GetProperty("cases").EnumerateArray())
+        {
+            var captured = Rect(c.GetProperty("captured"));
+            var self = c.TryGetProperty("selfEmpty", out var se) && se.GetBoolean()
+                ? Rectangle.Empty
+                : Rect(c.GetProperty("self"));
+
+            var got = Fingerprint.MaskFor(captured, self);
+            var want = c.GetProperty("expectMask").GetString()!;
+            var ok = got == want;
+            if (ok) pass++; else fail++;
+            var cells = got.Split('1').Length - 1;
+            Console.WriteLine($"  {(ok ? "✔" : "✘")} {c.GetProperty("id").GetString(),-24} 挖掉 {cells,-2} 格");
+            if (!ok)
+            {
+                Console.WriteLine($"      期望 {want}");
+                Console.WriteLine($"      实际 {got}　—— {c.GetProperty("why").GetString()}");
+            }
+        }
+    }
+
+    private static Rectangle Rect(JsonElement o)
+        => new Rectangle(
+            o.GetProperty("x").GetInt32(),
+            o.GetProperty("y").GetInt32(),
+            o.GetProperty("w").GetInt32(),
+            o.GetProperty("h").GetInt32());
+
+    /// <summary>
+    /// 抓屏冒烟：这条路径没法做"假世界"用例（它真的要看屏幕），所以做成显式的自检命令 ——
+    /// 用例表保证逻辑，这条保证"在这台机器上真能抓到"。
+    /// </summary>
+    private static int CaptureSmoke()
+    {
+        ScreenCapture.EnsureDpiAware();
+        var screen = ScreenCapture.PrimaryScreenBounds();
+        Console.WriteLine($"主屏（DPI 感知下的物理像素）：{screen.Width}x{screen.Height}");
+
+        var full = ScreenCapture.Grab(1024, 60);
+        Console.WriteLine($"整屏：抓到 {full.Width}x{full.Height}，JPEG 约 {full.JpegBase64.Length * 3 / 4 / 1024} KB，指纹 {full.Fingerprint}");
+
+        var self = new Rectangle(screen.Width - 900, screen.Height - 520, 860, 500);
+        var masked = ScreenCapture.Grab(1024, 60, null, self);
+        Console.WriteLine($"挖掉右下 860x500：指纹 {masked.Fingerprint}，挖掉 {masked.MaskedCells}/64 格");
+        Console.WriteLine($"两次指纹距离：{Fingerprint.Distance(full.Fingerprint, masked.Fingerprint)}");
+
+        var region = ScreenCapture.Grab(1024, 60, new Rectangle(0, 0, 600, 400));
+        Console.WriteLine($"框选 600x400 → 实际抓 {region.Captured.Width}x{region.Captured.Height}，缩到 {region.Width}x{region.Height}");
+
+        var bad = ScreenCapture.Grab(1024, 60, new Rectangle(0, 0, 3, 3));
+        Console.WriteLine($"非法区域 3x3 → 退回整屏 {bad.Captured.Width}x{bad.Captured.Height}");
+        return 0;
     }
 
     /// <summary>

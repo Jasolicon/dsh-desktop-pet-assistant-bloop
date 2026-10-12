@@ -19,4 +19,10 @@
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
   </ItemGroup>
 
+  <ItemGroup Condition="'$(TargetFramework)' == 'net8.0-windows'">
+    <!-- net8 上 System.Drawing（GDI+）不在共享框架里，要显式引；net48 是自带的。
+         抓屏用 GDI 的 StretchBlt 一步"抓 + 缩"，所以这里只用得上绘图那部分。 -->
+    <PackageReference Include="System.Drawing.Common" Version="8.0.7" />
+  </ItemGroup>
+
 </Project>

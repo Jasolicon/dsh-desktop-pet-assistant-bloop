@@ -9,12 +9,17 @@
 **代价（说在前面）**：WinForms 就是 Windows-only。跨平台那条线仍然由 `../desktop-pet/`（Electron）负责。
 三份实现的功能差距与"有意为之的差别"记在 `../实现差别记录.md`。
 
-## ⚠️ 这台机器上的两个前提（2026-10-12 实测，含一次当场纠正）
+## ⚠️ 这台机器上的两个前提
+
+> **状态更新（2026-10-12 晚）**：这台机器的 **Smart App Control 已关掉**（`VerifiedAndReputablePolicyState = 0`），
+> 下面三张表的"被拦"全部消失 —— net48 exe、net8 依赖运行时、net8 单文件自包含都跑通了。
+> 但这一节留着：① 那次判定不稳定是真实发生过的，别再拿"跑通过一次"当依据；
+> ② **用户的机器**上仍可能开着 SAC，那时未签名的 exe 会被系统直接拒掉（连"仍要运行"都没有）。
 
 1. **SDK 装在用户目录**（不需要管理员）：`%LOCALAPPDATA%\Microsoft\dotnet\`。
    `winget install Microsoft.DotNet.SDK.8` 只提供机器级安装（要 UAC），所以改用官方
    `dotnet-install.ps1 -Channel 8.0 -InstallDir ... -NoPath`。这条路径**没有进 PATH**。
-2. **Smart App Control（SAC）在拦"新编出来的 exe"** —— 而且**不稳定**，这点最要命。
+2. **Smart App Control（SAC）会拦"新编出来的 exe"** —— 而且判定**不稳定**，这点最要命（现已关掉）。
 
    事件日志给出了铁证（`Microsoft-Windows-CodeIntegrity/Operational`）：
 
@@ -59,13 +64,14 @@ verify-addtype.ps1       本机验证：Add-Type 内存编译同一份源码，�
 ## 怎么跑
 
 ```powershell
-# 本机验证：内存编译同一份源码，跑 behavior-cases/*.json（SAC 拦不到它）
+# 用例表（闸门 / 路径 / 掩码几何）：内存编译同一份源码，跑 behavior-cases/*.json
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\verify-addtype.ps1
 
-# exe 形态（在**没开 SAC** 的机器上验；本机可能被拦，别把一次成功当结论）
+# 抓屏冒烟：这条路径没法做"假世界"用例（它真的要抓屏幕），所以单独一条命令
 $dotnet = "$env:LOCALAPPDATA\Microsoft\dotnet\dotnet.exe"   # SDK 没进 PATH，要用全路径
 & $dotnet build .\src\Blop.Cases\Blop.Cases.csproj -c Release -f net48
 .\src\Blop.Cases\bin\Release\net48\Blop.Cases.exe ..\behavior-cases
+.\src\Blop.Cases\bin\Release\net48\Blop.Cases.exe --capture-smoke
 
 # 无 UI 引擎的 AOT 单文件形态（1.9 MB）。必须带 -p:TargetFrameworks=net8.0-windows：
 # 不然 PublishAot 会传给 net48 那一半，报 NETSDK1207（"目标框架不支持提前编译"）。
@@ -87,9 +93,10 @@ $dotnet = "$env:LOCALAPPDATA\Microsoft\dotnet\dotnet.exe"   # SDK 没进 PATH，
 | 指纹距离 `Fingerprint.Distance` | ✅ 已搬 | 与 `Get-FpDistance` 同口径（长度不等返回 999） |
 | 闸门 `Gate.Decide` | ✅ 已搬 | `behavior-cases/gate.json` **18/18** |
 | 路径解析 / 占位符展开 / 状态根 / 实例锁路径 | ✅ 已搬 | `behavior-cases/paths.json` **36/36**（含"装在别处""只装了 DSH 没装 node"这类以前测不到的情况） |
-| 抓屏 + 8×8 指纹 | ⬜ | 待搬（几何规则已有 `behavior-cases/fingerprint.json`） |
+| 挖洞掩码的几何 `Fingerprint.MaskFor` | ✅ 已搬 | `behavior-cases/fingerprint.json` **10/10**（与 PowerShell 侧自检 5y 同一张表） |
+| 抓屏 + 8×8 指纹 `ScreenCapture.Grab` | ✅ 已搬 | `--capture-smoke`：真抓 2880×1800 → 1024×640、JPEG 约 96 KB、掩码 7/64 格、非法区域退回整屏 |
 | 账本 / 每日消费上限 | ⬜ | 待搬 |
 | DSH 常驻会话（stdio JSON-RPC） | ⬜ | 待搬 |
 | WinForms 壳（分层窗口 / 气泡 / 菜单 / 设置窗口） | ⬜ | 待搬 |
 
-合计：`verify-addtype.ps1` **54/54 项通过**。
+合计：`verify-addtype.ps1` **64/64 项通过**。
