@@ -1,5 +1,6 @@
 #nullable enable
 using System;
+using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Text;
@@ -26,6 +27,7 @@ public static class Program
             // 中文输出：net48 控制台默认走系统码页，不设的话管道里读出来是乱码
             try { Console.OutputEncoding = Encoding.UTF8; } catch { }
             if (args.Length > 0 && args[0] == "--capture-smoke") return CaptureSmoke();
+            if (args.Length > 0 && args[0] == "--brain-smoke") return BrainSmoke();
             return RunAll(args) == 0 ? 0 : 1;
         }
         catch (Exception ex)
@@ -119,6 +121,86 @@ public static class Program
         var bad = ScreenCapture.Grab(1024, 60, new Rectangle(0, 0, 3, 3));
         Console.WriteLine($"非法区域 3x3 → 退回整屏 {bad.Captured.Width}x{bad.Captured.Height}");
         return 0;
+    }
+
+    /// <summary>
+    /// 大脑冒烟：起常驻 DSH 会话 → 问一句纯文字 → 再问一句**带截图**的。
+    /// </summary>
+    /// <remarks>
+    /// 这条会真的花一次模型调用（两轮，每次几厘钱），所以不做成用例表 ——
+    /// 用例表管"逻辑对不对"，这条管"在这台机器上真的能连上、真的能看见图"。
+    /// 带截图那一轮是关键：**内联图片**是常驻会话相对 CLI 的主要好处（CLI 只能让模型读路径、多花一轮）。
+    /// </remarks>
+    private static int BrainSmoke()
+    {
+        var casesDir = ResolveCasesDir(Array.Empty<string>())
+                       ?? throw new InvalidOperationException("找不到 behavior-cases 目录");
+        var root = Path.GetDirectoryName(casesDir) ?? AppContext.BaseDirectory;
+        var paths = new Paths(new SystemPathWorld(), root);
+        var dsh = paths.Dsh();
+        Console.WriteLine("DSH 根  ：" + dsh.Root);
+        Console.WriteLine("exe     ：" + dsh.Exe);
+        Console.WriteLine("cli.js  ：" + dsh.Cli);
+        if (string.IsNullOrEmpty(dsh.Exe) || string.IsNullOrEmpty(dsh.Cli))
+        {
+            Console.Error.WriteLine("DSH 没解出来，先跑用例表看路径解析");
+            return 2;
+        }
+
+        var opt = new DshSessionOptions
+        {
+            Exe = dsh.Exe,
+            Cli = dsh.Cli,
+            Cwd = root,
+            SessionId = "pet-brain-smoke",
+        };
+        using var session = new DshSession(opt);
+        try
+        {
+            // 起常驻会话：**失败就重试几次** —— DSH 的 profile 启动阶段偶尔会撞上
+            // "别的 DSH 进程正在写同一份 profile"，重试一下就好（这也是生产里该有的行为）。
+            var sw = Stopwatch.StartNew();
+            var started = false;
+            for (var attempt = 1; attempt <= 3 && !started; attempt++)
+            {
+                try
+                {
+                    session.Start(90);
+                    started = true;
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"第 {attempt} 次启动失败：{ex.Message.Split('\n')[0]}");
+                    var tail = session.StderrTail;
+                    if (tail != "（空）") Console.WriteLine("  stderr：" + tail.Split('\n')[0]);
+                    System.Threading.Thread.Sleep(2000);
+                }
+            }
+
+            if (!started) throw new InvalidOperationException("三次都没起来");
+            Console.WriteLine($"initialize：{sw.Elapsed.TotalSeconds:F1}s（状态 {session.Status}）");
+
+            var r1 = session.Prompt("只回复两个字：可用", null, 180);
+            Console.WriteLine($"第一轮（纯文字）：{r1.Seconds}s → 「{r1.Text}」{(r1.TimedOut ? "（超时）" : "")}");
+
+            ScreenCapture.EnsureDpiAware();
+            var shot = ScreenCapture.Grab(1024, 60);
+            var shotPath = Path.Combine(Path.GetTempPath(), "blop-brain-smoke.jpg");
+            File.WriteAllBytes(shotPath, Convert.FromBase64String(shot.JpegBase64));
+            var r2 = session.Prompt(
+                "这是我屏幕的一张缩略图。用一句话说你看到了什么，20 字以内。",
+                new[] { shotPath },
+                180);
+            Console.WriteLine($"第二轮（带截图 {shot.Width}x{shot.Height}）：{r2.Seconds}s → 「{r2.Text}」{(r2.TimedOut ? "（超时）" : "")}");
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine("失败：" + ex.Message);
+            Console.Error.WriteLine("子进程 stderr 末尾：");
+            Console.Error.WriteLine(session.StderrTail);
+            return 2;
+        }
     }
 
     /// <summary>

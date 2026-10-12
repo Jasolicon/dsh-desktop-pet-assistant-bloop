@@ -147,8 +147,31 @@ $dotnet = "$env:LOCALAPPDATA\Microsoft\dotnet\dotnet.exe"   # SDK 没进 PATH，
 | 挖洞掩码的几何 `Fingerprint.MaskFor` | ✅ 已搬 | `behavior-cases/fingerprint.json` **10/10**（与 PowerShell 侧自检 5y 同一张表） |
 | 抓屏 + 8×8 指纹 `ScreenCapture.Grab` | ✅ 已搬 | `--capture-smoke`：真抓 2880×1800 → 1024×640、JPEG 约 96 KB、掩码 7/64 格、非法区域退回整屏 |
 | 壳 `Blop.App`（窗口/角色图/拖动/位置记忆/菜单/托盘/实例锁） | ✅ 已搬 | `--shell-smoke` 自检 + 真跑一次（窗口 ExStyle、DPI、尺寸、位置记忆都对） |
+| DSH 常驻会话 `DshSession`（stdio JSON-RPC） | ⚠️ 代码已搬，**本机没验成** | 见下面「DSH 现状」 |
 | 账本 / 每日消费上限 | ⬜ | 待搬 |
-| DSH 常驻会话（stdio JSON-RPC） | ⬜ | 待搬 |
 | 气泡 / 选项按钮 / 设置窗口 | ⬜ | 待搬（壳的骨架已在，接着往里加） |
 
 合计：`verify-addtype.ps1` **64/64 项通过**。
+
+## DSH 现状（2026-10-12 晚，卡住的地方）
+
+`DshSession` 已经把协议搬完（`initialize` 必须等响应、`session/prompt` 带 contentBlocks、
+`session.status=idle` 收轮、UTF-8 直写 stdin 基础流、必须持续读 stderr 否则子进程被管道堵死），
+但**没能在本机跑通**。失败形态有两种：
+
+```
+EPERM: operation not permitted, open 'C:\Users\62487\.dsh\profiles\sdk\cordis.yml'
+   （profile 组装阶段，writeFileSync 被拒）
+起来了但 40 秒不回应（stdout 没关，就是没有第一行）
+```
+
+关键的一条对照：**PowerShell 版那条既有路径（同样的 exe / 同样的 cli.js / 同样的参数）现在也起不来**，
+所以卡点不在这份新代码上。目前机器上的相关事实：
+
+- 你的 DSH 应用从 10-08 起就有一个自己的 `--expose-internals … --profile sdk` 实例（pid 51080，长期在跑）；
+- 我调试期间起过多次 sdk 会话，留下过孤儿进程（已清理）；
+- sdk profile 是**共享**的：`~\.dsh\profiles\sdk\cordis.yml` 只能有一个 DSH 在组装，
+  并发启动就会撞成 EPERM —— 而"谁在占"看不出来（文件本身能独占打开、目录也能写）。
+
+下一步要么把环境清干净（退掉正在用 sdk profile 的那个实例）再验，要么先把壳里那条
+观察→闸门→气泡的链路接好（大脑放一个接口后面，先用假大脑验环路），等 DSH 环境干净了再接真的。
