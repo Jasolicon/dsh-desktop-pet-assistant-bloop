@@ -19,7 +19,6 @@ echo Starting the pet... log: %LOG%
 rem If the log below says the lock file / userData cannot be written (EPERM),
 rem this shell is running in a restricted context (sandbox). Uncomment the next
 rem line to keep Electron's user data inside the repo, which is writable:
-rem set "PET_USERDATA=%~dp0ud"
 "%EXE%" --no-sandbox . > "%LOG%" 2>&1
 echo.
 echo ===== the pet exited, code %ERRORLEVEL%; log tail: =====

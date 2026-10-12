@@ -17,7 +17,8 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { ROOT, dshPaths, petImage } from './paths.mjs';
 import { acquire, lockPath, release } from './lock.mjs';
-import { loadConfig, saveConfig } from './config.mjs';
+import { SCHEMA } from './settings/schema.mjs';
+import { CONFIG_PATH, loadConfig, saveConfig } from './config.mjs';
 import { askDsh } from './brain.mjs';
 import { createMonitor } from './monitor.mjs';
 import { dataDir } from './dirs.mjs';
@@ -77,7 +78,9 @@ function refreshTray() {
     { label: paused ? '继续（恢复观察）' : '暂停（停止观察）', click: () => setPaused(!paused) },
     { type: 'separator' },
     { label: '看它判过什么', click: () => { showPet(); win?.webContents.send('pet:showDecisions'); } },
-    { label: '打开配置目录', click: () => shell.openPath(dataDir()) },
+    { label: '设置…', click: () => openSettingsWindow() },
+    // 设置窗口改的是 config.json；这个只是"把那个目录打开"，改动还是靠编辑器
+    { label: '打开配置目录（文件夹）', click: () => shell.openPath(dataDir()) },
     { type: 'separator' },
     { label: '退出', click: () => app.quit() },
   ]));
@@ -256,10 +259,30 @@ function sayPrompt() {
  * 判据（什么时候值得打扰）写在提示词里，**但"值不值得起这一轮"是本地闸门决定的** ——
  * 到这一步说明本地已经认为画面/窗口/时间上值得看一眼了。
  */
+/**
+ * 四档说话风格的"这一轮语气"。换风格换的是**整段定位**，不是语气词 ——
+ * 完整版在 desktop-guide/presets/*.txt（那边一份一份写全的），这里先要那一条分界线。
+ */
+function styleLine(style) {
+  switch (String(style || 'coach')) {
+    case 'guard':
+      return '保守：只在屏幕上存在可证明的错误、反复失败、或做法与目标明显冲突时才开口，否则 SILENT。';
+    case 'roast':
+      return '损友：像认识十年、嘴上不饶人的朋友 —— 可以吐槽屏幕上那件事（不是人），一句拆台 +（有建议的话）一句有用的；画面没变也可以开口。';
+    case 'scout':
+      return '找事：不评论屏幕，而是找一件你**真能替用户做掉**的事提出来（「我来…」而不是「你应该…」）；提不出具体的活就 SILENT。';
+    default:
+      return '陪练：屏幕上是一个需要决定的局面时，直接给出你推荐的那一个，并给一句话理由。';
+  }
+}
+
 function buildLookPrompt(payload) {
   const p = payload.current || {};
   const lines = [
     '你是常驻的「随时指导」助手，在后台看着用户的屏幕。',
+    '',
+    '【这一轮的语气】',
+    styleLine(cfg.speakStyle),
     '',
     '【此刻的观察】',
     `- 前台窗口：${p.process || '(未知)'}《${p.title || ''}》，已停留 ${p.inWindowS || 0} 秒`,
@@ -439,6 +462,61 @@ function registerIpc() {
     }
   });
 
+/**
+ * 设置窗口。建一次、复用（再点"设置…"就把它显到前面）。
+ */
+let settingsWin = null;
+function openSettingsWindow() {
+  if (settingsWin && !settingsWin.isDestroyed()) {
+    settingsWin.show();
+    settingsWin.focus();
+    return;
+  }
+  settingsWin = new BrowserWindow({
+    width: 760,
+    height: 780,
+    title: '泡泡 · Bloop 设置',
+    autoHideMenuBar: true,
+    backgroundColor: '#f7f9fc',
+    webPreferences: {
+      preload: join(ROOT, 'src', 'settings-preload.cjs'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+  settingsWin.loadFile(join(ROOT, 'src', 'settings', 'index.html'));
+  settingsWin.on('closed', () => { settingsWin = null; });
+}
+
+// 设置窗口要的两件事：读当前配置 + schema；把改动写回 config.json。
+// 只接受 schema 里列过的键 —— 配置里还有一堆 `_xxxNote` 和 PowerShell 版专属的键，
+// 界面上不该出现的键也不该被写坏。写回是"改内存里那份 cfg 再整份落盘"，所以
+// 监视循环拿到的就是新值（它持有的是同一个对象引用）。
+ipcMain.handle('settings:get', () => ({
+  config: cfg,
+  schema: SCHEMA,
+  path: CONFIG_PATH,
+  version: app.getVersion(),
+}));
+
+ipcMain.handle('settings:save', (_e, values) => {
+  const allowed = new Set(SCHEMA.flatMap((g) => (g.items || []).map((i) => i.key)));
+  let changed = 0;
+  for (const [k, v] of Object.entries(values || {})) {
+    if (!allowed.has(k) || v === null || v === undefined) continue;
+    if (cfg[k] !== v) {
+      cfg[k] = v;
+      changed++;
+    }
+  }
+  try {
+    saveConfig(cfg);
+    return { ok: true, changed };
+  } catch (err) {
+    return { ok: false, why: String((err && err.message) || err), changed };
+  }
+});
+
   ipcMain.on('pet:menu', () => {
     if (!win) return;
     const p = dshPaths(cfg);
@@ -448,8 +526,9 @@ function registerIpc() {
       { label: '看它判过什么', click: () => win.webContents.send('pet:showDecisions') },
       { label: paused ? '继续（恢复观察）' : '暂停（停止观察）', click: () => setPaused(!paused) },
       { label: '隐藏桌宠（托盘里能叫回来）', click: () => win.hide() },
+      { label: '设置…', click: () => openSettingsWindow() },
       {
-        label: '打开配置目录',
+        label: '打开配置目录（文件夹）',
         // 打包后 ROOT 在 app.asar 里，打开它没意义；打开真正放数据的地方（见 dirs.mjs）
         click: () => shell.openPath(dataDir()),
       },

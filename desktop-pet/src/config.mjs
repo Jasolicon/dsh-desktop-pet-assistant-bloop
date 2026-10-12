@@ -26,6 +26,8 @@ export const DEFAULTS = {
   fontFamily: 'Microsoft YaHei UI',
   fontSize: 12,
   petWidth: 220,
+  /** 说话风格：guard 保守 / coach 陪练 / roast 损友 / scout 找事（换的是整段定位，见 settings/schema.mjs）。 */
+  speakStyle: 'coach',
   showSeconds: 12,
   // 位置（null = 屏幕底部居中）
   x: null,
