@@ -285,6 +285,8 @@ flowchart LR
 | **迁移中** | [`desktop-pet/`](desktop-pet/) —— Electron 版，见其 README 与 MIGRATION.md |
 | **已停用** | [`ambient-guide/`](ambient-guide/) —— 最早的 DSH 插件形态，保留作历史 |
 
+三份实现的功能差距与"有意为之的差别"记在 [`实现差别记录.md`](实现差别记录.md)（换 .NET 期间的账本）。
+
 **已知限制**
 
 - 只支持 Windows
