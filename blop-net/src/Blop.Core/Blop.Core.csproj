@@ -1,9 +1,11 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <!-- net8.0-windows：这条路是**有意的 Windows-only**（WinForms 跑不了别的平台）。
-         跨平台那条线仍然由 desktop-pet/（Electron）负责，见 实现差别记录.md。 -->
-    <TargetFramework>net8.0-windows</TargetFramework>
+    <!-- 双目标：net48 是**眼下唯一能在本机跑起来的形态**（见 README 的策略表），
+         net8.0-windows 是为将来能签名时准备的（WinForms 在 net8 上跑不了 NativeAOT，
+         所以"不签名 + net8"这条路目前等于走不通）。两边共用同一份源码。 -->
+    <TargetFrameworks>net48;net8.0-windows</TargetFrameworks>
+    <Configurations>Debug;Release</Configurations>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>latest</LangVersion>
@@ -11,5 +13,10 @@
     <!-- 中文提示语要按当前区域性比较/格式化，别被 InvariantGlobalization 影响 -->
     <InvariantGlobalization>false</InvariantGlobalization>
   </PropertyGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)' == 'net48'">
+    <!-- 用 SDK 编 net48 要参考程序集；装了 VS 的 targeting pack 就不需要这个包 -->
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+  </ItemGroup>
 
 </Project>

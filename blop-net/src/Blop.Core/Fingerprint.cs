@@ -22,7 +22,10 @@ public static class Fingerprint
     /// </remarks>
     public static int Distance(string? a, string? b)
     {
-        if (string.IsNullOrEmpty(a) || string.IsNullOrEmpty(b) || a.Length != b.Length) return 999;
+        // 显式写 a is null / a.Length == 0，而不是 string.IsNullOrEmpty ——
+        // net48 的 BCL 没有 `[NotNullWhen(false)]` 注解，用 IsNullOrEmpty 的话
+        // 编译器（开 Nullable + TreatWarningsAsErrors）会认为下一行 a 仍然可能为 null。
+        if (a is null || b is null || a.Length == 0 || b.Length == 0 || a.Length != b.Length) return 999;
         var d = 0;
         for (var i = 0; i < a.Length; i++) d += Math.Abs(a[i] - b[i]);
         return d;

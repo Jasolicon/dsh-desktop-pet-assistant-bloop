@@ -2,7 +2,8 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net8.0-windows</TargetFramework>
+    <!-- 与 Blop.Core 同步双目标：net48 = 本机能跑的形态，net8.0-windows = 签名到位后的形态 -->
+    <TargetFrameworks>net48;net8.0-windows</TargetFrameworks>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>latest</LangVersion>
@@ -11,8 +12,20 @@
     <RootNamespace>Blop.Cases</RootNamespace>
   </PropertyGroup>
 
-  <ItemGroup>
-    <ProjectReference Include="..\Blop.Core\Blop.Core.csproj" />
+  <!-- 引用要按目标框架钉住：不钉的话，`dotnet publish -p:PublishAot=true` 会把 PublishAot
+       也传给 Blop.Core 的 net48 那一半，直接报 NETSDK1207（"目标框架不支持提前编译"）。
+       net48 走本机能跑的形态，net8.0-windows 走 AOT/签名后的形态。 -->
+  <ItemGroup Condition="'$(TargetFramework)' == 'net48'">
+    <ProjectReference Include="..\Blop.Core\Blop.Core.csproj" SetTargetFramework="TargetFramework=net48" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(TargetFramework)' == 'net8.0-windows'">
+    <ProjectReference Include="..\Blop.Core\Blop.Core.csproj" SetTargetFramework="TargetFramework=net8.0-windows" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)' == 'net48'">
+    <!-- net48 不自带 System.Text.Json；这个包从 net462 起都支持 -->
+    <PackageReference Include="System.Text.Json" Version="8.0.5" />
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
   </ItemGroup>
 
 </Project>
