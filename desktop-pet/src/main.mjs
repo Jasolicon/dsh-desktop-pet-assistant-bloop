@@ -107,6 +107,11 @@ function createTray() {
 
 const log = (...a) => console.log('[pet]', ...a);
 
+// 崩也要留下原因：Electron 的主进程异常默认会静默退出，双击的人只看到"闪退"。
+// 这两行不改行为，只保证日志里有话说（配合 start.cmd 的日志文件）。
+process.on('uncaughtException', (err) => { console.error('[pet] 未捕获异常：', err && (err.stack || err.message || err)); });
+process.on('unhandledRejection', (err) => { console.error('[pet] 未处理的 Promise 拒绝：', err && (err.stack || err.message || err)); });
+
 /**
  * 问一轮。优先走常驻会话（秒级）；起不来或出错就退回一次性调用（慢但可靠）。
  * 这条降级路径很重要：常驻会话挂了不该让桌宠整个哑掉。
@@ -441,8 +446,16 @@ function registerIpc() {
   });
 }
 
-// 单实例：第二次启动就唤醒已有那只
-if (!app.requestSingleInstanceLock()) {
+// 单实例：第二次启动就唤醒已有那只。
+//
+// ⚠️ 这一句失败时**必须留下痕迹**：requestSingleInstanceLock() 返回 false 有两种原因 ——
+// "已经有另一只在跑"（正常）和"锁文件根本写不出来"（异常，比如目录权限）。
+// 两者都静默 app.quit()，用户看到的就是"双击一闪就没了"，无从下手。实测踩过。
+// PET_NO_LOCK=1 可以跳过（诊断用）。
+const noLock = process.env.PET_NO_LOCK === '1';
+const gotLock = noLock ? true : app.requestSingleInstanceLock();
+log('单实例锁：', noLock ? '跳过（PET_NO_LOCK=1）' : gotLock ? '已获得' : '没拿到 —— 另一个实例在跑，或锁文件写不出来');
+if (!gotLock) {
   app.quit();
 } else {
   app.on('second-instance', () => {
@@ -450,6 +463,7 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   app.whenReady().then(() => {
+    log('userData =', app.getPath('userData'));
     log('root =', ROOT);
     log('dsh  =', JSON.stringify(dshPaths(cfg)));
     createWindow();
