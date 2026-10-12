@@ -17,6 +17,11 @@ desktop-pet/screenshot-*.png
 # Electron 版的用户配置（用 `npm run migrate-config` 从 desktop-guide 那边生成）
 desktop-pet/config.json
 
+# .NET 版的构建产物（bin/obj 每个项目都有；单文件发布产物在 out-*）
+blop-net/**/bin/
+blop-net/**/obj/
+blop-net/out-*/
+
 # 打包路线探针编译出来的 exe（源码在 packaging-probe/Probe.cs）
 packaging-probe/*.exe
 

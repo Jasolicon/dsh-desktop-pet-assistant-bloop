@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- net8.0-windows：这条路是**有意的 Windows-only**（WinForms 跑不了别的平台）。
+         跨平台那条线仍然由 desktop-pet/（Electron）负责，见 实现差别记录.md。 -->
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <!-- 中文提示语要按当前区域性比较/格式化，别被 InvariantGlobalization 影响 -->
+    <InvariantGlobalization>false</InvariantGlobalization>
+  </PropertyGroup>
+
+</Project>
