@@ -135,6 +135,11 @@ public static class Program
     {
         var casesDir = ResolveCasesDir(Array.Empty<string>())
                        ?? throw new InvalidOperationException("找不到 behavior-cases 目录");
+        Console.WriteLine("identity=" + System.Security.Principal.WindowsIdentity.GetCurrent().Name +
+                          "  user=" + Environment.UserName +
+                          "  isAdmin=" + new System.Security.Principal.WindowsPrincipal(
+                              System.Security.Principal.WindowsIdentity.GetCurrent())
+                              .IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator));
         var root = Path.GetDirectoryName(casesDir) ?? AppContext.BaseDirectory;
         var paths = new Paths(new SystemPathWorld(), root);
         var dsh = paths.Dsh();
@@ -197,6 +202,8 @@ public static class Program
         catch (Exception ex)
         {
             Console.Error.WriteLine("失败：" + ex.Message);
+            Console.Error.WriteLine("这次 Start 的实参快照：");
+            Console.Error.WriteLine(session.LastStartDiagnostics);
             Console.Error.WriteLine("子进程 stderr 末尾：");
             Console.Error.WriteLine(session.StderrTail);
             return 2;
@@ -418,3 +425,4 @@ public static class Program
         return null;
     }
 }
+

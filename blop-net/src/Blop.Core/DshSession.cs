@@ -73,6 +73,9 @@ public sealed class DshSession : IDisposable
 
     public bool Initialized { get; private set; }
 
+    /// <summary>最近一次 Start 的实参快照（诊断用：排查"为什么这个子进程起不来"）。</summary>
+    public string LastStartDiagnostics { get; private set; } = "";
+
     public string SessionId => _opt.SessionId;
 
     public string Status =>
@@ -118,6 +121,12 @@ public sealed class DshSession : IDisposable
 
         var proc = new Process { StartInfo = psi };
         proc.Start();
+        LastStartDiagnostics =
+            "exe=" + _opt.Exe + Environment.NewLine +
+            "args=" + psi.Arguments + Environment.NewLine +
+            "cwd=" + psi.WorkingDirectory + Environment.NewLine +
+            "envNode=" + Environment.GetEnvironmentVariable("ELECTRON_RUN_AS_NODE") + Environment.NewLine +
+            "pid=" + proc.Id;
         _proc = proc;
         _pendingRead = null;
         _nextId = 1;

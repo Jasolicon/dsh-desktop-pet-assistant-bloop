@@ -157,21 +157,33 @@ $dotnet = "$env:LOCALAPPDATA\Microsoft\dotnet\dotnet.exe"   # SDK 没进 PATH，
 
 `DshSession` 已经把协议搬完（`initialize` 必须等响应、`session/prompt` 带 contentBlocks、
 `session.status=idle` 收轮、UTF-8 直写 stdin 基础流、必须持续读 stderr 否则子进程被管道堵死），
-但**没能在本机跑通**。失败形态有两种：
+但**没能从我们的进程里跑通**。我们起的子进程死在 profile 组装那一步：
 
 ```
-EPERM: operation not permitted, open 'C:\Users\62487\.dsh\profiles\sdk\cordis.yml'
-   （profile 组装阶段，writeFileSync 被拒）
-起来了但 40 秒不回应（stdout 没关，就是没有第一行）
+Error: EPERM: operation not permitted, open 'C:\Users\62487\.dsh\profiles\sdk\cordis.yml'
+    at prepareProfile (…/dsh/lib/profile-boot-*.js:189)
+    at composeProfile (…:206) → runProfile (…:241) → runCli (…/lib/bin.js:215)
 ```
 
-关键的一条对照：**PowerShell 版那条既有路径（同样的 exe / 同样的 cli.js / 同样的参数）现在也起不来**，
-所以卡点不在这份新代码上。目前机器上的相关事实：
+**已经排除掉的**（都做过对照实验，每条都是从 PowerShell 用同一套参数跑成功、从我们的进程跑失败）：
 
-- 你的 DSH 应用从 10-08 起就有一个自己的 `--expose-internals … --profile sdk` 实例（pid 51080，长期在跑）；
-- 我调试期间起过多次 sdk 会话，留下过孤儿进程（已清理）；
-- sdk profile 是**共享**的：`~\.dsh\profiles\sdk\cordis.yml` 只能有一个 DSH 在组装，
-  并发启动就会撞成 EPERM —— 而"谁在占"看不出来（文件本身能独占打开、目录也能写）。
+| 猜过的原因 | 实测 |
+| --- | --- |
+| exe / cli.js / 参数写错 | 打印实参快照逐字对比：**完全一致** |
+| 工作目录不对 | desktop-guide 与仓库根都试过，PS 侧两个都成功 |
+| 环境变量不全或被小写化 | 子进程 `cmd /c set` 全量对比：**97 行一字不差** |
+| 环境里少了 `ELECTRON_RUN_AS_NODE` | 有（自己在进程里设、继承给子进程） |
+| 身份/令牌不同 | `JASONLAPTOP\62487`，非管理员，未带任何沙箱组 |
+| 父进程层级（孙进程） | pwsh → pwsh → DSH 也成功 |
+| `CreateNoWindow` | true / false 在 PS 侧都成功 |
+| stdin 写法（WriteLine vs 裸字节） | 两种在 PS 侧都成功 |
+| stdout/stderr 被管道/文件重定向 | 两种都试过，我们这边照样失败 |
+| sdk profile 被别的实例占着 | 关掉 DSH 应用、清掉所有 sdk 实例、换独立 `DSH_HOME`，都一样 |
 
-下一步要么把环境清干净（退掉正在用 sdk profile 的那个实例）再验，要么先把壳里那条
-观察→闸门→气泡的链路接好（大脑放一个接口后面，先用假大脑验环路），等 DSH 环境干净了再接真的。
+**仍然没找到的原因**：同一个 exe、同一份参数、同一份环境、同一个用户、同样从 pwsh 派生，
+从我们的进程里起就被拒写 `~\.dsh\profiles\sdk\cordis.yml`（PS 侧同一时刻写得好好的 ——
+文件时间戳能看到它刚被写成功过）。下一步要么去看 `profile-boot` 那段代码到底按什么判断"要重写"，
+要么干脆**绕开它**：让 DSH 应用自己去跑（走它的 IPC/插件形态），别从我们这边直接起 sdk 会话。
+
+**当前决定**：先不卡在这里 —— 壳里那条「观察 → 闸门 → 气泡」的链路照接，大脑放在一个接口后面，
+先用假大脑把环路验通（抓屏 → 闸门放行 → 气泡 + 判断记录），等上面这个问题有结论再把真大脑插进去。
