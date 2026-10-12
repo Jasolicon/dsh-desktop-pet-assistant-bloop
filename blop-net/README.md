@@ -187,3 +187,37 @@ Error: EPERM: operation not permitted, open 'C:\Users\62487\.dsh\profiles\sdk\co
 
 **当前决定**：先不卡在这里 —— 壳里那条「观察 → 闸门 → 气泡」的链路照接，大脑放在一个接口后面，
 先用假大脑把环路验通（抓屏 → 闸门放行 → 气泡 + 判断记录），等上面这个问题有结论再把真大脑插进去。
+
+### 补记（同一晚，读源码之后）
+
+DSH 是开源的（`deepseek-ai/deepseek-harness`），所以直接读了 `apps/cli/src/profile-boot.ts`：
+
+```ts
+// 每次启动都会重写 cordis.yml（空根配置）—— 有意为之：防止 Loader 的写回把组合结果烙进文件
+writeFileSync(join(profile.dir, PROFILE_ROOT_FILENAME), PROFILE_ROOT_CONFIG)
+```
+
+所以那个 EPERM 就是**一次普通的写文件被拒**。同一时刻：
+
+| 从哪起 | 结果 |
+| --- | --- |
+| PowerShell（`dsh-sdk.ps1` 的原样代码，连跑两次） | ✅ 成功 |
+| 我们的进程（参数/环境/令牌/工作目录/编码逐字段对齐，net48 与 net8 都试） | ❌ EPERM |
+| 我们的进程 → `cmd /c` 中转再起 | ❌ EPERM（同一条命令从 pwsh 起就没问题） |
+
+**另一个好消息**：DSH 的 CLI 有一条**一次性模式**，实测从 PowerShell 起完全可用：
+
+```
+DeepSeek Harness.exe --expose-internals <cli.js> headless --patch <最小 patch> "只回复两个字：可用"
+→ stdout 最后一行「可用」，4.6 秒，退出码 0
+```
+
+其中 `<最小 patch>` 只是把模型 provider 注入成 `deepseek-account`（用你 DSH 里已登录的账号，
+不用再配 key）—— 见 `BrainPatch.cs`，它是 `dsh-agents.ps1` 里 `WriteAgentPatch` 的精简版。
+代价是每轮起一个完整进程（8–25 秒），比常驻会话慢一个量级，但**这条路是通的**：
+`DshOneShot.cs` + `Blop.Cases --brain-oneshot-smoke`（带一张实时截图问一句，让模型自己 `read_image`）。
+
+**当前最大的怀疑**：**沙箱继承**。上面所有"从我们的进程起就失败"的对照，都是在 Codex 的沙箱里跑的
+（我们的进程是沙箱里的 pwsh 拉起来的）；而你平时是**双击运行**，那是正常上下文。
+所以仓库里放了一个一键测试：双击 `blop-net/out/试试大脑.cmd`（它跑的就是同一条命令）。
+如果它出答案 → 说明沙箱是原因、真实运行时没这个问题，我们就照一次性模式把大脑接上。

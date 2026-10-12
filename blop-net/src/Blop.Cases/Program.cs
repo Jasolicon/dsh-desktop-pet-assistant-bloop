@@ -28,6 +28,7 @@ public static class Program
             try { Console.OutputEncoding = Encoding.UTF8; } catch { }
             if (args.Length > 0 && args[0] == "--capture-smoke") return CaptureSmoke();
             if (args.Length > 0 && args[0] == "--brain-smoke") return BrainSmoke();
+            if (args.Length > 0 && args[0] == "--brain-oneshot-smoke") return BrainOneShotSmoke();
             return RunAll(args) == 0 ? 0 : 1;
         }
         catch (Exception ex)
@@ -124,6 +125,61 @@ public static class Program
     }
 
     /// <summary>
+    /// 一次性大脑冒烟：起一个 <c>dsh headless</c> 进程，问一句**带截图**的，打印答案与用时。
+    /// </summary>
+    /// <remarks>
+    /// 这条路**实测能通**（常驻 sdk 会话那条从我们的进程里起不来，见 README「DSH 现状」）：
+    /// <c>--expose-internals &lt;cli.js&gt; headless --patch &lt;最小 patch&gt; "提示词"</c>，
+    /// 答案打在 stdout 最后一行。会真的花一次模型调用。
+    /// </remarks>
+    private static int BrainOneShotSmoke()
+    {
+        var casesDir = ResolveCasesDir(Array.Empty<string>())
+                       ?? throw new InvalidOperationException("找不到 behavior-cases 目录");
+        var root = Path.GetDirectoryName(casesDir) ?? AppContext.BaseDirectory;
+        var runDir = Path.Combine(AppContext.BaseDirectory, "run");
+        Directory.CreateDirectory(runDir);
+
+        var paths = new Paths(new SystemPathWorld(), root);
+        var dsh = paths.Dsh();
+        Console.WriteLine("exe    ：" + dsh.Exe);
+        Console.WriteLine("cli.js ：" + dsh.Cli);
+        if (string.IsNullOrEmpty(dsh.Exe) || string.IsNullOrEmpty(dsh.Cli))
+        {
+            Console.Error.WriteLine("DSH 没解出来（应用没开？或装在不常见的位置 → 设 DG_DSH_ROOT）");
+            return 2;
+        }
+
+        var patch = BrainPatch.Write(Path.Combine(runDir, "brain-patch.yml"));
+        ScreenCapture.EnsureDpiAware();
+        var shot = ScreenCapture.Grab(1024, 60);
+        var shotPath = Path.Combine(runDir, "brain-shot.jpg");
+        File.WriteAllBytes(shotPath, Convert.FromBase64String(shot.JpegBase64));
+        Console.WriteLine("截图   ：" + shot.Width + "x" + shot.Height + " → " + shotPath);
+
+        var prompt = "这是我电脑屏幕的一张缩略图，文件路径是 " + shotPath +
+                     "（请用你的读图工具打开它）。用一句话说你看到了什么，20 字以内。";
+        var r = DshOneShot.Ask(new OneShotOptions
+        {
+            Exe = dsh.Exe,
+            Cli = dsh.Cli,
+            Patch = patch,
+            Prompt = prompt,
+            Cwd = root,
+            TimeoutSeconds = 240,
+            CmdHop = Environment.GetEnvironmentVariable("DG_NO_CMD_HOP") != "1",
+        });
+        Console.WriteLine("用时   ：" + r.Seconds + "s，退出码=" + r.ExitCode + (r.TimedOut ? "（超时）" : ""));
+        Console.WriteLine("答案   ：「" + r.Text + "」");
+        if (r.Text.Length == 0 && r.Stderr.Length > 0)
+        {
+            Console.WriteLine("stderr ：" + r.Stderr.Substring(0, Math.Min(400, r.Stderr.Length)));
+        }
+
+        return r.Ok ? 0 : 2;
+    }
+
+    /// <summary>
     /// 大脑冒烟：起常驻 DSH 会话 → 问一句纯文字 → 再问一句**带截图**的。
     /// </summary>
     /// <remarks>
@@ -156,7 +212,8 @@ public static class Program
         {
             Exe = dsh.Exe,
             Cli = dsh.Cli,
-            Cwd = root,
+            // 允许用环境变量覆盖会话的工作目录，方便和 dsh-sdk.ps1 做逐字段对照
+            Cwd = Environment.GetEnvironmentVariable("DG_BRAIN_CWD") ?? root,
             SessionId = "pet-brain-smoke",
         };
         using var session = new DshSession(opt);

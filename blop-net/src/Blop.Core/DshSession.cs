@@ -104,20 +104,25 @@ public sealed class DshSession : IDisposable
             RedirectStandardInput = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
-            CreateNoWindow = true,
+            // 不设 CreateNoWindow：dsh-sdk.ps1 也没设，而 DSH（Electron 以 node 模式跑）在
+            // "没有控制台"的形态下会在准备 profile 时被拒写（EPERM）—— 实测从我们进程里
+            // 带这个标志必失败，去掉就好。stdio 已全部重定向，所以不会弹出控制台窗口。
+            CreateNoWindow = false,
             WorkingDirectory = string.IsNullOrEmpty(_opt.Cwd) ? AppDomain.CurrentDomain.BaseDirectory : _opt.Cwd,
         };
         // 输出这边可以设编码（net48 也有这个属性）；**输入那边没有** ——
         // ProcessStartInfo.StandardInputEncoding 是 .NET Core 才加的，所以 Send() 里直接
         // 往 StandardInput.BaseStream 写 UTF-8 字节。中文进去必须是 UTF-8，否则是乱码（实测）。
         psi.StandardOutputEncoding = new UTF8Encoding(false);
-        // 把 Electron 的可执行文件当 node 用（这正是 DSH 自己那套启动方式）。
-        // ⚠️ 这条**不能**写成 psi.EnvironmentVariables["ELECTRON_RUN_AS_NODE"] = "1"：
-        // .NET Framework 那个集合会把**所有键的键名小写化**再交给子进程，于是 DSH（Node）
-        // 在 profile 启动阶段报 "EPERM: open …\.dsh\profiles\sdk\cordis.yml" ——
-        // 一个看起来像权限问题、实际是环境变量名大小写问题的怪错（实测踩了很久）。
-        // 在自己进程里设一次，子进程自然继承（net48 / net8 都支持，也不动那份继承的环境）。
+#if NET6_0_OR_GREATER
+        // net8 上跟 dsh-sdk.ps1 完全一致：显式指定 stdin 编码，并把变量写进子进程环境块
+        psi.StandardInputEncoding = new UTF8Encoding(false);
+        psi.EnvironmentVariables["ELECTRON_RUN_AS_NODE"] = "1";
+#else
+        // net48 没有 ProcessStartInfo.StandardInputEncoding（.NET Core 才加的），而且那个
+        // EnvironmentVariables 集合会把键名小写化；所以这条路改在自己进程里设一次，靠继承。
         Environment.SetEnvironmentVariable("ELECTRON_RUN_AS_NODE", "1");
+#endif
 
         var proc = new Process { StartInfo = psi };
         proc.Start();
@@ -322,12 +327,18 @@ public sealed class DshSession : IDisposable
     private void Send(JsonObject message)
     {
         var proc = _proc ?? throw new InvalidOperationException("进程还没起来");
-        // 一行 JSON + '\n'，按 UTF-8 写字节（不经过 StreamWriter，免得踩到 net48 的默认码页）
-        var bytes = Encoding.UTF8.GetBytes(
-            message.ToJsonString(new JsonSerializerOptions { WriteIndented = false }) + "\n");
+        var json = message.ToJsonString(new JsonSerializerOptions { WriteIndented = false });
+#if NET6_0_OR_GREATER
+        // net8：和 dsh-sdk.ps1 一样走 StreamWriter（编码已在 StandardInputEncoding 里指定 UTF-8）
+        proc.StandardInput.WriteLine(json);
+        proc.StandardInput.Flush();
+#else
+        // net48：没有 StandardInputEncoding，直接按 UTF-8 写字节，绕开 StreamWriter 的默认码页
+        var bytes = Encoding.UTF8.GetBytes(json + "\n");
         var stream = proc.StandardInput.BaseStream;
         stream.Write(bytes, 0, bytes.Length);
         stream.Flush();
+#endif
     }
 
     /// <summary>读一行，带超时。返回 null = 流关了；空串 = 这次超时；否则是那一行。</summary>
