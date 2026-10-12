@@ -86,6 +86,24 @@ html, body {
   pointer-events: none;
 }
 
+/* 角色图：撑满宠物框、不变形；没图（或加载失败）时保持 display:none，让自绘那只顶上 */
+#petimg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: none;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+#pet.has-image #petimg { display: block; }
+/* 用角色图时把自绘的身体和影子收起来（图上自带阴影） */
+#pet.has-image .body,
+#pet.has-image .shadow { display: none; }
+
 #pet[data-state="idle"]      { color: var(--idle); }
 #pet[data-state="thinking"]  { color: var(--think); }
 #pet[data-state="speaking"]  { color: var(--speak); }

@@ -34,6 +34,28 @@ function setState(state) {
   petEl.dataset.state = state;
 }
 
+// ---------------------------------------------------------------------------
+// 角色图：有就用它，没有（或加载失败）就退回自绘那只。
+//
+// 为什么要这样接：PowerShell 版是"自绘分层窗口里贴一张带透明通道的 PNG"，图片**不能换色**，
+// 四个状态靠背后一圈光晕表达（见上面 #pet::before）。Electron 版当初只做了自绘的 C 形身体，
+// 于是"换个前端"之后长得完全不像原来那只 —— 这里把图接回来，光晕那套照旧。
+// ---------------------------------------------------------------------------
+(function loadPetImage() {
+  const img = document.getElementById('petimg');
+  if (!img || !window.pet || typeof window.pet.info !== 'function') return;
+  window.pet.info()
+    .then((info) => {
+      if (!info || !info.image) return;              // 没配角色图：继续用自绘那只
+      img.addEventListener('load', () => petEl.classList.add('has-image'));
+      img.addEventListener('error', () => {          // 图坏了也别变成空白：退回自绘
+        petEl.classList.remove('has-image');
+      });
+      img.src = encodeURI('file:///' + String(info.image).replace(/\\/g, '/'));
+    })
+    .catch(() => { /* 拿不到就自绘 */ });
+})();
+
 /** bubbleOwner：这条气泡是谁放的（子 agent 那条只在自己还握着气泡时才清掉它） */
 let bubbleOwner = null;
 function showBubble(text, ms = 12000, owner = null) {
