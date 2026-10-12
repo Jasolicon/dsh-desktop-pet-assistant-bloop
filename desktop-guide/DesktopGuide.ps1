@@ -3241,7 +3241,7 @@ function Try-WakeFromStandby {
   #>
   param([string]$Why = '自检')
   if (-not $script:standby) { return $false }
-  $idleS = [int]([DesktopGuide.Native]::IdleMs() / 1000)
+  $idleS = [int](Get-IdleSeconds)
   $probeIdle = [int]$(if ($cfg.standbyProbeIdleSeconds) { $cfg.standbyProbeIdleSeconds } else { 60 })
   if ($idleS -lt 0 -or $idleS -ge $probeIdle) { return $false }
   $lockedNow = $true
@@ -3388,7 +3388,7 @@ function Build-Payload {
     timeline  = @($script:timeline | Select-Object -Last 12)
     # 三个信号一起看，才能把「等程序跑完」「人不在」「在看」分开：
     human     = [pscustomobject]@{
-      idleSeconds  = [int]([DesktopGuide.Native]::IdleMs() / 1000)
+      idleSeconds  = [int](Get-IdleSeconds)
       fgCpuPercent = $(try {
           $hp = Get-Process -Id ([DesktopGuide.Native]::ForegroundPid()) -ErrorAction Stop
           $t1 = $hp.TotalProcessorTime.TotalMilliseconds
@@ -3448,6 +3448,26 @@ function Get-FpDistance {
   return $d
 }
 
+# ---------------------------------------------------------------------------
+# 空闲时间（用户多久没动键鼠）的唯一入口。
+#
+# 为什么要包一层：真读 GetLastInputInfo 是**不确定**的 —— 自检和用例表跑的时候机器通常
+# 刚被人操作过（空闲 ≈ 0），于是闸门里"人不在"那几条分支永远走不到，等于没测。
+# 实测踩过：损友模式那条「40 秒前 → 该放行」在本机空闲时会打印成「人不在」，
+# 而当时的自检只是把结果打出来给人看，没有断言 —— 这种环境依赖一直没被发现。
+# 用例表把空闲时间当输入显式写出来，行为才可复现。
+# ---------------------------------------------------------------------------
+$script:idleOverrideSeconds = $null
+function Get-IdleSeconds {
+  <#
+    返回"用户已经多少秒没动键鼠"。
+    $script:idleOverrideSeconds 非空时一律用它（自检/用例表注入假信号），
+    否则走真实的 Win32 GetLastInputInfo。
+  #>
+  if ($null -ne $script:idleOverrideSeconds) { return [double]$script:idleOverrideSeconds }
+  return [math]::Round(([DesktopGuide.Native]::IdleMs() / 1000), 1)
+}
+
 function Test-WorthAutoJudge {
   <#
     **本地闸门**：值不值得为这一轮起一次模型调用。
@@ -3499,7 +3519,7 @@ function Test-WorthAutoJudge {
     if ($since -lt $roastNeed) {
       return "距上次开口只有 $([int]$since)s（损友模式最短 $([int]$roastNeed)s 一句）"
     }
-    $roastIdle = [int]([DesktopGuide.Native]::IdleMs() / 1000)
+    $roastIdle = [int](Get-IdleSeconds)
     if ($roastIdle -ge [int]$cfg.judgeIdleSkipSeconds) {
       return "人不在（$($roastIdle)s 没有键鼠输入）—— 吐槽也得有人在看"
     }
@@ -3517,7 +3537,7 @@ function Test-WorthAutoJudge {
     if ($since -lt $need) {
       return "距上次判断只有 $([int]$since)s（连续 $($script:silentStreak) 次没说 → 间隔放宽到 $([int]$need)s）"
     }
-    $scoutIdle = [int]([DesktopGuide.Native]::IdleMs() / 1000)
+    $scoutIdle = [int](Get-IdleSeconds)
     if (($scoutIdle -ge [int]$cfg.judgeIdleSkipSeconds) -and (-not $winChanged)) {
       return "人不在（$($scoutIdle)s 没有键鼠输入，窗口也没换）—— 提活也得有人在"
     }
@@ -3530,7 +3550,7 @@ function Test-WorthAutoJudge {
   if ($since -lt $need) {
     return "距上次判断只有 $([int]$since)s（连续 $($script:silentStreak) 次没说 → 间隔放宽到 $([int]$need)s）"
   }
-  $idle = [int]([DesktopGuide.Native]::IdleMs() / 1000)
+  $idle = [int](Get-IdleSeconds)
   if (($idle -ge [int]$cfg.judgeIdleSkipSeconds) -and (-not $winChanged)) {
     return "人不在（$($idle)s 没有键鼠输入，窗口也没换）"
   }
@@ -4715,77 +4735,99 @@ $probe3 = New-Object DesktopGuide.PetForm -ArgumentList @([double]$script:UiScal
         "$($case.p) | $($case.t)", $tf.name, $tf.sample, $tf.judge, $(if ($tf.hint) { '  + 有提前建议' } else { '' }))
   }
   Write-Output '=== 5h. 本地闸门（值不值得起一次模型调用）==='
-  # 拿假状态直接问闸门，不需要真的等一分钟
-  # 注意指纹的字符范围是 '0'(48) 到 '?'(63)，不是十六进制 —— 别拿 'F' 当"最大"
+  # 用例表驱动：输入与期望全在 behavior-cases\gate.json（语言无关 —— .NET 版、Electron 版
+  # 以后读同一份，差别只能是"表里写明有意不同"或"还没对齐"）。
+  #
+  # 为什么从"打印给人看"改成断言：原来那版把结果打出来，错了不会红；更要命的是
+  # **"人不在"那几条分支在这里永远走不到** —— 跑自检的时候机器总是刚被人动过，
+  # 真实空闲时间 ≈ 0（实测：损友模式那条「40 秒前该放行」在人真离开过之后会打印成
+  # 「人不在」，而当时的写法看不出来）。现在空闲时间由用例表显式给（Get-IdleSeconds 的注入点），
+  # 时间也按用例给，行为可复现。
+  #
+  # 指纹的字符范围是 '0'(48) 到 '?'(63)，不是十六进制 —— 别拿 'F' 当"最大"。
   $zeroFp = '0' * 64
   $fullFp = '?' * 64
-  # 闸门第一条判据就是"有没有画面"。自检里先塞一张假截图 ——
-  # 不塞的话后面每一条都撞在同一次早退上，等于整段没测（实测踩过）。
-  $script:shots.Clear()
-  [void]$script:shots.Add([pscustomobject]@{ at = (Get-Date).ToString('o'); jpegBase64 = 'fake' })
-  $script:standby = $false
-  $script:silentStreak = 0
-  $script:lastFp = $zeroFp
-  $script:lastJudgedFp = $zeroFp
-  $script:currentKey = 'A|B'
-  $script:lastJudgedKey = 'A|B'
-  $script:lastJudgedAt = Get-Date
-  Write-Output ("  画面没变 + 刚判过      → " + (Test-WorthAutoJudge))
-  $script:lastFp = $fullFp          # 画面大改
-  $script:lastJudgedAt = (Get-Date).AddSeconds(-10)
-  Write-Output ("  画面大改但只过了 10 秒 → " + (Test-WorthAutoJudge))
-  $script:lastJudgedAt = (Get-Date).AddMinutes(-2)
-  Write-Output ("  画面大改 + 2 分钟前    → '" + (Test-WorthAutoJudge) + "'  （空 = 值得问）")
-  $script:silentStreak = 3
-  Write-Output ("  同上但连续 3 次没说    → " + (Test-WorthAutoJudge) + "   （退避：要等 240s）")
-  $script:silentStreak = 0
-  $script:lastFp = $zeroFp
-  $script:lastJudgedFp = $zeroFp
-  $script:lastJudgedKey = $script:currentKey
-  $script:lastJudgedAt = (Get-Date).AddMinutes(-6)
-  Write-Output ("  画面没变但已 6 分钟    → '" + (Test-WorthAutoJudge) + "'  （保险丝：不能一直不看）")
-  # ---- 损友模式：同一套假状态，只换 speakStyle，看闸门会不会放行 ----
-  # 损友模式的定位是"陪着说话"，所以它必须能在**画面没变**时开口（直播里"又在刷同一个页面"
-  # 本身就是内容）—— 这两行断言就是钉住这条：30 秒内拦住、40 秒放行。
-  # 这里把 roastMinSeconds 钉死成 30，免得用户改了配置之后这两行说法就自相矛盾。
-  $oldStyle = [string]$cfg.speakStyle
-  $oldRoastGap = $cfg.roastMinSeconds
-  $cfg.speakStyle = 'roast'
-  $cfg.roastMinSeconds = 30
-  $script:standby = $false
-  $script:silentStreak = 0
-  $script:lastFp = $zeroFp
-  $script:lastJudgedFp = $zeroFp
-  $script:lastJudgedKey = $script:currentKey
-  $script:lastJudgedAt = (Get-Date).AddSeconds(-15)
-  Write-Output ("  [损友] 画面没变、15 秒前 → '" + (Test-WorthAutoJudge) + "'  （该拦住：没到 30s）")
-  $script:lastJudgedAt = (Get-Date).AddSeconds(-40)
-  Write-Output ("  [损友] 画面没变、40 秒前 → '" + (Test-WorthAutoJudge) + "'  （空 = 放行，画面没变也能吐槽）")
-  $script:silentStreak = 2
-  Write-Output ("  [损友] 同上但连 2 次没说 → '" + (Test-WorthAutoJudge) + "'  （退避到 90s：别对着无聊画面一直付费）")
-  $script:silentStreak = 0
-  $cfg.speakStyle = $oldStyle
-  $cfg.roastMinSeconds = $oldRoastGap
-  # ---- 找事模式：同样只换 speakStyle，专门钉住它和损友模式**差在哪** ----
-  # 找事模式也放行"画面没变"（理由是"活儿可以主动找"，和损友的"无聊本身就是内容"不同），
-  # 但**节拍一分都不放松** —— 间隔仍走任务档的 judgeMinSeconds（这里 60s）。
-  # 所以下面两行是：10 秒必须拦住、2 分钟必须放行。少了第二行，这个模式就只是"第二个陪练"。
-  $cfg.speakStyle = 'scout'
-  $script:silentStreak = 0
-  $script:lastFp = $zeroFp
-  $script:lastJudgedFp = $zeroFp
-  $script:lastJudgedKey = $script:currentKey
-  $script:lastJudgedAt = (Get-Date).AddSeconds(-10)
-  Write-Output ("  [找事] 画面没变、10 秒前 → " + (Test-WorthAutoJudge) + "  （该拦住：节拍没跟着放松）")
-  $script:lastJudgedAt = (Get-Date).AddMinutes(-2)
-  Write-Output ("  [找事] 画面没变、2 分钟前 → '" + (Test-WorthAutoJudge) + "'  （空 = 放行，画面没变也能提活）")
-  $cfg.speakStyle = $oldStyle
-  $script:shots.Clear()      # 假截图用完就撤，别影响后面几节
-  $script:lastFp = $fullFp
-  $script:standby = $true
-  Write-Output ("  待机中                → " + (Test-WorthAutoJudge))
-  $script:standby = $false
-  Write-Output ("  指纹距离 最暗 vs 最亮  → " + (Get-FpDistance $zeroFp $fullFp) + "（最大 960）")
+  $casesPath = Join-Path (Split-Path $PSScriptRoot -Parent) 'behavior-cases\gate.json'
+  if (-not (Test-Path -LiteralPath $casesPath)) {
+    Write-Output ("  ✘ 找不到用例表：{0} —— 5h 这一段等于没测" -f $casesPath)
+  } else {
+    $caseDoc = Get-Content -LiteralPath $casesPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    $caseCfgKeys = @('judgeMinSeconds', 'judgeMinFpDelta', 'judgeMaxGapSeconds',
+      'judgeIdleSkipSeconds', 'silentBackoffMax', 'roastMinSeconds', 'roastBackoffMax')
+    # 用例表里的旋钮只在这一段里生效，跑完把用户配置原样还回去
+    $savedCfg = @{}
+    foreach ($k in $caseCfgKeys) { $savedCfg[$k] = $cfg.$k }
+    $savedCaseStyle = [string]$cfg.speakStyle
+    $savedCaseProfile = $script:curProfile
+    $passCount = 0
+    $failCount = 0
+    # JSON 里没写的键取 defaults（PSCustomObject 上取不存在的属性就是 $null）
+    function Get-CaseField($case, $key, $fallback) {
+      $v = $case.$key
+      if ($null -eq $v) { return $fallback }
+      return $v
+    }
+    foreach ($c in $caseDoc.cases) {
+      $fpDist = [int](Get-CaseField $c 'fpDistance' $caseDoc.defaults.fpDistance)
+      $sinceS = [double](Get-CaseField $c 'sinceSeconds' $caseDoc.defaults.sinceSeconds)
+      $winChanged = [bool](Get-CaseField $c 'windowChanged' $caseDoc.defaults.windowChanged)
+      # 造一对距离正好等于 fpDist 的假指纹（每格最大 15）
+      $fpA = New-Object System.Text.StringBuilder
+      $fpB = New-Object System.Text.StringBuilder
+      $rest = $fpDist
+      for ($i = 0; $i -lt 64; $i++) {
+        $d = [math]::Min(15, [math]::Max(0, $rest))
+        $rest -= $d
+        [void]$fpA.Append([char](48 + 15))
+        [void]$fpB.Append([char](48 + 15 - $d))
+      }
+      # 状态全部由用例决定，一个都不从机器上读
+      $script:shots.Clear()
+      if ([bool](Get-CaseField $c 'hasShots' $caseDoc.defaults.hasShots)) {
+        [void]$script:shots.Add([pscustomobject]@{ at = (Get-Date).ToString('o'); jpegBase64 = 'fake' })
+      }
+      $script:standby = [bool](Get-CaseField $c 'standby' $caseDoc.defaults.standby)
+      $script:silentStreak = [int](Get-CaseField $c 'silentStreak' $caseDoc.defaults.silentStreak)
+      $script:lastFp = $fpA.ToString()
+      $script:lastJudgedFp = $fpB.ToString()
+      $script:currentKey = 'A|B'
+      $script:lastJudgedKey = $(if ($winChanged) { 'A|A' } else { 'A|B' })
+      # 时间就这样给，**别加缓冲**：$since 只会比用例值大一丁点（微秒级），而
+      # PowerShell 的 [int] 是四舍五入不是截断 —— 加 0.5 反而会把它抬到 since+1（踩过）。
+      $script:lastJudgedAt = (Get-Date).AddSeconds(-$sinceS)
+      $script:idleOverrideSeconds = [double](Get-CaseField $c 'idleSeconds' $caseDoc.defaults.idleSeconds)
+      $pjudge = Get-CaseField $c 'profileJudge' $caseDoc.defaults.profileJudge
+      $script:curProfile = $(if ($null -ne $pjudge) { [pscustomobject]@{ judge = [int]$pjudge } } else { $null })
+      $cfg.speakStyle = [string](Get-CaseField $c 'style' $caseDoc.defaults.style)
+      foreach ($k in $caseCfgKeys) { $cfg.$k = $caseDoc.defaults.config.$k }
+      if ($null -ne $c.config) {
+        foreach ($p in $c.config.PSObject.Properties) { $cfg.($p.Name) = $p.Value }
+      }
+      # ---- 跑这一条 ----
+      $reason = [string](Test-WorthAutoJudge)
+      $allow = [string]::IsNullOrEmpty($reason)
+      $wantAllow = [bool]$c.expect.allow
+      $ok = ($allow -eq $wantAllow)
+      if ($ok -and (-not $wantAllow) -and $c.expect.reason) { $ok = ($reason -match [string]$c.expect.reason) }
+      if ($ok) { $passCount++ } else { $failCount++ }
+      $shown = $(if ($allow) { "''（放行）" } else { "「$reason」" })
+      Write-Output ("  {0} {1,-32} → {2}" -f $(if ($ok) { '✔' } else { '✘' }), [string]$c.id, $shown)
+      if (-not $ok) {
+        Write-Output ("      期望：{0}" -f $(if ($wantAllow) { '放行' } else { "拦住且原因匹配 /$($c.expect.reason)/" }))
+      }
+    }
+    # 状态还回去，别影响后面几节
+    $script:idleOverrideSeconds = $null
+    $script:shots.Clear()
+    $script:standby = $false
+    $script:silentStreak = 0
+    $script:lastFp = $fullFp
+    $script:curProfile = $savedCaseProfile
+    $cfg.speakStyle = $savedCaseStyle
+    foreach ($k in $caseCfgKeys) { $cfg.$k = $savedCfg[$k] }
+    Write-Output ("  5h 闸门用例表：{0}/{1} 项通过" -f $passCount, ($passCount + $failCount))
+    Write-Output ("  指纹距离 最暗 vs 最亮  → {0}（最大 960）" -f (Get-FpDistance $zeroFp $fullFp))
+  }
   # 编号说明：原来这块叫 5i，但 5i 已经被上面的「任务档」占了（两处撞号），
   # 采样表学习那块叫 5k 又和「路径解析」撞号 —— 一并重新编号：5l = 本块，5m = 采样表学习。
   Write-Output '=== 5l. 沉默判定口径（四个大脑的输出都要认得）==='

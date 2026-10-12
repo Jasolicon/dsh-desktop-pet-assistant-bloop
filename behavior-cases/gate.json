@@ -1,0 +1,185 @@
+{
+  "_note": "本地闸门（Test-WorthAutoJudge）的行为用例表。语言无关：PowerShell 版、Electron 版、.NET 版各自读这一份，同一组输入必须得到同一组输出。",
+  "_why": "闸门决定「这一轮值不值得起一次模型调用」，是这套东西最贵的一道开关 —— 判错的代价是真金白银和用户被打扰。它同时也是纯确定性逻辑（画面指纹 + 窗口 + 时间 + 人还在不在），所以能被用例表钉死。",
+  "_fields": {
+    "hasShots": "抓屏环形缓冲里有没有图（抓屏是异步的，启动头一两拍可能是空的）",
+    "standby": "待机中（黑屏/锁屏/睡眠）",
+    "style": "说话风格 guard / coach / roast / scout",
+    "sinceSeconds": "距上次判断过了多少秒（真实的判断，不是采样）",
+    "silentStreak": "连续多少次判成「没什么可说」",
+    "windowChanged": "前台窗口与上次判断时相比换没换",
+    "fpDistance": "画面指纹距离 0..960（64 格 × 每格最大 15）",
+    "idleSeconds": "用户已经多少秒没动键鼠",
+    "profileJudge": "任务档给的判断间隔秒数（null = 用 config 的 judgeMinSeconds）",
+    "config": "本用例覆盖的配置键",
+    "expect.allow": "true = 放行（返回空串，值得问）；false = 拦住（返回一句原因）",
+    "expect.reason": "拦住时返回的原因要匹配的正则（放行时这一项不写）"
+  },
+  "defaults": {
+    "hasShots": true,
+    "standby": false,
+    "style": "coach",
+    "sinceSeconds": 600,
+    "silentStreak": 0,
+    "windowChanged": false,
+    "fpDistance": 0,
+    "idleSeconds": 1,
+    "profileJudge": null,
+    "config": {
+      "judgeMinSeconds": 60,
+      "judgeMinFpDelta": 12,
+      "judgeMaxGapSeconds": 300,
+      "judgeIdleSkipSeconds": 600,
+      "silentBackoffMax": 4,
+      "roastMinSeconds": 30,
+      "roastBackoffMax": 2
+    }
+  },
+  "cases": [
+    {
+      "id": "standby",
+      "why": "待机中不抓屏也不打扰",
+      "standby": true,
+      "expect": { "allow": false, "reason": "^待机中$" }
+    },
+    {
+      "id": "no-shot",
+      "why": "还没有画面时别问 —— 模型拿到「没有截图」的一轮，判断质量更差",
+      "hasShots": false,
+      "expect": { "allow": false, "reason": "还没有画面" }
+    },
+    {
+      "id": "fp-unchanged-just-judged",
+      "why": "画面没变、窗口没换 → 这是最常见的一轮，必须拦住",
+      "fpDistance": 0,
+      "sinceSeconds": 0,
+      "expect": { "allow": false, "reason": "^画面几乎没变（差异 0 < 12），前台窗口也没换$" }
+    },
+    {
+      "id": "fp-changed-10s",
+      "why": "画面大改但刚问过 → 节拍没到，拦住",
+      "fpDistance": 960,
+      "sinceSeconds": 10,
+      "expect": { "allow": false, "reason": "^距上次判断只有 10s（连续 0 次没说 → 间隔放宽到 60s）$" }
+    },
+    {
+      "id": "fp-changed-2min",
+      "why": "画面大改 + 够久了 → 放行（这是正常路径）",
+      "fpDistance": 960,
+      "sinceSeconds": 120,
+      "expect": { "allow": true }
+    },
+    {
+      "id": "fp-changed-2min-streak3",
+      "why": "连着 3 次判成没什么可说 → 间隔放宽到 4 倍（60→240），省的是真钱",
+      "fpDistance": 960,
+      "sinceSeconds": 120,
+      "silentStreak": 3,
+      "expect": { "allow": false, "reason": "^距上次判断只有 120s（连续 3 次没说 → 间隔放宽到 240s）$" }
+    },
+    {
+      "id": "fuse-6min",
+      "why": "保险丝：画面一动不动也不能永远不看（否则在一个窗口里干活等于把桌宠停了）",
+      "fpDistance": 0,
+      "windowChanged": false,
+      "sinceSeconds": 360,
+      "expect": { "allow": true }
+    },
+    {
+      "id": "roast-15s",
+      "why": "损友模式的节拍是 roastMinSeconds（这里钉 30），不是任务档的 60",
+      "style": "roast",
+      "fpDistance": 0,
+      "sinceSeconds": 15,
+      "expect": { "allow": false, "reason": "^距上次开口只有 15s（损友模式最短 30s 一句）$" }
+    },
+    {
+      "id": "roast-40s",
+      "why": "损友模式画面没变也放行 —— 这是它和陪练的根本区别",
+      "style": "roast",
+      "fpDistance": 0,
+      "sinceSeconds": 40,
+      "expect": { "allow": true }
+    },
+    {
+      "id": "roast-40s-streak2",
+      "why": "损友也要退避：连 2 次没说 → 30s 放宽到 90s，别对着无聊画面一直付费",
+      "style": "roast",
+      "fpDistance": 0,
+      "sinceSeconds": 40,
+      "silentStreak": 2,
+      "expect": { "allow": false, "reason": "^距上次开口只有 40s（损友模式最短 90s 一句）$" }
+    },
+    {
+      "id": "roast-idle",
+      "why": "人不在就别解说（这条以前测不了：自检跑的时候机器总是刚被人动过）",
+      "style": "roast",
+      "fpDistance": 0,
+      "sinceSeconds": 40,
+      "idleSeconds": 900,
+      "expect": { "allow": false, "reason": "^人不在（900s 没有键鼠输入）—— 吐槽也得有人在看$" }
+    },
+    {
+      "id": "scout-10s",
+      "why": "找事模式放行「画面没变」，但节拍一分不放松 —— 这是它和损友的关键差别",
+      "style": "scout",
+      "fpDistance": 0,
+      "sinceSeconds": 10,
+      "expect": { "allow": false, "reason": "^距上次判断只有 10s（连续 0 次没说 → 间隔放宽到 60s）$" }
+    },
+    {
+      "id": "scout-2min",
+      "why": "用户坐着不动、盯着一屏发愁，正是可以派活的时候",
+      "style": "scout",
+      "fpDistance": 0,
+      "sinceSeconds": 120,
+      "expect": { "allow": true }
+    },
+    {
+      "id": "scout-idle",
+      "why": "提活也得有人在",
+      "style": "scout",
+      "fpDistance": 0,
+      "windowChanged": false,
+      "sinceSeconds": 120,
+      "idleSeconds": 900,
+      "expect": { "allow": false, "reason": "^人不在（900s 没有键鼠输入，窗口也没换）—— 提活也得有人在$" }
+    },
+    {
+      "id": "scout-idle-but-window-changed",
+      "why": "窗口换了说明人还在动 → 不算「人不在」（空闲判据里窗口变化是豁免项）",
+      "style": "scout",
+      "fpDistance": 0,
+      "windowChanged": true,
+      "sinceSeconds": 120,
+      "idleSeconds": 900,
+      "expect": { "allow": true }
+    },
+    {
+      "id": "default-idle",
+      "why": "默认路径的「人不在」判据（画面大改也拦，因为窗口没换）",
+      "fpDistance": 960,
+      "windowChanged": false,
+      "sinceSeconds": 120,
+      "idleSeconds": 900,
+      "expect": { "allow": false, "reason": "^人不在（900s 没有键鼠输入，窗口也没换）$" }
+    },
+    {
+      "id": "video-profile-120s",
+      "why": "节拍跟着任务档走：视频档 180s，120s 时不该打扰看片",
+      "profileJudge": 180,
+      "fpDistance": 960,
+      "sinceSeconds": 120,
+      "expect": { "allow": false, "reason": "^距上次判断只有 120s（连续 0 次没说 → 间隔放宽到 180s）$" }
+    },
+    {
+      "id": "backoff-off",
+      "why": "silentBackoffMax=1 = 不退避（一个旋钮关掉这条），别把它算成「连续 3 次就放宽到 240s」",
+      "silentStreak": 3,
+      "fpDistance": 960,
+      "sinceSeconds": 70,
+      "config": { "silentBackoffMax": 1 },
+      "expect": { "allow": true }
+    }
+  ]
+}
