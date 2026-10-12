@@ -28,6 +28,18 @@ public sealed record OneShotOptions
     /// （EPERM）；而同一条命令从 pwsh / cmd 里起就是好的。中转一层能绕开这个差异。
     /// </remarks>
     public bool CmdHop { get; init; }
+
+    /// <summary>
+    /// 脱离我们的句柄表启动（默认开）。
+    /// </summary>
+    /// <remarks>
+    /// 为什么需要：<c>ProcessStartInfo</c> 走重定向时是 <c>CreateProcess(bInheritHandles=TRUE)</c>，
+    /// 父进程表里**所有可继承句柄**都会漏进子进程；实测 DSH 在这种子进程里准备 profile 会被拒写
+    /// <c>~\.dsh\profiles\&lt;name&gt;\cordis.yml</c>（EPERM），而同一份参数从 pwsh 起就没事。
+    /// 换成 ShellExecute 起一个批处理（不继承句柄），提示词/路径一律走环境变量、
+    /// 输出重定向到文件再读回来，就绕开了这个问题。
+    /// </remarks>
+    public bool Detached { get; init; } = true;
 }
 
 public sealed record OneShotResult(string Text, string Stdout, string Stderr, double Seconds, bool TimedOut, int ExitCode)
@@ -55,6 +67,8 @@ public static class DshOneShot
     {
         if (string.IsNullOrEmpty(opt.Exe) || string.IsNullOrEmpty(opt.Cli))
             throw new InvalidOperationException("没解出 DSH 的 exe / cli.js");
+
+        if (opt.Detached) return AskDetached(opt);
 
         var inner = Quote(opt.Exe) + " --expose-internals " + Quote(opt.Cli) + " " + opt.Profile;
         if (!string.IsNullOrEmpty(opt.Patch)) inner += " --patch " + Quote(opt.Patch);
@@ -102,6 +116,88 @@ public static class DshOneShot
             Math.Round(sw.Elapsed.TotalSeconds, 1),
             !exited,
             exited ? proc.ExitCode : -1);
+    }
+
+    /// <summary>
+    /// 脱离句柄表启动：写一个只含 ASCII 的小批处理（值全部走环境变量，避免命令行引号地狱），
+    /// 用 ShellExecute 起它，等它跑完再读输出文件。
+    /// </summary>
+    private static OneShotResult AskDetached(OneShotOptions opt)
+    {
+        var stamp = Guid.NewGuid().ToString("N").Substring(0, 8);
+        var dir = string.IsNullOrEmpty(opt.Cwd) ? Path.GetTempPath() : opt.Cwd;
+        var outFile = Path.Combine(dir, "dsh-out-" + stamp + ".txt");
+        var errFile = Path.Combine(dir, "dsh-err-" + stamp + ".txt");
+        var batFile = Path.Combine(dir, "dsh-run-" + stamp + ".cmd");
+
+        // 批处理只含 ASCII（cmd 按系统码页读 .cmd，中文会变乱码并把行拆坏 —— 踩过）
+        File.WriteAllText(batFile,
+            "@echo off\r\n" +
+            "chcp 65001 >nul\r\n" +
+            "\"%BLOOP_EXE%\" --expose-internals \"%BLOOP_CLI%\" %BLOOP_PROFILE% --patch \"%BLOOP_PATCH%\" \"%BLOOP_PROMPT%\" " +
+            "> \"%BLOOP_OUT%\" 2> \"%BLOOP_ERR%\"\r\n",
+            new UTF8Encoding(false));
+
+        // 值走环境变量：这条子进程不该继承我们的句柄表，但环境照常继承
+        Environment.SetEnvironmentVariable("BLOOP_EXE", opt.Exe);
+        Environment.SetEnvironmentVariable("BLOOP_CLI", opt.Cli);
+        Environment.SetEnvironmentVariable("BLOOP_PROFILE", opt.Profile);
+        Environment.SetEnvironmentVariable("BLOOP_PATCH", opt.Patch);
+        Environment.SetEnvironmentVariable("BLOOP_PROMPT", (opt.Prompt ?? "").Replace("\r\n", " ").Replace('\n', ' '));
+        Environment.SetEnvironmentVariable("BLOOP_OUT", outFile);
+        Environment.SetEnvironmentVariable("BLOOP_ERR", errFile);
+        Environment.SetEnvironmentVariable("ELECTRON_RUN_AS_NODE", "1");
+
+        var sw = Stopwatch.StartNew();
+        var psi = new ProcessStartInfo
+        {
+            FileName = batFile,
+            UseShellExecute = true,            // 关键：走 ShellExecute，不继承父进程句柄
+            WindowStyle = ProcessWindowStyle.Hidden,
+            WorkingDirectory = dir,
+        };
+        var exited = false;
+        var exitCode = -1;
+        try
+        {
+            using var proc = Process.Start(psi);
+            exited = proc is not null && proc.WaitForExit(Math.Max(1000, opt.TimeoutSeconds * 1000));
+            if (proc is not null)
+            {
+                if (!exited)
+                {
+                    try { proc.Kill(); } catch { }
+                }
+                else
+                {
+                    exitCode = proc.ExitCode;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            sw.Stop();
+            return new OneShotResult("", "", "启动失败：" + ex.Message, Math.Round(sw.Elapsed.TotalSeconds, 1), false, -1);
+        }
+
+        sw.Stop();
+        var stdout = ReadIfExists(outFile);
+        var stderr = ReadIfExists(errFile);
+        try { File.Delete(batFile); File.Delete(outFile); File.Delete(errFile); } catch { }
+        return new OneShotResult(LastMeaningfulLine(stdout), stdout, stderr,
+            Math.Round(sw.Elapsed.TotalSeconds, 1), !exited, exitCode);
+    }
+
+    private static string ReadIfExists(string path)
+    {
+        try
+        {
+            return File.Exists(path) ? File.ReadAllText(path, new UTF8Encoding(false)) : "";
+        }
+        catch
+        {
+            return "";
+        }
     }
 
     /// <summary>取最后一行非空文本 —— headless 会把结论打在最后一行。</summary>

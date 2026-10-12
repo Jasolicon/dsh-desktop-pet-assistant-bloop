@@ -22,6 +22,74 @@ internal static class NativeMethods
     [DllImport("user32.dll")]
     public static extern uint GetDpiForSystem();
 
+    // ---- 闸门要用到的两个"人还在不在 / 在干什么"信号 ----
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct LastInputInfo
+    {
+        public uint cbSize;
+        public uint dwTime;
+    }
+
+    [DllImport("user32.dll")]
+    private static extern bool GetLastInputInfo(ref LastInputInfo info);
+
+    /// <summary>用户已经多少秒没动键鼠（等价 PS 版的 Native.IdleMs）。拿不到时返回 0。</summary>
+    public static double IdleSeconds()
+    {
+        try
+        {
+            var info = new LastInputInfo { cbSize = (uint)Marshal.SizeOf(typeof(LastInputInfo)) };
+            if (!GetLastInputInfo(ref info)) return 0;
+            var idleMs = unchecked(Environment.TickCount - (int)info.dwTime);
+            return idleMs < 0 ? 0 : idleMs / 1000.0;
+        }
+        catch
+        {
+            return 0;
+        }
+    }
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetForegroundWindow();
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetWindowTextW(IntPtr hWnd, System.Text.StringBuilder text, int max);
+
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
+
+    /// <summary>前台窗口的标题（拿不到返回空串）。</summary>
+    public static string ForegroundTitle(IntPtr hWnd)
+    {
+        try
+        {
+            if (hWnd == IntPtr.Zero) return "";
+            var sb = new System.Text.StringBuilder(300);
+            GetWindowTextW(hWnd, sb, sb.Capacity);
+            return sb.ToString().Trim();
+        }
+        catch
+        {
+            return "";
+        }
+    }
+
+    /// <summary>前台窗口属于哪个进程（拿不到返回 0）。</summary>
+    public static uint ForegroundPid(IntPtr hWnd)
+    {
+        try
+        {
+            if (hWnd == IntPtr.Zero) return 0;
+            GetWindowThreadProcessId(hWnd, out var pid);
+            return pid;
+        }
+        catch
+        {
+            return 0;
+        }
+    }
+
     [DllImport("user32.dll")]
     public static extern IntPtr GetDC(IntPtr hWnd);
 

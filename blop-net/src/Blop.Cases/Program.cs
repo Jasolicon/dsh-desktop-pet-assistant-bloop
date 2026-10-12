@@ -29,6 +29,7 @@ public static class Program
             if (args.Length > 0 && args[0] == "--capture-smoke") return CaptureSmoke();
             if (args.Length > 0 && args[0] == "--brain-smoke") return BrainSmoke();
             if (args.Length > 0 && args[0] == "--brain-oneshot-smoke") return BrainOneShotSmoke();
+            if (args.Length > 0 && args[0] == "--loop-smoke") return LoopSmoke();
             return RunAll(args) == 0 ? 0 : 1;
         }
         catch (Exception ex)
@@ -121,6 +122,42 @@ public static class Program
 
         var bad = ScreenCapture.Grab(1024, 60, new Rectangle(0, 0, 3, 3));
         Console.WriteLine($"非法区域 3x3 → 退回整屏 {bad.Captured.Width}x{bad.Captured.Height}");
+        return 0;
+    }
+
+    /// <summary>
+    /// 环路冒烟：跑几轮「采样 → 闸门 → 大脑」，打印每轮结果与统计。
+    /// </summary>
+    /// <remarks>
+    /// 用假大脑（不花一分钱），验的是环路本身：第一轮应当放行并说话（保险丝），
+    /// 紧接着几轮应当被闸门拦下（画面几乎没变）—— 这正是"绝大多数轮次不花钱"的证据。
+    /// 配置直接读 PS 版的 config.json，顺便验我们的配置解析读得对。
+    /// </remarks>
+    private static int LoopSmoke()
+    {
+        var casesDir = ResolveCasesDir(Array.Empty<string>())
+                       ?? throw new InvalidOperationException("找不到 behavior-cases 目录");
+        var root = Path.GetDirectoryName(casesDir) ?? AppContext.BaseDirectory;
+        var runDir = Path.Combine(AppContext.BaseDirectory, "run");
+        Directory.CreateDirectory(runDir);
+
+        var cfgPath = Path.Combine(root, "desktop-guide", "config.json");
+        var cfg = BotConfig.Load(cfgPath);
+        Console.WriteLine("配置：" + cfgPath);
+        Console.WriteLine("  speakStyle=" + cfg.SpeakStyle + " sampleSeconds=" + cfg.SampleSeconds +
+                          " judgeMinSeconds=" + cfg.JudgeMinSeconds + " roastMinSeconds=" + cfg.RoastMinSeconds);
+        var monitor = new PetMonitor(cfg, new FakeBrain(),
+            Path.Combine(runDir, "decisions.jsonl"), Path.Combine(runDir, "shots"));
+        for (var i = 1; i <= 4; i++)
+        {
+            var tick = monitor.Tick();
+            Console.WriteLine($"#{i}  {tick.Kind,-7} {tick.Reason}" +
+                              (string.IsNullOrEmpty(tick.Text) ? "" : "  →  " + tick.Text));
+            System.Threading.Thread.Sleep(1200);
+        }
+
+        Console.WriteLine($"统计：说了 {monitor.SpokeCount} 次，沉默 {monitor.SilentCount} 次，本地拦下 {monitor.SkipCount} 次");
+        Console.WriteLine("判断记录：" + Path.Combine(runDir, "decisions.jsonl"));
         return 0;
     }
 

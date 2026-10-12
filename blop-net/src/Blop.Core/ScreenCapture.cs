@@ -52,6 +52,41 @@ public static class ScreenCapture
     /// <param name="self">桌宠自己的屏幕矩形（含它刚弹出来的气泡），用来把它自己挖掉；不需要就传 Empty。</param>
     public static GrabResult Grab(int maxWidth = 1024, long jpegQuality = 60, Rectangle? region = null, Rectangle self = default)
     {
+        var (small, bounds) = CaptureScaled(region, maxWidth);
+        using (small)
+        {
+            var mask = Fingerprint.MaskFor(bounds, self);
+            var fingerprint = Fingerprint.FromLuminance(Fingerprint.Luminance8x8(small), mask);
+            return new GrabResult(
+                ToJpegBase64(small, jpegQuality),
+                fingerprint,
+                mask,
+                CountMasked(mask),
+                small.Width,
+                small.Height,
+                bounds);
+        }
+    }
+
+    /// <summary>
+    /// 只算指纹、**不编码 JPEG**：采样节拍用它（每 2 秒看一眼），闸门放行时才抓高质量截图。
+    /// </summary>
+    /// <remarks>
+    /// 这是从 Electron 版学来的一处优化：截图是给模型看的，而模型只在放行时被叫到 ——
+    /// 采样只算 160px 缩略图的指纹，采样率就能调密而不烧 CPU。
+    /// </remarks>
+    public static string FingerprintOnly(Rectangle? region = null, Rectangle self = default)
+    {
+        var (small, bounds) = CaptureScaled(region, 160);
+        using (small)
+        {
+            return Blop.Core.Fingerprint.Of(small, bounds, self);
+        }
+    }
+
+    /// <summary>抓屏 + 缩放（一次 StretchBlt）。返回的位图由调用方负责 Dispose。</summary>
+    private static (Bitmap Bitmap, Rectangle Bounds) CaptureScaled(Rectangle? region, int maxWidth)
+    {
         var screen = PrimaryScreenBounds();
         var bounds = screen;
         if (region is { } r)
@@ -61,10 +96,10 @@ public static class ScreenCapture
         }
 
         // 目标尺寸：宽度封顶，高度按比例 —— 高至少 1，免得零高位的 Bitmap 抛异常
-        var width = Math.Min(maxWidth, bounds.Width);
+        var width = Math.Max(1, Math.Min(maxWidth, bounds.Width));
         var height = Math.Max(1, (int)Math.Round(bounds.Height * (width / (double)bounds.Width)));
 
-        using var small = new Bitmap(width, height);
+        var small = new Bitmap(width, height);
         using (var g = Graphics.FromImage(small))
         {
             var dstDc = g.GetHdc();
@@ -81,17 +116,7 @@ public static class ScreenCapture
             }
         }
 
-        var mask = Fingerprint.MaskFor(bounds, self);
-        var fingerprint = Fingerprint.FromLuminance(Fingerprint.Luminance8x8(small), mask);
-
-        return new GrabResult(
-            ToJpegBase64(small, jpegQuality),
-            fingerprint,
-            mask,
-            CountMasked(mask),
-            width,
-            height,
-            bounds);
+        return (small, bounds);
     }
 
     private static string ToJpegBase64(Bitmap bmp, long quality)

@@ -61,7 +61,18 @@ internal static class Program
         try
         {
             var statePath = Path.Combine(runDir, "pet.json");
-            var form = new PetForm(LoadPet(paths.PetImage(null)), PetState.Load(statePath));
+            var cfg = BotConfig.Load(Path.Combine(paths.Home(), "config.json"));
+            // 大脑先接"假大脑"：它不花钱、不等模型，专门用来把环路验通
+            //（真大脑接 DSH 那一侧，走文件协议/插件 —— 见 blop-net/README 的「DSH 现状」）。
+            Rectangle selfRect = Rectangle.Empty;
+            var monitor = new PetMonitor(
+                cfg,
+                new FakeBrain(),
+                Path.Combine(paths.Home(), "logs", "decisions.jsonl"),
+                Path.Combine(runDir, "shots"),
+                () => selfRect);
+            var form = new PetForm(LoadPet(paths.PetImage(cfg.PetImage)), PetState.Load(statePath), cfg, monitor);
+            selfRect = form.Bounds;   // 抓屏掩码要挖掉"桌宠自己那块"，用窗口在屏幕上的矩形
             AppendStartupLog(runDir, $"form={form.Width}x{form.Height} at ({form.Location.X},{form.Location.Y})");
             Application.Run(form);
         }
@@ -91,8 +102,20 @@ internal static class Program
     {
         var preview = Path.Combine(runDir, "pet-preview.png");
         var report = Path.Combine(runDir, "shell-smoke.txt");
-        using var form = new PetForm(LoadPet(paths.PetImage(null)), PetState.Load(Path.Combine(runDir, "pet.json")));
+        var cfg = BotConfig.Load(Path.Combine(paths.Home(), "config.json"));
+        Rectangle selfRect = Rectangle.Empty;
+        var monitor = new PetMonitor(
+            cfg,
+            new FakeBrain(),
+            Path.Combine(paths.Home(), "logs", "decisions.jsonl"),
+            Path.Combine(runDir, "shots"),
+            () => selfRect);
+        using var form = new PetForm(
+            LoadPet(paths.PetImage(cfg.PetImage)), PetState.Load(Path.Combine(runDir, "pet.json")), cfg, monitor);
         var _ = form.Handle;   // 句柄要真的建出来，ExStyle 才读得到
+        selfRect = form.Bounds;
+        // 自检也画一次气泡：这样预览图里能直接看到气泡长什么样（所见即分层窗口所得）
+        form.ShowBubble("这是一句测试气泡：现在用的是假大脑，只验环路。", 600);
         form.SavePreview(preview);
         var screen = ScreenCapture.PrimaryScreenBounds();
         var lines = new[]

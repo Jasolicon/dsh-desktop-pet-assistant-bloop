@@ -71,15 +71,18 @@ $dotnet = "$env:LOCALAPPDATA\Microsoft\dotnet\dotnet.exe"
 # 然后双击 .\out\net48\Bloop.exe
 ```
 
-**这一版只有壳**：透明置顶、逐像素 alpha 的角色图，可拖动（位置记进 `run\pet.json`），
-右键有菜单，托盘图标能显示/隐藏，机器级实例锁保证"同时只有一只"。它还没有脑子 ——
-抓屏 / 闸门 / DSH 会话是接下来往里接的东西。
+**这一版**：透明置顶、逐像素 alpha 的角色图，可拖动（位置记进 `run\pet.json`），右键菜单，
+托盘图标，机器级实例锁，**头顶会弹气泡**，而且**背后已经接着观察环路**：
+每 2 秒采样一次（只算 160px 缩略图的指纹），本地闸门决定"值不值得开口"，
+放行时才抓高质量截图并问大脑；每一条判断（含"没说"的理由）都落进 `logs\decisions.jsonl`。
+大脑目前是**假大脑**（不花钱、不等模型，专门用来把环路验通）—— 真大脑接 DSH 那一侧。
 
 命令行开关（都写在 `Program.cs` 顶部注释里）：
 
 | 开关 | 用途 |
 | --- | --- |
 | `--shell-smoke` | 自检：建窗体 → 渲染一帧存 `run\pet-preview.png` → 把 DPI/尺寸/ExStyle 写进 `run\shell-smoke.txt` → 立刻退出。壳是常驻窗体程序，没有它就没法进自动化 |
+| `--loop-smoke`（在 `Blop.Cases` 里） | 跑 4 轮「采样 → 闸门 → 大脑」，打印每轮结果与统计 —— 第一轮应当放行说话（保险丝），紧接着几轮被闸门拦下（画面几乎没变） |
 | `--no-lock` | 跳过实例锁。**和 PowerShell 版同时跑**时必须带它（两版共用同一把机器级锁，见 `Paths.LockPath`） |
 | `--notify-if-running` | 已在运行时弹个说明框；默认是**静默退出**（开机启动、连点两下快捷方式都不该弹出个框等人点） |
 
@@ -147,6 +150,10 @@ $dotnet = "$env:LOCALAPPDATA\Microsoft\dotnet\dotnet.exe"   # SDK 没进 PATH，
 | 挖洞掩码的几何 `Fingerprint.MaskFor` | ✅ 已搬 | `behavior-cases/fingerprint.json` **10/10**（与 PowerShell 侧自检 5y 同一张表） |
 | 抓屏 + 8×8 指纹 `ScreenCapture.Grab` | ✅ 已搬 | `--capture-smoke`：真抓 2880×1800 → 1024×640、JPEG 约 96 KB、掩码 7/64 格、非法区域退回整屏 |
 | 壳 `Blop.App`（窗口/角色图/拖动/位置记忆/菜单/托盘/实例锁） | ✅ 已搬 | `--shell-smoke` 自检 + 真跑一次（窗口 ExStyle、DPI、尺寸、位置记忆都对） |
+| 观察环路 `PetMonitor`（采样 → 闸门 → 大脑 → 判断记录） | ✅ 已搬 | `--loop-smoke`：第一轮放行说话、后几轮被闸门拦下；`logs\decisions.jsonl` 落盘 |
+| 气泡（圆角白底 + 自动收起） | ✅ 已搬 | `--shell-smoke` 的预览图里直接能看到（440×632：气泡区 + 角色图） |
+| 大脑接口 `IBrain` + 假大脑 | ✅ 已搬 | 环路用它验通；真大脑接 DSH 那一侧（下一个块） |
+| 前台窗口 / 空闲时间（闸门的两个输入） | ✅ 已搬 | `--loop-smoke` 里那句「你在用「…」」就是它的输出 |
 | DSH 常驻会话 `DshSession`（stdio JSON-RPC） | ⚠️ 代码已搬，**本机没验成** | 见下面「DSH 现状」 |
 | 账本 / 每日消费上限 | ⬜ | 待搬 |
 | 气泡 / 选项按钮 / 设置窗口 | ⬜ | 待搬（壳的骨架已在，接着往里加） |

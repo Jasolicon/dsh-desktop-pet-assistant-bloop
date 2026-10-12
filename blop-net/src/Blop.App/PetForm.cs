@@ -8,27 +8,39 @@ using Blop.Core;
 namespace Blop.App;
 
 /// <summary>
-/// 桌宠窗口：透明、置顶、不抢焦点、可拖动、右键有菜单。
-/// 第一版只有"壳" —— 还没有脑子（抓屏 / 闸门 / DSH 会话接下来往里接）。
+/// 桌宠窗口：透明、置顶、不抢焦点、可拖动、右键有菜单，头顶会弹气泡。
+/// 它自己不做判断 —— 采样、闸门在 <see cref="PetMonitor"/> 里，这里只负责显示与交互。
 /// </summary>
 internal sealed class PetForm : Form
 {
     /// <summary>角色图按这个**逻辑宽度**显示（DPI 越高物理像素越多，看着一样大）。</summary>
     private const int LogicalPetWidth = 220;
 
+    /// <summary>气泡区的高度（逻辑像素）。空闲时这块是**全透明**的，看着不占地方。</summary>
+    private const int LogicalBubbleHeight = 96;
+
     private readonly Bitmap _pet;
     private readonly float _scale;
     private readonly PetState _state;
+    private readonly BotConfig _cfg;
+    private readonly PetMonitor _monitor;
     private readonly NotifyIcon _tray;
+    private readonly System.Windows.Forms.Timer _tick;
 
     private Bitmap? _surface;
     private bool _dragging;
     private Point _grabOffset;
+    private string _bubbleText = "";
+    private DateTime _bubbleUntil = DateTime.MinValue;
+    private int _secondsSinceSample;
+    private readonly int _petHeight;
 
-    public PetForm(Bitmap pet, PetState state)
+    public PetForm(Bitmap pet, PetState state, BotConfig cfg, PetMonitor monitor)
     {
         _pet = pet;
         _state = state;
+        _cfg = cfg;
+        _monitor = monitor;
         _scale = DpiScale();
 
         FormBorderStyle = FormBorderStyle.None;
@@ -43,11 +55,19 @@ internal sealed class PetForm : Form
 
         var width = (int)Math.Round(LogicalPetWidth * _scale);
         var height = Math.Max(1, (int)Math.Round(width * (_pet.Height / (double)_pet.Width)));
-        Size = new Size(width, height);
-        Location = StartLocation(width, height);
+        _petHeight = height;
+        var bubble = (int)Math.Round(LogicalBubbleHeight * _scale);
+        Size = new Size(width, height + bubble);
+        Location = StartLocation(width, height + bubble);
 
         ContextMenuStrip = BuildMenu();
         _tray = BuildTray();
+
+        // 每秒醒一次：负责（1）到点撤气泡（2）按采样节拍问一次监视循环。
+        // 采样在 UI 线程上做（160px 缩略图，几十毫秒），第一版先不做 runspace 那套异步抓屏。
+        _tick = new System.Windows.Forms.Timer { Interval = 1000 };
+        _tick.Tick += (_, _) => OnTick();
+        _tick.Start();
     }
 
     protected override CreateParams CreateParams
@@ -138,12 +158,81 @@ internal sealed class PetForm : Form
         Push();
     }
 
-    /// <summary>画一帧（透明底 + 角色图）。</summary>
+    /// <summary>画一帧：透明底 + 头顶气泡（有的话）+ 底部的角色图。</summary>
     private void DrawAll(Graphics g)
     {
         g.Clear(Color.Transparent);
         g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
-        g.DrawImage(_pet, new Rectangle(0, 0, Width, Height));
+        g.DrawImage(_pet, new Rectangle(0, Height - _petHeight, Width, _petHeight));
+        if (_bubbleText.Length > 0 && DateTime.Now < _bubbleUntil) DrawBubble(g);
+    }
+
+    /// <summary>气泡：圆角白底 + 深色文字，宽度撑满窗口（和 PS 版一路的观感）。</summary>
+    private void DrawBubble(Graphics g)
+    {
+        var margin = (float)Math.Round(4 * _scale);
+        var radius = (float)Math.Round(12 * _scale);
+        var rect = new RectangleF(margin, margin, Width - margin * 2, Height - _petHeight - margin * 2);
+        if (rect.Height < 8 || rect.Width < 8) return;
+        g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+        using (var path = RoundedRect(rect, radius))
+        using (var fill = new SolidBrush(Color.FromArgb(244, 255, 255, 255)))
+        using (var edge = new Pen(Color.FromArgb(70, 40, 60, 90), Math.Max(1f, _scale)))
+        {
+            g.FillPath(fill, path);
+            g.DrawPath(edge, path);
+        }
+
+        using var font = new Font("Microsoft YaHei UI", 9f, FontStyle.Regular, GraphicsUnit.Point);
+        using var ink = new SolidBrush(Color.FromArgb(255, 28, 32, 38));
+        var pad = (float)Math.Round(8 * _scale);
+        var textRect = new RectangleF(rect.X + pad, rect.Y + pad * 0.6f, rect.Width - pad * 2, rect.Height - pad * 1.2f);
+        var fmt = new StringFormat { Trimming = StringTrimming.EllipsisCharacter, FormatFlags = StringFormatFlags.LineLimit };
+        g.DrawString(_bubbleText, font, ink, textRect, fmt);
+    }
+
+    private static System.Drawing.Drawing2D.GraphicsPath RoundedRect(RectangleF r, float radius)
+    {
+        var path = new System.Drawing.Drawing2D.GraphicsPath();
+        var d = radius * 2;
+        path.AddArc(r.X, r.Y, d, d, 180, 90);
+        path.AddArc(r.Right - d, r.Y, d, d, 270, 90);
+        path.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90);
+        path.AddArc(r.X, r.Bottom - d, d, d, 90, 90);
+        path.CloseFigure();
+        return path;
+    }
+
+    /// <summary>弹一句（<paramref name="seconds"/> 秒后自动收起）。</summary>
+    public void ShowBubble(string text, int seconds)
+    {
+        _bubbleText = text ?? "";
+        _bubbleUntil = DateTime.Now.AddSeconds(Math.Max(2, seconds));
+        Render();
+    }
+
+    /// <summary>每秒醒一次：撤过期气泡；按节拍采样问一次监视循环。</summary>
+    private void OnTick()
+    {
+        if (IsDisposed || Disposing) return;
+        if (_bubbleText.Length > 0 && DateTime.Now >= _bubbleUntil)
+        {
+            _bubbleText = "";
+            Render();
+        }
+
+        _secondsSinceSample++;
+        if (_secondsSinceSample < Math.Max(1, _cfg.SampleSeconds)) return;
+        _secondsSinceSample = 0;
+        var result = _monitor.Tick();
+        if (result.SaidSomething) ShowBubble(result.Text, _cfg.ShowSeconds);
+    }
+
+    /// <summary>右键「现在说一句」：跳过闸门，直接问一次（用户主动要的）。</summary>
+    private void ForceSpeak()
+    {
+        var result = _monitor.Tick(true);
+        ShowBubble(result.SaidSomething ? result.Text : "（它这次没说：" + result.Reason + "）", _cfg.ShowSeconds);
     }
 
     /// <summary>把当前这一帧存成带 alpha 的 PNG（自检/排查用：所见即分层窗口所得）。</summary>
@@ -204,8 +293,7 @@ internal sealed class PetForm : Form
             ShowImageMargin = false,   // 去掉左边那条图标留白，菜单窄一截
             AutoClose = true,
         };
-        var ask = menu.Items.Add("现在说一句（还没接上）");
-        ask.Enabled = false;
+        menu.Items.Add("现在说一句", null, (_, _) => ForceSpeak());
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("隐藏（托盘里能叫回来）", null, (_, _) => Hide());
         menu.Items.Add("退出", null, (_, _) => Close());
