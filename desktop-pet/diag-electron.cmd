@@ -1,31 +1,48 @@
 @echo off
 rem Electron start-up diagnosis. ASCII-only on purpose.
-rem 1) dev build with Electron logging on, single-instance lock skipped
-rem 2) packaged build (win-unpacked) for comparison
-rem If the pet window shows up, it works - close it and tell me; if it exits,
-rem the log below says where it died. NOTE: the "crashpad_client_win ... not
-rem connected" line is noise - Electron on Windows does not ship that handler.
+rem Three attempts, each logging to its own file, all printed at the end:
+rem   1) plain dev build (lock skipped, Chromium logging on)
+rem   2) same plus --disable-gpu          (GPU process crashing at startup)
+rem   3) same on a FRESH user data dir   (corrupt GPU/code cache in %APPDATA%)
+rem If a pet window shows up, that attempt works - close it and tell me; the
+rem log below then says which attempt got that far. NOTE: the
+rem "crashpad_client_win ... not connected" line is noise.
 chcp 65001 >nul
 cd /d "%~dp0"
 set ELECTRON_ENABLE_LOGGING=1
 set PET_NO_LOCK=1
+set "EXE=node_modules\electron\dist\electron.exe"
+set "UD=%APPDATA%\desktop-pet"
 
-echo === 1) dev build ===
-"node_modules\electron\dist\electron.exe" --no-sandbox --enable-logging . > "%~dp0diag-dev.log" 2>&1
-echo dev exit code: %ERRORLEVEL%
+echo === attempt 1: plain ===
+"%EXE%" --no-sandbox --enable-logging . > "%~dp0diag-1.log" 2>&1
+echo exit code: %ERRORLEVEL%
 echo.
-echo === 2) packaged build (win-unpacked) ===
-if exist "dist\win-unpacked\随时指导桌宠.exe" (
-  "dist\win-unpacked\随时指导桌宠.exe" --no-sandbox > "%~dp0diag-pack.log" 2>&1
-  echo packaged exit code: %ERRORLEVEL%
-) else (
-  echo packaged build not found
+
+echo === attempt 2: --disable-gpu ===
+"%EXE%" --no-sandbox --disable-gpu --enable-logging . > "%~dp0diag-2.log" 2>&1
+echo exit code: %ERRORLEVEL%
+echo.
+
+echo === attempt 3: fresh user data dir ===
+if exist "%UD%" (
+  if exist "%UD%.bak-diag" rmdir /s /q "%UD%.bak-diag"
+  move "%UD%" "%UD%.bak-diag" >nul
+  echo moved %UD% aside to %UD%.bak-diag
 )
+"%EXE%" --no-sandbox --user-data-dir="%~dp0diag-userdata" --enable-logging . > "%~dp0diag-3.log" 2>&1
+echo exit code: %ERRORLEVEL%
 echo.
-echo ===== dev log =====
-type "%~dp0diag-dev.log"
+
+echo ===== attempt 1 log =====
+type "%~dp0diag-1.log"
 echo.
-echo ===== packaged log =====
-type "%~dp0diag-pack.log"
+echo ===== attempt 2 log =====
+type "%~dp0diag-2.log"
 echo.
+echo ===== attempt 3 log =====
+type "%~dp0diag-3.log"
+echo.
+echo ===== where did each attempt get to? =====
+findstr /i /c:"[pet]" "%~dp0diag-1.log" "%~dp0diag-2.log" "%~dp0diag-3.log"
 pause
