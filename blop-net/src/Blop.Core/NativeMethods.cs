@@ -20,6 +20,9 @@ internal static class NativeMethods
     private static extern int GetSystemMetrics(int index);
 
     [DllImport("user32.dll")]
+    public static extern uint GetDpiForSystem();
+
+    [DllImport("user32.dll")]
     public static extern IntPtr GetDC(IntPtr hWnd);
 
     [DllImport("user32.dll")]
@@ -42,13 +45,21 @@ internal static class NativeMethods
     {
         try
         {
-            SetProcessDpiAwarenessContext(PerMonitorAwareV2);
+            DpiAwareCallSucceeded = SetProcessDpiAwarenessContext(PerMonitorAwareV2);
         }
         catch
         {
             // 老系统上没这个 API，忽略 —— 退化成系统缩放，不该为此崩掉
+            DpiAwareCallSucceeded = false;
         }
     }
+
+    /// <summary>
+    /// 上一次 <see cref="EnsureDpiAware"/> 是否成功。**诊断用**：
+    /// 返回 false 通常意味着"进程的 DPI 感知早就定下来了"（清单或 app.config 已经设过），
+    /// 这时要看的是那个来源，而不是这一句。
+    /// </summary>
+    public static bool DpiAwareCallSucceeded { get; private set; }
 
     /// <summary>主屏尺寸（DPI 感知下就是物理像素）。</summary>
     public static System.Drawing.Rectangle PrimaryScreenBounds()

@@ -58,8 +58,59 @@
 ```
 src/Blop.Core/           引擎（无 UI）：指纹距离、闸门… 每搬一块都要能用行为用例表验收
 src/Blop.Cases/          用例表跑分器（控制台）：读 ../behavior-cases/*.json，失败退出码非 0
+src/Blop.App/            壳（WinForms）：透明置顶窗口、角色图、拖动、位置记忆、右键菜单、托盘、实例锁
 verify-addtype.ps1       本机验证：Add-Type 内存编译同一份源码，跑同一张表（策略拦 exe 时的活路）
 ```
+
+## 壳（Blop.App）：现在双击就能起来
+
+```powershell
+# 发布一个能双击的成品（net48：1.35 MB，用户不用装任何运行时 —— 4.8 是 Windows 组件）
+$dotnet = "$env:LOCALAPPDATA\Microsoft\dotnet\dotnet.exe"
+& $dotnet publish .\src\Blop.App\Blop.App.csproj -c Release -f net48 -o .\out\net48
+# 然后双击 .\out\net48\Bloop.exe
+```
+
+**这一版只有壳**：透明置顶、逐像素 alpha 的角色图，可拖动（位置记进 `run\pet.json`），
+右键有菜单，托盘图标能显示/隐藏，机器级实例锁保证"同时只有一只"。它还没有脑子 ——
+抓屏 / 闸门 / DSH 会话是接下来往里接的东西。
+
+命令行开关（都写在 `Program.cs` 顶部注释里）：
+
+| 开关 | 用途 |
+| --- | --- |
+| `--shell-smoke` | 自检：建窗体 → 渲染一帧存 `run\pet-preview.png` → 把 DPI/尺寸/ExStyle 写进 `run\shell-smoke.txt` → 立刻退出。壳是常驻窗体程序，没有它就没法进自动化 |
+| `--no-lock` | 跳过实例锁。**和 PowerShell 版同时跑**时必须带它（两版共用同一把机器级锁，见 `Paths.LockPath`） |
+| `--notify-if-running` | 已在运行时弹个说明框；默认是**静默退出**（开机启动、连点两下快捷方式都不该弹出个框等人点） |
+
+实测（2026-10-12，本机 200% 缩放）：
+
+```
+systemDpi=192  dpiAwareCall=True  screen=2880x1800
+form=440x440 at (2360,1280)          ← 220 逻辑宽 × 200% + 40 逻辑像素边距
+exstyle=0x08090008  noActivate=True  layered=True
+```
+
+两个踩过的坑写在代码注释里，这里各留一句：
+
+- **DPI 感知要在任何窗口之前定下来**。net48 上光在 `Main` 里 `SetProcessDpiAwarenessContext` 不够 ——
+  WinForms 会按 `App.config` 的 `DpiAwareness`（或清单）先定死，晚了改不动；net8 那半边走
+  `Application.SetHighDpiMode`。没生效的表现是"200% 缩放下只有一半大、位置也按逻辑坐标算错"。
+- **量尺寸要用 DPI 感知的进程去量**。用不感知的 pwsh 去 `GetWindowRect`，读到的坐标会被系统
+  虚拟化成 1/2（220×220 @ (1180,640)）—— 我一开始就是被这个骗了，以为窗体尺寸算错了。
+  所以自检把尺寸写进 `run\shell-smoke.txt`，由程序自己报数。
+
+发布形态对比（同一份代码，`net48;net8.0-windows` 双目标）：
+
+| 形态 | 体积 | 用户要装什么 | 实测 |
+| --- | --- | --- | --- |
+| **net48** | **1.35 MB**（14 个文件） | 不用装（4.8 是 Windows 组件） | ✅ 自检通过 |
+| net8 依赖运行时 | 1.04 MB | .NET 8 Desktop 运行时 | ✅ 自检通过（`dpiAwareCall=False` 是正常的：net8 那边由 `SetHighDpiMode` 先设掉了） |
+| net8 单文件自包含 | 146 MB | 不用装 | ⚠️ 本机在 `EnableVisualStyles` 写临时清单时报 `UnauthorizedAccessException`（待查；体积也没优势） |
+
+> 与 PowerShell 版**不能同时跑**：两版共用 `%LOCALAPPDATA%\Bloop\pet.lock` 这把机器级锁
+>（这正是它存在的意义 —— 两种形态状态根不同，各看各的 pid 文件会互相看不见）。
+> 想同时开着看效果，给 .NET 那只加 `--no-lock`。
 
 ## 怎么跑
 
@@ -95,8 +146,9 @@ $dotnet = "$env:LOCALAPPDATA\Microsoft\dotnet\dotnet.exe"   # SDK 没进 PATH，
 | 路径解析 / 占位符展开 / 状态根 / 实例锁路径 | ✅ 已搬 | `behavior-cases/paths.json` **36/36**（含"装在别处""只装了 DSH 没装 node"这类以前测不到的情况） |
 | 挖洞掩码的几何 `Fingerprint.MaskFor` | ✅ 已搬 | `behavior-cases/fingerprint.json` **10/10**（与 PowerShell 侧自检 5y 同一张表） |
 | 抓屏 + 8×8 指纹 `ScreenCapture.Grab` | ✅ 已搬 | `--capture-smoke`：真抓 2880×1800 → 1024×640、JPEG 约 96 KB、掩码 7/64 格、非法区域退回整屏 |
+| 壳 `Blop.App`（窗口/角色图/拖动/位置记忆/菜单/托盘/实例锁） | ✅ 已搬 | `--shell-smoke` 自检 + 真跑一次（窗口 ExStyle、DPI、尺寸、位置记忆都对） |
 | 账本 / 每日消费上限 | ⬜ | 待搬 |
 | DSH 常驻会话（stdio JSON-RPC） | ⬜ | 待搬 |
-| WinForms 壳（分层窗口 / 气泡 / 菜单 / 设置窗口） | ⬜ | 待搬 |
+| 气泡 / 选项按钮 / 设置窗口 | ⬜ | 待搬（壳的骨架已在，接着往里加） |
 
 合计：`verify-addtype.ps1` **64/64 项通过**。

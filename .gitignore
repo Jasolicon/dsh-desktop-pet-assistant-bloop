@@ -21,6 +21,8 @@ desktop-pet/config.json
 blop-net/**/bin/
 blop-net/**/obj/
 blop-net/out-*/
+# 发布目录（publish 的成品：给用户双击的那份；本机留着用，但不进库 —— 里面还有 run\ 运行状态）
+blop-net/out/
 
 # 打包路线探针编译出来的 exe（源码在 packaging-probe/Probe.cs）
 packaging-probe/*.exe

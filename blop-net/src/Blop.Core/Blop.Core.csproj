@@ -17,6 +17,8 @@
   <ItemGroup Condition="'$(TargetFramework)' == 'net48'">
     <!-- 用 SDK 编 net48 要参考程序集；装了 VS 的 targeting pack 就不需要这个包 -->
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+    <!-- net48 不自带 System.Text.Json（配置与状态都是 JSON）；这个从 net462 起都支持 -->
+    <PackageReference Include="System.Text.Json" Version="8.0.5" />
   </ItemGroup>
 
   <ItemGroup Condition="'$(TargetFramework)' == 'net8.0-windows'">

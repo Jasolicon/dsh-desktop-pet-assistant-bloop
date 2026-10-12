@@ -40,6 +40,12 @@ public static class ScreenCapture
 
     public static Rectangle PrimaryScreenBounds() => NativeMethods.PrimaryScreenBounds();
 
+    /// <summary>上一次 <see cref="EnsureDpiAware"/> 是否成功（诊断用，见 startup.log）。</summary>
+    public static bool DpiAwareCallSucceeded => NativeMethods.DpiAwareCallSucceeded;
+
+    /// <summary>系统 DPI（96 = 100%，192 = 200%）。</summary>
+    public static uint SystemDpi => NativeMethods.GetDpiForSystem();
+
     /// <param name="maxWidth">长边缩到这个宽度以内（越小越快，但可能看不到关键变化）。</param>
     /// <param name="jpegQuality">JPEG 质量（1–100）。</param>
     /// <param name="region">监控区域；<c>null</c> 或非法（太小/越界）时抓整屏。</param>

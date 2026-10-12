@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <!-- 双目标：net8.0-windows 是主线（单文件自包含发布 = 双击就跑、不用装运行时）；
+         net48 留着做"几 MB 的轻量版"（.NET Framework 4.8 是 Windows 组件，用户也不用装）。 -->
+    <TargetFrameworks>net48;net8.0-windows</TargetFrameworks>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <InvariantGlobalization>false</InvariantGlobalization>
+    <AssemblyName>Bloop</AssemblyName>
+    <RootNamespace>Blop.App</RootNamespace>
+    <Product>泡泡 · Bloop</Product>
+    <Description>桌面常驻的主动式助手（.NET 版）</Description>
+    <Version>0.1.0</Version>
+    <!-- 发布成单文件时不要把 pdb 塞进去 -->
+    <DebugType Condition="'$(Configuration)' == 'Release'">none</DebugType>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)' == 'net48'">
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+    <ProjectReference Include="..\Blop.Core\Blop.Core.csproj" SetTargetFramework="TargetFramework=net48" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)' == 'net8.0-windows'">
+    <ProjectReference Include="..\Blop.Core\Blop.Core.csproj" SetTargetFramework="TargetFramework=net8.0-windows" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 角色图：仓库里只有 desktop-guide/assets 那一份（连带 PROVENANCE 声明也在那儿），
+         不再往 blop-net 里拷第三份。发布时它会躺在 exe 旁边的 assets\pet.png。 -->
+    <Content Include="..\..\..\desktop-guide\assets\pet.png" Link="assets\pet.png" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>
