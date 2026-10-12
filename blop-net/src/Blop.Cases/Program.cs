@@ -1,3 +1,6 @@
+#nullable enable
+using System;
+using System.IO;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Blop.Core;
@@ -12,26 +15,147 @@ namespace Blop.Cases;
 /// （PowerShell 那侧跑在 <c>DesktopGuide.ps1 -SelfTest</c> 里）。一个零依赖的控制台程序最省事：
 /// 不用还原包、不用联网，失败就返回非 0 退出码。
 /// </remarks>
-internal static class Program
+public static class Program
 {
     private static int Main(string[] args)
     {
-        var casesDir = ResolveCasesDir(args);
-        if (casesDir is null)
+        try
         {
-            Console.Error.WriteLine("找不到 behavior-cases 目录（可以在仓库根跑，或把它的路径当第一个参数传进来）");
+            return RunAll(args) == 0 ? 0 : 1;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine(ex.Message);
             return 2;
         }
+    }
+
+    /// <summary>
+    /// 跑完所有用例表，返回失败条数（0 = 全过）。
+    /// </summary>
+    /// <remarks>
+    /// 做成 public 是为了让"内存编译"那条验证路也能调它（见 blop-net/verify-addtype.ps1）：
+    /// 这台机器开着 Smart App Control，**新编出来的 exe 会被它拦**（事件日志 id 3118），
+    /// 所以本地验证经常只能走 Add-Type 内存编译 —— 跑的是同一份源码、同一张表。
+    /// </remarks>
+    public static int RunAll(string[] args)
+    {
+        var casesDir = ResolveCasesDir(args);
+        if (casesDir is null) throw new InvalidOperationException("找不到 behavior-cases 目录（可以在仓库根跑，或把它的路径传进来）");
 
         var pass = 0;
         var fail = 0;
         Console.WriteLine($"用例表目录：{casesDir}");
 
         RunGate(Path.Combine(casesDir, "gate.json"), ref pass, ref fail);
+        RunPaths(Path.Combine(casesDir, "paths.json"), ref pass, ref fail);
 
-        Console.WriteLine($"闸门用例表：{pass}/{pass + fail} 项通过");
-        return fail == 0 ? 0 : 1;
+        Console.WriteLine($"全部用例表：{pass}/{pass + fail} 项通过");
+        return fail;
     }
+
+    /// <summary>
+    /// 路径解析用例表：把"外部世界"当成输入喂给 <see cref="Paths"/>。
+    /// </summary>
+    /// <remarks>
+    /// 这是 <c>desktop-guide/paths.ps1</c> 的规则第一次能被真正钉住 ——
+    /// 以前只能测"在这台机器上解得出来"，测不到"装在别处、或者只装了 DSH 没装 node"。
+    /// </remarks>
+    private static void RunPaths(string path, ref int pass, ref int fail)
+    {
+        using var doc = JsonDocument.Parse(File.ReadAllText(path));
+        var root = doc.RootElement;
+        var defaults = root.GetProperty("defaults");
+
+        Console.WriteLine("=== paths.json：路径解析 ===");
+        foreach (var c in root.GetProperty("cases").EnumerateArray())
+        {
+            var worldElement = c.TryGetProperty("world", out var w) ? w : default;
+            var world = new FakePathWorld(worldElement, defaults);
+            var paths = new Paths(world, defaults.GetProperty("root").GetString()!);
+            var input = c.TryGetProperty("input", out var i) ? i : default;
+            var expect = c.GetProperty("expect");
+            var ask = c.GetProperty("ask").GetString()!;
+
+            var ok = true;
+            string shown;
+            switch (ask)
+            {
+                case "tokens":
+                {
+                    var value = Str(input, "value") ?? "";
+                    var dshRoot = Str(input, "dshRoot") ?? "";
+                    var got = paths.ExpandTokens(value, dshRoot);
+                    ok = got == (Str(expect, "value") ?? "");
+                    shown = $"「{value}」→「{got}」";
+                    break;
+                }
+                case "home":
+                {
+                    var got = paths.Home(Str(input, "over"));
+                    ok = got == (Str(expect, "value") ?? "");
+                    shown = $"→「{got}」";
+                    break;
+                }
+                case "lockPath":
+                {
+                    var got = paths.LockPath();
+                    ok = got == (Str(expect, "value") ?? "");
+                    shown = $"→「{got}」";
+                    break;
+                }
+                case "dshRoot":
+                {
+                    var got = paths.DshRoot(Str(input, "configured"));
+                    ok = got == (Str(expect, "value") ?? "");
+                    shown = $"→「{got}」";
+                    break;
+                }
+                case "node":
+                {
+                    var got = paths.Node(Str(input, "configured"));
+                    ok = got == (Str(expect, "value") ?? "");
+                    shown = $"→「{got}」";
+                    break;
+                }
+                case "edge":
+                {
+                    var got = paths.Edge(Str(input, "configured"));
+                    ok = got == (Str(expect, "value") ?? "");
+                    shown = $"→「{got}」";
+                    break;
+                }
+                case "petImage":
+                {
+                    var got = paths.PetImage(Str(input, "configured"));
+                    ok = got == (Str(expect, "value") ?? "");
+                    shown = $"→「{got}」";
+                    break;
+                }
+                case "dsh":
+                {
+                    var got = paths.Dsh(
+                        Str(input, "rootCfg"), Str(input, "exeCfg"), Str(input, "cliCfg"), Str(input, "cmdCfg"));
+                    var want = new DshPaths(
+                        Str(expect, "root") ?? "", Str(expect, "exe") ?? "", Str(expect, "cli") ?? "", Str(expect, "cmd") ?? "");
+                    ok = got == want;
+                    shown = $"root=「{got.Root}」exe=「{got.Exe}」cli=「{got.Cli}」cmd=「{got.Cmd}」";
+                    break;
+                }
+                default:
+                    throw new InvalidOperationException($"用例表里有不认识的 ask：{ask}");
+            }
+
+            if (ok) pass++; else fail++;
+            Console.WriteLine($"  {(ok ? "✔" : "✘")} {c.GetProperty("id").GetString(),-34} {shown}");
+            if (!ok) Console.WriteLine($"      期望：{expect.GetRawText()}　—— {c.GetProperty("why").GetString()}");
+        }
+    }
+
+    private static string? Str(JsonElement o, string key)
+        => o.ValueKind == JsonValueKind.Object && o.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.String
+            ? v.GetString()
+            : null;
 
     private static void RunGate(string path, ref int pass, ref int fail)
     {

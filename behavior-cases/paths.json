@@ -1,0 +1,349 @@
+{
+  "_note": "路径解析（Paths）的用例表。语言无关：PowerShell 版、.NET 版读同一份。",
+  "_why": "路径解析是「换台机器就哑」那类 bug 的老巢 —— 原来 11 处硬编码 D:\\DeepSeekHarness，换台机器就 advisor 起不来、语音用不了、对话窗口打不开。规则本身是确定的（显式配置 → 环境变量 → 自动探测），但以前只被测过「在这台机器上能解出来」，测不到「装在别处、或者只装了 DSH 没装 node」。这张表把外部世界当成输入：环境变量、存在哪些文件、PATH 上有什么、有没有正在跑的 DSH。",
+  "_how": "world 是这一条用例的「外部世界」：env=环境变量，exists=存在的路径（文件或目录都算），commands=PATH 上能直接调到的命令，files=目录里的文件名（给 Get-ChildItem 那种探测用），runningHarnessRoot=正在运行的 DSH 进程所在目录。ask 决定问哪个函数，input 是它的参数，expect 是要比对的结果。",
+  "defaults": {
+    "root": "C:\\app",
+    "env": {},
+    "exists": [],
+    "commands": {},
+    "files": {},
+    "runningHarnessRoot": ""
+  },
+  "cases": [
+    {
+      "id": "token-root",
+      "why": "最常见的占位符：{root} 指程序自己的目录",
+      "ask": "tokens",
+      "input": { "value": "{root}\\advisor-dsh.ps1" },
+      "expect": { "value": "C:\\app\\advisor-dsh.ps1" }
+    },
+    {
+      "id": "token-dshhome-from-env",
+      "why": "{dshHome} = DSH_HOME（设了就用它）",
+      "ask": "tokens",
+      "input": { "value": "{dshHome}\\bloop" },
+      "world": { "env": { "DSH_HOME": "C:\\ds" } },
+      "expect": { "value": "C:\\ds\\bloop" }
+    },
+    {
+      "id": "token-dshhome-default",
+      "why": "{dshHome} 没设 DSH_HOME 时 = %USERPROFILE%\\.dsh",
+      "ask": "tokens",
+      "input": { "value": "{dshHome}\\bloop" },
+      "world": { "env": { "USERPROFILE": "C:\\Users\\u" } },
+      "expect": { "value": "C:\\Users\\u\\.dsh\\bloop" }
+    },
+    {
+      "id": "token-userprofile",
+      "why": "{userProfile} 直接取自环境变量",
+      "ask": "tokens",
+      "input": { "value": "{userProfile}\\img.png" },
+      "world": { "env": { "USERPROFILE": "C:\\Users\\u" } },
+      "expect": { "value": "C:\\Users\\u\\img.png" }
+    },
+    {
+      "id": "token-programfiles",
+      "why": "{programFiles} / {programFilesX86} 同理（避免写死盘符）",
+      "ask": "tokens",
+      "input": { "value": "{programFiles}\\x.exe" },
+      "world": { "env": { "ProgramFiles": "C:\\PF" } },
+      "expect": { "value": "C:\\PF\\x.exe" }
+    },
+    {
+      "id": "token-dshroot-explicit",
+      "why": "{dshRoot} 显式传进来时替换",
+      "ask": "tokens",
+      "input": { "value": "{dshRoot}\\bin", "dshRoot": "C:\\DSH" },
+      "expect": { "value": "C:\\DSH\\bin" }
+    },
+    {
+      "id": "token-dshroot-unknown",
+      "why": "{dshRoot} 算不出来时**原样保留** —— 不要静默替换成空串（那会让配置看起来生效了、其实没有）",
+      "ask": "tokens",
+      "input": { "value": "{dshRoot}\\bin" },
+      "expect": { "value": "{dshRoot}\\bin" }
+    },
+    {
+      "id": "token-unknown-kept",
+      "why": "不认识的占位符也原样保留（方便一眼看出拼错了）",
+      "ask": "tokens",
+      "input": { "value": "{nope}\\x" },
+      "expect": { "value": "{nope}\\x" }
+    },
+    {
+      "id": "home-from-env",
+      "why": "状态根：DG_HOME 优先",
+      "ask": "home",
+      "input": {},
+      "world": { "env": { "DG_HOME": "C:\\state" } },
+      "expect": { "value": "C:\\state" }
+    },
+    {
+      "id": "home-default-is-app-dir",
+      "why": "没设 DG_HOME 就用程序目录 —— **不**自动回落到 <DSH_HOME>\\bloop（那样会把已有状态搬走，表现成「配置突然重置」）",
+      "ask": "home",
+      "input": {},
+      "world": { "env": { "DSH_HOME": "C:\\ds" } },
+      "expect": { "value": "C:\\app" }
+    },
+    {
+      "id": "home-override-wins",
+      "why": "参数覆盖优先于一切（插件外壳会传进来）",
+      "ask": "home",
+      "input": { "over": "D:\\plugin-state" },
+      "world": { "env": { "DG_HOME": "C:\\state" } },
+      "expect": { "value": "D:\\plugin-state" }
+    },
+    {
+      "id": "lock-under-localappdata",
+      "why": "实例锁**故意不放在状态根里**：两种形态（独立/插件）状态根不同，放状态根里互相看不见，会同时起两只桌宠",
+      "ask": "lockPath",
+      "input": {},
+      "world": { "env": { "LOCALAPPDATA": "C:\\Users\\u\\AppData\\Local" } },
+      "expect": { "value": "C:\\Users\\u\\AppData\\Local\\Bloop\\pet.lock" }
+    },
+    {
+      "id": "lock-fallback-temp",
+      "why": "没有 LOCALAPPDATA（罕见）时退回 TEMP",
+      "ask": "lockPath",
+      "input": {},
+      "world": { "env": { "TEMP": "C:\\tmp" } },
+      "expect": { "value": "C:\\tmp\\Bloop\\pet.lock" }
+    },
+    {
+      "id": "dshroot-configured",
+      "why": "第 1 级：显式配置且存在 → 就用它",
+      "ask": "dshRoot",
+      "input": { "configured": "C:\\DSH" },
+      "world": { "exists": ["C:\\DSH"] },
+      "expect": { "value": "C:\\DSH" }
+    },
+    {
+      "id": "dshroot-configured-missing-falls-through",
+      "why": "配置指的路径不存在 → **不能**用它（那正是「换台机器就哑」的成因），继续往下探测",
+      "ask": "dshRoot",
+      "input": { "configured": "C:\\not-there" },
+      "world": { "env": { "DG_DSH_ROOT": "C:\\DSH2" }, "exists": ["C:\\DSH2"] },
+      "expect": { "value": "C:\\DSH2" }
+    },
+    {
+      "id": "dshroot-env-dg",
+      "why": "第 2 级：DG_DSH_ROOT",
+      "ask": "dshRoot",
+      "input": {},
+      "world": { "env": { "DG_DSH_ROOT": "C:\\DSH" }, "exists": ["C:\\DSH"] },
+      "expect": { "value": "C:\\DSH" }
+    },
+    {
+      "id": "dshroot-env-dsh-root",
+      "why": "第 2 级备选：DSH_ROOT（别的安装方式会设它）",
+      "ask": "dshRoot",
+      "input": {},
+      "world": { "env": { "DSH_ROOT": "C:\\DSH" }, "exists": ["C:\\DSH"] },
+      "expect": { "value": "C:\\DSH" }
+    },
+    {
+      "id": "dshroot-from-path-upward",
+      "why": "第 3 级：从 PATH 上的 dsh.cmd 往上找带 resources 的那一层",
+      "ask": "dshRoot",
+      "input": {},
+      "world": {
+        "commands": { "dsh": "C:\\DSH\\resources\\runtime\\cli\\bin\\dsh.cmd" },
+        "exists": ["C:\\DSH\\resources"]
+      },
+      "expect": { "value": "C:\\DSH" }
+    },
+    {
+      "id": "dshroot-from-running-process",
+      "why": "第 3 级：从**正在运行的** DSH 进程反推 —— 装在哪儿就在哪儿跑，最可靠，也省掉了写死盘符",
+      "ask": "dshRoot",
+      "input": {},
+      "world": { "runningHarnessRoot": "C:\\DSH", "exists": ["C:\\DSH\\resources"] },
+      "expect": { "value": "C:\\DSH" }
+    },
+    {
+      "id": "dshroot-common-location",
+      "why": "第 3 级兜底：常见安装位置",
+      "ask": "dshRoot",
+      "input": {},
+      "world": { "env": { "ProgramFiles": "C:\\PF" }, "exists": ["C:\\PF\\DeepSeek Harness"] },
+      "expect": { "value": "C:\\PF\\DeepSeek Harness" }
+    },
+    {
+      "id": "dshroot-nothing",
+      "why": "全都没有 → 空串（调用方决定怎么降级，这里从不抛异常）",
+      "ask": "dshRoot",
+      "input": {},
+      "world": {},
+      "expect": { "value": "" }
+    },
+    {
+      "id": "dsh-full-from-root",
+      "why": "三个入口一次解出来：exe 在根目录、cli 从 app.asar 挂载点推、cmd 在 resources 下",
+      "ask": "dsh",
+      "input": {},
+      "world": {
+        "env": { "DG_DSH_ROOT": "C:\\DSH" },
+        "exists": [
+          "C:\\DSH",
+          "C:\\DSH\\DeepSeek Harness.exe",
+          "C:\\DSH\\resources\\app.asar",
+          "C:\\DSH\\resources\\runtime\\cli\\bin\\dsh.cmd"
+        ]
+      },
+      "expect": {
+        "root": "C:\\DSH",
+        "exe": "C:\\DSH\\DeepSeek Harness.exe",
+        "cli": "C:\\DSH\\resources\\app.asar\\dsh\\node_modules\\@deepseek-ai\\dsh-desktop-host\\lib\\cli.js",
+        "cmd": "C:\\DSH\\resources\\runtime\\cli\\bin\\dsh.cmd"
+      }
+    },
+    {
+      "id": "dsh-cli-explicit-may-not-exist",
+      "why": "cli.js 住在 app.asar **归档里面**，文件系统看不见它 —— 显式给了就必须用它，不能因为「不存在」就丢掉",
+      "ask": "dsh",
+      "input": { "cliCfg": "C:\\elsewhere\\cli.js" },
+      "world": { "env": { "DG_DSH_ROOT": "C:\\DSH" }, "exists": ["C:\\DSH"] },
+      "expect": {
+        "root": "C:\\DSH",
+        "exe": "",
+        "cli": "C:\\elsewhere\\cli.js",
+        "cmd": ""
+      }
+    },
+    {
+      "id": "dsh-cli-unpacked-fallback",
+      "why": "没有 app.asar（解包发布）时从 app.asar.unpacked 推",
+      "ask": "dsh",
+      "input": {},
+      "world": {
+        "env": { "DG_DSH_ROOT": "C:\\DSH" },
+        "exists": ["C:\\DSH", "C:\\DSH\\resources\\app.asar.unpacked"]
+      },
+      "expect": {
+        "root": "C:\\DSH",
+        "exe": "",
+        "cli": "C:\\DSH\\resources\\app.asar.unpacked\\dsh\\node_modules\\@deepseek-ai\\dsh-desktop-host\\lib\\cli.js",
+        "cmd": ""
+      }
+    },
+    {
+      "id": "dsh-exe-by-glob",
+      "why": "exe 名字不叫默认那两个时，退一步按 *Harness*.exe 找",
+      "ask": "dsh",
+      "input": {},
+      "world": {
+        "env": { "DG_DSH_ROOT": "C:\\DSH" },
+        "exists": ["C:\\DSH", "C:\\DSH\\DeepSeekHarness-beta.exe"],
+        "files": { "C:\\DSH": ["DeepSeekHarness-beta.exe"] }
+      },
+      "expect": {
+        "root": "C:\\DSH",
+        "exe": "C:\\DSH\\DeepSeekHarness-beta.exe",
+        "cli": "",
+        "cmd": ""
+      }
+    },
+    {
+      "id": "dsh-cmd-falls-back-to-path",
+      "why": "根目录里没有 dsh.cmd 时退回 PATH 上的那个",
+      "ask": "dsh",
+      "input": {},
+      "world": {
+        "env": { "DG_DSH_ROOT": "C:\\DSH" },
+        "exists": ["C:\\DSH", "C:\\bin\\dsh.cmd"],
+        "commands": { "dsh": "C:\\bin\\dsh.cmd" }
+      },
+      "expect": {
+        "root": "C:\\DSH",
+        "exe": "",
+        "cli": "",
+        "cmd": "C:\\bin\\dsh.cmd"
+      }
+    },
+    {
+      "id": "node-configured-wins",
+      "why": "node：配置优先于环境变量与 PATH",
+      "ask": "node",
+      "input": { "configured": "D:\\node\\node.exe" },
+      "world": { "exists": ["D:\\node\\node.exe", "C:\\PF\\nodejs\\node.exe"], "env": { "ProgramFiles": "C:\\PF" } },
+      "expect": { "value": "D:\\node\\node.exe" }
+    },
+    {
+      "id": "node-from-path",
+      "why": "没配置就找 PATH",
+      "ask": "node",
+      "input": {},
+      "world": { "commands": { "node": "C:\\bin\\node.exe" }, "exists": ["C:\\bin\\node.exe"] },
+      "expect": { "value": "C:\\bin\\node.exe" }
+    },
+    {
+      "id": "node-common-location",
+      "why": "PATH 上也没有就找常见安装位置",
+      "ask": "node",
+      "input": {},
+      "world": { "env": { "ProgramFiles": "C:\\PF" }, "exists": ["C:\\PF\\nodejs\\node.exe"] },
+      "expect": { "value": "C:\\PF\\nodejs\\node.exe" }
+    },
+    {
+      "id": "node-missing",
+      "why": "都没有 → 空串，桌宠照跑（只是语音输入不可用）",
+      "ask": "node",
+      "input": {},
+      "world": {},
+      "expect": { "value": "" }
+    },
+    {
+      "id": "edge-common-location-x86-first",
+      "why": "msedge：先找 Program Files (x86)（Edge 默认装那儿）",
+      "ask": "edge",
+      "input": {},
+      "world": {
+        "env": { "ProgramFiles": "C:\\PF", "ProgramFiles(x86)": "C:\\PF86" },
+        "exists": ["C:\\PF86\\Microsoft\\Edge\\Application\\msedge.exe"]
+      },
+      "expect": { "value": "C:\\PF86\\Microsoft\\Edge\\Application\\msedge.exe" }
+    },
+    {
+      "id": "edge-from-path-last",
+      "why": "常见位置都没有才看 PATH",
+      "ask": "edge",
+      "input": {},
+      "world": { "commands": { "msedge": "D:\\Edge\\msedge.exe" }, "exists": ["D:\\Edge\\msedge.exe"] },
+      "expect": { "value": "D:\\Edge\\msedge.exe" }
+    },
+    {
+      "id": "petimage-configured",
+      "why": "角色图：配置优先",
+      "ask": "petImage",
+      "input": { "configured": "D:\\pics\\cat.png" },
+      "world": { "exists": ["D:\\pics\\cat.png"] },
+      "expect": { "value": "D:\\pics\\cat.png" }
+    },
+    {
+      "id": "petimage-from-env",
+      "why": "其次 DG_PET_IMAGE",
+      "ask": "petImage",
+      "input": {},
+      "world": { "env": { "DG_PET_IMAGE": "D:\\pics\\dog.png" }, "exists": ["D:\\pics\\dog.png"] },
+      "expect": { "value": "D:\\pics\\dog.png" }
+    },
+    {
+      "id": "petimage-bundled",
+      "why": "再其次用自带的 assets\\pet.png（所以不用装任何别的插件就能跑）",
+      "ask": "petImage",
+      "input": {},
+      "world": { "exists": ["C:\\app\\assets\\pet.png"] },
+      "expect": { "value": "C:\\app\\assets\\pet.png" }
+    },
+    {
+      "id": "petimage-none",
+      "why": "都没有 → 空串，调用方退回代码绘制的圆脸",
+      "ask": "petImage",
+      "input": {},
+      "world": {},
+      "expect": { "value": "" }
+    }
+  ]
+}
