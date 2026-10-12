@@ -87,3 +87,9 @@ desktop-guide/assets/pet.ico
 
 # 诊断/启动脚本留下的日志（不该进库）
 desktop-pet/*.log
+
+# Electron 诊断留下的东西（临时 userData / 渲染快照 / 日志）
+desktop-pet/diag-userdata/
+desktop-pet/ud-*/
+desktop-pet/diag-*.log
+desktop-pet/render-*.*
