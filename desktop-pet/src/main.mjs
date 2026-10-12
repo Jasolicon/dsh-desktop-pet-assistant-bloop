@@ -456,13 +456,20 @@ const noLock = process.env.PET_NO_LOCK === '1';
 const gotLock = noLock ? true : app.requestSingleInstanceLock();
 log('单实例锁：', noLock ? '跳过（PET_NO_LOCK=1）' : gotLock ? '已获得' : '没拿到 —— 另一个实例在跑，或锁文件写不出来');
 if (!gotLock) {
-  app.quit();
-} else {
+  // 拿不到锁时**继续启动**，只在日志里记一笔。
+  // 为什么不像原来那样 app.quit()：这两件事分不开 —— ①真的已经有一只（该退出）
+  // ②锁文件写不出来（权限/杀软，此时退出等于白跑）。原来一律静默退出，
+  // 用户看到的就是"双击闪退"，连一行原因都没有（实测踩过）。
+  // 真起了两只的话，托盘里会看到两个图标，退出其中一个即可。
+  log('按"可能已有一只"继续启动；如果看到两只桌宠，退出其中一只');
+}
+if (gotLock) {
   app.on('second-instance', () => {
     if (win) { win.show(); win.focus(); }
   });
+}
 
-  app.whenReady().then(() => {
+app.whenReady().then(() => {
     log('userData =', app.getPath('userData'));
     log('root =', ROOT);
     log('dsh  =', JSON.stringify(dshPaths(cfg)));
@@ -543,4 +550,3 @@ if (!gotLock) {
 
   app.on('will-quit', () => { tray?.destroy(); askWatcher?.stop(); session?.stop(); });
   app.on('window-all-closed', () => app.quit());
-}

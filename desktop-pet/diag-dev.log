@@ -1,0 +1,694 @@
+
+[pet] ÂçïÂÆû‰æãÈîÅÔºö Ë∑≥ËøáÔºàPET_NO_LOCK=1Ôºâ
+[pet] userData = C:\Users\62487\AppData\Roaming\desktop-pet
+[pet] root = C:\Users\62487\Documents\deepseek-harness\default-workspace\desktop-pet
+[pet] dsh  = {"root":"D:\\DeepSeekHarness","exe":"D:\\DeepSeekHarness\\DeepSeek Harness.exe","cli":"D:\\DeepSeekHarness\\resources\\app.asar\\dsh\\node_modules\\@deepseek-ai\\dsh-desktop-host\\lib\\cli.js","cmd":"D:\\DeepSeekHarness\\resources\\runtime\\cli\\bin\\dsh.cmd"}
+[187184:1013/002649.092:ERROR:network_sandbox.cc(302)] Failed to grant sandbox access to cache directory C:\Users\62487\AppData\Roaming\desktop-pet\Cache\Cache_Data: æ‹æ¯∑√Œ °£ (0x5)
+[187184:1013/002649.094:ERROR:network_sandbox.cc(317)] Failed to grant sandbox access to shared dictionary directory C:\Users\62487\AppData\Roaming\desktop-pet\Shared Dictionary: æ‹æ¯∑√Œ °£ (0x5)
+[187184:1013/002649.097:ERROR:network_sandbox.cc(406)] Failed to grant sandbox access to network context data directory C:\Users\62487\AppData\Roaming\desktop-pet\Network: æ‹æ¯∑√Œ °£ (0x5)
+[187184:1013/002649.384:WARNING:notify_icon.cc(62)] Unable to create status tray icon.
+[187184:1013/002649.402:WARNING:notify_icon.cc(143)] Error setting status tray icon image
+[187184:1013/002649.404:WARNING:notify_icon.cc(159)] Unable to set tooltip for status tray icon
+[pet] ÊâòÁõòÂõæÊ†áÂ∑≤Â∞±‰Ωç
+[187184:1013/002650.059:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002650.059:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002650.059:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002650.059:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002650.076:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002650.311:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002650.311:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002650.312:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002650.312:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[pet] ËßÇÂØüÂæ™ÁéØÂêØÂä®ÔºöÊØè 2s ÈááÊ†∑‰∏ÄÊ¨°
+[187184:1013/002651.428:ERROR:network_service_instance_impl.cc(282)] Encountered error while migrating network context data or granting sandbox access for C:\Users\62487\AppData\Roaming\desktop-pet\Network. Result: 11: ≤Ÿ◊˜≥…π¶ÕÍ≥…°£ (0x0)
+[187184:1013/002651.432:ERROR:cache_util_win.cc(20)] Unable to move the cache: æ‹æ¯∑√Œ °£ (0x5)
+[187184:1013/002651.433:ERROR:cache_util_win.cc(20)] Unable to move the cache: æ‹æ¯∑√Œ °£ (0x5)
+[187184:1013/002651.464:ERROR:disk_cache.cc(208)] Unable to create cache
+[187184:1013/002651.464:ERROR:gpu_disk_cache.cc(676)] Gpu Cache Creation failed: -2
+[187184:1013/002651.464:ERROR:disk_cache.cc(208)] Unable to create cache
+[187184:1013/002651.464:ERROR:gpu_disk_cache.cc(676)] Gpu Cache Creation failed: -2
+[187184:1013/002651.474:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002651.776:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002651.776:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002651.776:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002651.776:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002651.797:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002652.039:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002652.039:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002652.039:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002652.039:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002652.075:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002652.301:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002652.301:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002652.301:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002652.301:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[dsh] node:fs:2422
+    return binding.writeFileUtf8(
+                   ^
+
+Error: EPERM: operation not permitted, open 'C:\Users\62487\.dsh\profiles\sdk\cordis.yml'
+    at writeFileSync (node:fs:2422:20)
+    at prepareProfile (file:///D:/DeepSeekHarness/resources/app.asar/dsh/node_modules/@deepseek-ai/dsh/lib/profile-boot-BZ2ZjNWi.js:189:2)
+    at composeProfile (file:///D:/DeepSeekHarness/resources/app.asar/dsh/node_modules/@deepseek-ai/dsh/lib/profile-boot-BZ2ZjNWi.js:206:46)
+    at runProfile (file:///D:/DeepSeekHarness/resources/app.asar/dsh/node_modules/@deepseek-ai/dsh/lib/profile-boot-BZ2ZjNWi.js:241:26)
+    at async runCli (file:///D:/DeepSeekHarness/resources/app.asar/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js:215:5)
+    at async runDesktopCli (file:///D:/DeepSeekHarness/resources/app.asar/dsh/node_modules/@deepseek-ai/dsh-desktop-host/lib/cli.js:93:2)
+    at async file:///D:/DeepSeekHarness/resources/app.asar/dsh/node_modules/@deepseek-ai/dsh-desktop-host/lib/cli.js:112:2 {
+  errno: -4048,
+  code: 'EPERM',
+  syscall: 'open',
+  path: 'C:\\Users\\62487\\.dsh\\profiles\\sdk\\cordis.yml'
+}
+
+Node.js v24.18.1
+[pet] Â∏∏È©ª‰ºöËØùËµ∑‰∏çÊù•ÔºåÈÄÄÂõû‰∏ÄÊ¨°ÊÄßË∞ÉÁî®Ôºö DSH Â∏∏È©ª‰ºöËØùÈÄÄÂá∫Ôºàcode 1Ôºâ
+[187184:1013/002652.452:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002652.707:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002652.707:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002652.707:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002652.707:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002652.746:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002655.234:INFO:CONSOLE(416)] "[renderer] dsh = [object Object]", source: file:///C:/Users/62487/Documents/deepseek-harness/default-workspace/desktop-pet/src/renderer/pet.js (416)
+[pet] Âà§Êñ≠Â§±Ë¥•ÔºåÊåâÊ≤âÈªòÂ§ÑÁêÜÔºö } /  / Node.js v24.18.1
+[187184:1013/002656.167:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002656.167:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002656.167:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002656.167:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002656.224:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002656.489:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002656.489:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002656.489:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002656.489:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002656.590:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002656.946:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002656.946:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002656.946:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002656.946:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002657.015:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002658.206:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002658.206:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002658.206:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002658.206:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002658.238:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002658.470:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002658.471:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002658.471:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002658.471:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002658.552:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002658.783:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002658.783:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002658.783:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002658.783:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002658.807:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002700.214:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002700.215:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002700.215:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002700.215:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002700.274:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002700.516:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002700.516:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002700.516:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002700.516:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002700.603:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002700.603:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002702.188:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002702.188:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002702.188:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002702.188:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002702.209:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002702.475:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002702.475:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002702.475:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002702.475:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002702.548:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002702.548:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002704.175:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002704.175:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002704.175:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002704.175:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002704.213:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002704.447:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002704.447:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002704.447:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002704.447:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002704.520:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002704.520:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002706.196:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002706.196:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002706.196:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002706.196:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002706.237:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002706.505:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002706.505:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002706.505:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002706.505:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002706.579:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002706.579:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002708.387:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002708.387:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002708.387:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002708.387:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002708.512:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002708.849:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002708.849:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002708.849:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002708.849:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002708.939:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002709.172:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002709.172:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002709.172:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002709.172:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002709.222:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002710.223:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002710.224:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002710.224:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002710.224:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002710.276:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002710.557:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002710.557:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002710.557:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002710.557:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002710.657:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002710.657:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002712.258:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002712.258:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002712.258:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002712.258:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002712.296:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002712.594:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002712.594:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002712.594:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002712.594:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002712.691:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002712.991:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002712.991:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002712.991:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002712.991:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002713.033:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002714.237:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002714.237:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002714.237:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002714.237:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002714.280:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002714.506:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002714.506:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002714.506:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002714.506:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002714.582:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002714.810:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002714.810:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002714.810:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002714.810:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002714.829:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002716.258:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002716.258:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002716.258:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002716.258:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002716.296:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002716.530:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002716.530:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002716.530:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002716.530:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002716.597:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002716.597:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002718.263:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002718.263:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002718.263:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002718.263:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002718.283:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002718.500:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002718.500:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002718.500:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002718.500:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002718.574:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002718.817:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002718.818:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002718.818:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002718.818:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002718.855:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002720.286:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002720.286:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002720.286:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002720.286:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002720.324:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002720.561:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002720.561:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002720.561:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002720.561:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002720.649:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002720.909:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002720.909:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002720.909:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002720.909:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002720.931:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002722.285:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002722.285:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002722.285:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002722.285:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002722.323:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002722.544:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002722.544:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002722.544:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002722.544:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002722.625:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002722.625:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002724.318:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002724.318:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002724.318:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002724.318:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002724.342:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002724.580:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002724.580:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002724.580:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002724.580:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002724.663:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002724.887:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002724.887:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002724.887:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002724.887:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002724.924:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002726.331:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002726.331:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002726.332:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002726.332:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002726.350:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002726.747:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002726.747:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002726.747:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002726.747:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002726.827:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002726.827:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002728.480:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002728.480:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002728.480:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002728.480:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002728.515:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002728.770:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002728.770:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002728.770:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002728.770:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002728.861:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002728.861:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002730.393:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002730.393:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002730.393:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002730.393:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002730.431:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002730.713:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002730.713:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002730.713:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002730.713:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002730.788:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002731.027:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002731.027:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002731.027:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002731.027:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002731.065:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002732.363:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002732.363:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002732.363:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002732.363:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002732.397:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002732.637:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002732.637:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002732.637:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002732.637:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002732.691:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002732.691:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002734.364:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002734.364:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002734.364:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002734.364:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002734.401:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002734.653:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002734.653:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002734.653:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002734.653:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002734.710:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002734.953:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002734.953:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002734.953:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002734.953:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002734.971:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002736.365:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002736.365:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002736.365:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002736.365:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002736.391:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002736.618:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002736.618:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002736.619:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002736.619:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002736.698:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002736.698:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002738.387:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002738.387:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002738.387:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002738.387:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002738.447:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002738.686:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002738.687:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002738.687:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002738.687:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002738.753:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002738.753:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002740.428:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002740.428:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002740.428:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002740.428:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002740.453:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002740.721:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002740.721:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002740.721:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002740.721:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002740.802:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002741.040:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002741.040:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002741.040:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002741.040:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002741.080:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002742.391:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002742.391:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002742.391:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002742.391:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002742.424:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002742.654:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002742.654:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002742.654:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002742.654:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002742.720:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002742.720:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002744.498:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002744.498:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002744.499:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002744.499:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002744.543:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002744.833:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002744.833:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002744.833:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002744.834:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002744.932:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002745.221:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002745.221:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002745.221:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002745.221:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002745.269:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002746.473:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002746.473:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002746.473:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002746.473:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002746.518:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002746.868:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002746.868:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002746.868:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002746.868:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002746.951:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002747.230:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002747.231:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002747.231:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002747.231:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002747.277:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002748.653:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002748.653:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002748.653:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002748.653:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002748.718:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002749.003:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002749.004:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002749.004:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002749.004:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002749.087:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002749.411:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002749.411:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002749.411:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002749.411:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002749.454:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002750.513:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002750.513:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002750.514:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002750.514:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002750.561:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002750.845:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002750.845:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002750.845:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002750.845:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002750.959:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002751.313:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002751.313:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002751.313:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002751.313:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002751.359:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002752.504:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002752.504:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002752.505:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002752.505:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002752.554:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002752.907:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002752.907:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002752.907:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002752.907:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002753.006:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002753.285:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002753.285:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002753.285:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002753.285:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002753.308:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002754.508:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002754.508:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002754.508:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002754.508:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002754.551:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002754.821:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002754.821:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002754.821:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002754.821:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002754.965:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002755.278:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002755.278:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002755.278:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002755.278:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002755.322:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002756.574:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002756.575:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002756.575:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002756.575:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002756.616:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002756.911:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002756.911:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002756.911:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002756.911:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002756.982:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002757.275:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002757.275:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002757.275:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002757.275:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002757.319:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002758.533:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002758.535:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002758.535:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002758.535:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002758.577:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002758.881:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002758.881:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002758.881:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002758.881:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002758.982:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002759.281:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002759.281:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002759.281:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002759.281:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002759.326:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002800.644:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002800.644:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002800.644:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002800.644:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002800.702:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002801.092:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002801.092:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002801.092:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002801.092:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002801.197:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002801.542:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002801.542:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002801.542:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002801.543:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002801.585:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002802.674:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002802.674:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002802.674:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002802.674:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002802.720:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002803.108:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002803.108:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002803.108:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002803.108:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002803.196:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002803.538:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002803.538:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002803.538:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002803.538:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002803.578:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002804.658:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002804.658:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002804.658:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002804.658:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002804.700:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002805.037:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002805.037:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002805.037:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002805.037:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002805.129:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002805.129:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002806.620:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002806.620:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002806.620:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002806.620:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002806.663:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002806.968:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002806.968:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002806.968:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002806.968:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002807.055:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002807.350:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002807.350:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002807.350:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002807.350:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002807.400:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002808.699:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002808.699:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002808.699:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002808.699:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002808.839:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002809.186:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002809.186:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002809.186:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002809.186:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002809.260:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002809.260:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002810.642:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002810.642:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002810.642:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002810.642:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002810.700:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002811.015:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002811.015:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002811.015:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002811.015:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002811.127:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002811.460:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002811.460:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002811.460:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002811.460:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002811.504:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002812.614:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002812.614:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002812.614:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002812.614:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002812.654:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002812.923:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002812.923:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002812.923:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002812.923:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002812.985:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002812.985:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002814.621:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002814.621:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002814.622:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002814.622:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002814.661:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002814.979:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002814.979:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002814.979:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002814.979:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002815.056:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002815.335:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002815.335:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002815.335:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002815.335:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002815.377:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002816.619:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002816.619:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002816.619:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002816.619:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002816.655:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002816.934:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002816.936:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002816.936:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002816.936:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002817.010:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002817.350:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002817.350:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002817.350:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002817.350:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002817.394:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002818.702:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002818.702:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002818.702:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002818.702:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002818.742:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002819.032:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002819.032:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002819.032:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002819.032:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002819.114:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002819.114:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002820.678:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002820.678:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002820.678:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002820.678:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002820.717:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002821.013:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002821.013:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002821.013:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002821.013:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002821.105:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002821.395:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002821.395:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002821.395:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002821.395:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002821.420:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002822.666:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002822.666:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002822.666:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002822.666:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002822.712:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002823.011:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002823.013:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002823.013:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002823.013:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002823.076:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002823.345:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002823.345:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002823.345:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002823.345:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002823.387:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002824.671:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002824.671:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002824.671:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002824.671:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002824.709:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002824.970:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002824.987:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002824.987:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002824.987:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002825.038:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002825.283:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002825.283:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002825.283:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002825.283:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002825.322:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002826.629:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002826.630:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002826.630:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002826.630:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002826.668:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002826.952:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002826.952:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002826.952:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002826.952:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002827.035:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
+[187184:1013/002827.281:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002827.281:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 1
+[187184:1013/002827.281:WARNING:dxgi_adapter_duplicator.cc(106)] Cannot initialize any DxgiOutputDuplicator instance.
+[187184:1013/002827.281:WARNING:dxgi_duplicator_controller.cc(274)] Failed to initialize DxgiAdapterDuplicator on adapter 2
+[187184:1013/002827.315:WARNING:dxgi_duplicator_controller.cc(95)] Count of references reaches zero, DxgiDuplicatorController will be unloaded.
