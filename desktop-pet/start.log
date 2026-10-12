@@ -1,2 +1,2 @@
 
-[120900:1013/003257.868:ERROR:crashpad_client_win.cc(867)] not connected
+[pet] 实例锁：已获得 C:\Users\62487\AppData\Local\Bloop\pet.lock （锁文件写不进去（EPERM: operation not permitted, open 'C:\Users\62487\AppData\Local\Bloop\pet.lock'）—— 这次不互斥）

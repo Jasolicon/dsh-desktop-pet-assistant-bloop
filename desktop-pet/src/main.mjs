@@ -44,6 +44,18 @@ let paused = false;
 /** 观察循环这次启动到底开没开（PET_NO_AUTO=1 时不启动，“继续”也不该把它拉起来）。 */
 const autoEnabled = !process.env.PET_NO_AUTO;
 
+// 用户数据目录（Electron 自己的 userData：缓存、Local Storage、单例锁都在里面）。
+//
+// ⚠️ 为什么要留这个开关：Chromium **建不了 userData 就直接崩**（实测退出码 0xC0000005，
+// 日志里只有一行 crashpad），而"某次启动上下文不让写 %APPDATA%"是会发生的
+//（受限令牌 / 沙箱；本机就连我们自己的锁文件和 DSH 的 profile 都被同样拒过）。
+// 设 PET_USERDATA=<某个可写目录> 就能把它挪出来 —— 换目录后那次实测能起来。
+if (process.env.PET_USERDATA) {
+  try {
+    app.setPath('userData', process.env.PET_USERDATA);
+  } catch { /* 设不了就照默认来 */ }
+}
+
 /**
  * 问答请求目录。默认指向 desktop-guide 那个 —— pet-responder 的 `dir` 就是配在那儿的
  * （见 desktop-guide/config.json 的 _askNote）。两边要指向同一个目录才能接上。
