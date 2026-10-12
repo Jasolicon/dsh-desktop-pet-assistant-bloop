@@ -1,0 +1,50 @@
+{
+  "_note": "采样节奏落地（Sync-SampleCadence）的用例表。语言无关：三份实现读同一份。",
+  "_why": "采样率就是「多久看一眼屏幕」，它同时决定截图频率、CPU 开销和判断及时性。这一段钉三件事：① 300ms 下限（防「学出 0.05 秒把机器烧了」）；② 学习值/模型建议改了要**当场**生效，不用等换档；③ 同一个值不重复写 Interval —— 写它会重排计时器，没必要每拍都写。",
+  "_how": "用例是按顺序跑的步骤（节奏是有状态的：appliedSampleMs 会记住上次真正应用的值）。expectNoRewrite = 先把 Interval 设成哨兵值 sentinelMs，跑完还必须是这个值（证明它提前返回、没碰计时器）。reset = 把 appliedSampleMs 清零，模拟「桌宠刚起来」。",
+  "defaults": {
+    "sentinelMs": 777
+  },
+  "cases": [
+    {
+      "id": "card-profile",
+      "why": "卡牌档（balatro）的 0.6 秒",
+      "steps": [
+        { "sampleSeconds": 0.6, "expectMs": 600, "expectReturn": 0.6 }
+      ]
+    },
+    {
+      "id": "learned-hot-update",
+      "why": "跳变学习把 balatro 调快 → 必须当场生效，不能等换档（老逻辑就错在这）",
+      "steps": [
+        { "sampleSeconds": 0.6, "expectMs": 600 },
+        { "sampleSeconds": 0.42, "expectMs": 420 },
+        { "sampleSeconds": 0.42, "expectNoRewrite": true, "expectReturn": 0.42, "why": "同值再算一遍不该写 Interval" },
+        { "sampleSeconds": 0.6, "expectMs": 600, "why": "同一条规则下的另一个进程（hearthstone）：档名没变，但节奏要回到 0.6" }
+      ]
+    },
+    {
+      "id": "clamp-floor",
+      "why": "学出 0.05 秒也必须被 300ms 兜住",
+      "steps": [
+        { "sampleSeconds": 0.05, "expectMs": 300, "expectReturn": 0.05 }
+      ]
+    },
+    {
+      "id": "no-limit",
+      "why": "≤ 0 = 这档不限制采样（保持原样），返回值 -1",
+      "steps": [
+        { "sampleSeconds": 0, "expectNoRewrite": true, "expectReturn": -1, "why": "连计时器都不该碰" }
+      ]
+    },
+    {
+      "id": "reapply-after-reset",
+      "why": "appliedSampleMs 被清零后（桌宠重启 / 换档重置）同一个值要重新写进去",
+      "steps": [
+        { "sampleSeconds": 0.8, "expectMs": 800 },
+        { "reset": true },
+        { "sampleSeconds": 0.8, "expectMs": 800, "why": "重置后同值也要写 —— 别把「同值不写」做成「永远不写」" }
+      ]
+    }
+  ]
+}

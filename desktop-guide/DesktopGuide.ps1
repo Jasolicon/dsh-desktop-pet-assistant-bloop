@@ -551,33 +551,46 @@ namespace DesktopGuide {
       using (var g = Graphics.FromImage(tiny)) {
         g.InterpolationMode = InterpolationMode.HighQualityBilinear;
         g.DrawImage(img, 0, 0, 8, 8);
+        // 挖洞掩码先算好（纯几何，不碰位图）—— 这样"哪些格子算桌宠自己那块"能被用例表钉死，
+        // 不用靠"在屏幕上闪一块白板再截图"那种测法（那种会受窗口层叠/截屏时序影响而偶发）。
+        var mk = SelfMaskFor(captured, SelfRect);
+        LastFingerprintMask = mk;
+        SelfMaskedCells = 0;
+        for (int i = 0; i < mk.Length; i++) if (mk[i] == '1') SelfMaskedCells++;
         var sb = new StringBuilder(32);
-        var mk = new StringBuilder(32);
-        double cw = captured.Width / 8.0, ch = captured.Height / 8.0;
         for (int y = 0; y < 8; y++) for (int x = 0; x < 8; x++) {
           var c = tiny.GetPixel(x, y);
           int lum = (c.R * 30 + c.G * 59 + c.B * 11) / 100;
-          bool self = false;
-          if (!SelfRect.IsEmpty && cw > 0 && ch > 0) {
-            var cell = Rectangle.FromLTRB(
-              captured.X + (int)Math.Floor(x * cw), captured.Y + (int)Math.Floor(y * ch),
-              captured.X + (int)Math.Ceiling((x + 1) * cw), captured.Y + (int)Math.Ceiling((y + 1) * ch));
-            var inter = Rectangle.Intersect(cell, SelfRect);
-            if (inter.Width > 0 && inter.Height > 0 &&
-                (inter.Width * (double)inter.Height) / (cell.Width * (double)cell.Height) >= SelfOverlapToMask) {
-              self = true;
-            }
-          }
+          bool self = mk[y * 8 + x] == '1';
           // 挖掉的格子固定写 '0'：它对"差值之和"贡献 0，字符串相等比较里也永远相等 ——
           // 于是 Get-FpDistance 和 `$fp -ne $lastFp` 两条路都自动忽略它，不用改调用方。
           sb.Append(self ? '0' : (char)(48 + lum / 16));
-          mk.Append(self ? '1' : '0');
         }
-        LastFingerprintMask = mk.ToString();
-        SelfMaskedCells = 0;
-        for (int i = 0; i < mk.Length; i++) if (mk[i] == '1') SelfMaskedCells++;
         return sb.ToString();
       }
+    }
+
+    /** 8×8 网格的挖洞掩码（64 个字符，'1' = 这一格算桌宠自己那块，指纹里固定写 '0'）。
+        纯几何：只取决于"截到的矩形"和"桌宠自己的矩形"，不碰位图、不读系统状态 ——
+        所以能被 behavior-cases\fingerprint.json 直接钉死（用例表是给三份实现共用的）。 */
+    public static string SelfMaskFor(Rectangle captured, Rectangle self) {
+      var mk = new StringBuilder(64);
+      double cw = captured.Width / 8.0, ch = captured.Height / 8.0;
+      for (int y = 0; y < 8; y++) for (int x = 0; x < 8; x++) {
+        bool masked = false;
+        if (!self.IsEmpty && cw > 0 && ch > 0) {
+          var cell = Rectangle.FromLTRB(
+            captured.X + (int)Math.Floor(x * cw), captured.Y + (int)Math.Floor(y * ch),
+            captured.X + (int)Math.Ceiling((x + 1) * cw), captured.Y + (int)Math.Ceiling((y + 1) * ch));
+          var inter = Rectangle.Intersect(cell, self);
+          if (inter.Width > 0 && inter.Height > 0 &&
+              (inter.Width * (double)inter.Height) / (cell.Width * (double)cell.Height) >= SelfOverlapToMask) {
+            masked = true;
+          }
+        }
+        mk.Append(masked ? '1' : '0');
+      }
+      return mk.ToString();
     }
   }
 
@@ -4833,42 +4846,45 @@ $probe3 = New-Object DesktopGuide.PetForm -ArgumentList @([double]$script:UiScal
   Write-Output '=== 5l. 沉默判定口径（四个大脑的输出都要认得）==='
   # 回归：老代码只认 '选择不说'，于是默认的 DSH 大脑（自动模式走的那条）永远判不出沉默 ——
   # 退避不生效、角标不涨、沉默率恒偏低，而且自动模式下还会把「没说」当发言弹出来。
-  # 下面四条就是四个 advisor 真实会输出的东西（外加未翻译的原始哨兵词），一个都不能漏。
-  $silentTruth = @(
-    '（它选择没说）'        # advisor-dsh.ps1 / advisor-minimax.ps1（改动前）
-    '（它选择不说）'        # advisor-ollama.ps1 / advisor-openai.ps1
-    '  （它选择不说）  '    # 前后带空白也要认
-    'SILENT'                # 大脑原样吐出哨兵词
-    'AMBIENT_SILENT'        # 带前缀的哨兵词（别的插件/大脑可能这么写）
-    '（它选择没说）'        # 与第一条同族，前缀匹配的兜底
-    '你在做：正在读 README'
-  )
-  $notSilent = @(
-    '把定时轮询改成变化触发，只喂最新那张截图'
-    '（大脑没有输出）'
-    '（它把监控范围调回整屏了）'
-    ''
-  )
-  $missed = @($silentTruth | Where-Object { -not (Test-SilentText $_) })
-  $wrong  = @($notSilent  | Where-Object { Test-SilentText $_ })
-  Write-Output ("  沉默串 {0}/{1} 识别{2}" -f ($silentTruth.Count - $missed.Count), $silentTruth.Count, $(if ($missed.Count -eq 0) { ' ✔' } else { ' ✘ 漏判：' + ($missed -join ' / ') }))
-  Write-Output ("  非沉默串 {0}/{1} 不误判{2}" -f ($notSilent.Count - $wrong.Count), $notSilent.Count, $(if ($wrong.Count -eq 0) { ' ✔' } else { ' ✘ 误判：' + ($wrong -join ' / ') }))
-
-  Write-Output '=== 5l2. 「这一轮没判成」（SKIP）既不是沉默、也不是建议 ==='
-  # 抢不到会话锁（主会话正被别的写入者占着）时 advisor 吐一行 SKIP。
-  # 它既不是"它说了什么"、也不是"它选择不说"：混进沉默会污染沉默率那片标注数据
-  #（按项目总纲，那是要攒的资产）。这条钉四件事：认得出 SKIP、SKIP 不算沉默、
-  # 普通建议/沉默句里不会误认、以及 advisor-dsh 真的用 SKIP 报"忙"而不是冒成"内部错误"。
-  $skipOk = [ordered]@{
-    'SKIP 行认得出理由'   = ((Get-JudgeSkipReason 'SKIP: 主 agent 正忙') -eq '主 agent 正忙')
-    '全角冒号也认'        = ((Get-JudgeSkipReason 'SKIP：主 agent 正忙') -eq '主 agent 正忙')
-    'SKIP 不算沉默'       = (-not (Test-SilentText 'SKIP: 主 agent 正忙'))
-    '建议里没有 SKIP'     = ((Get-JudgeSkipReason '把第三行的选择器改一下') -eq '')
-    '沉默句里没有 SKIP'   = ((Get-JudgeSkipReason '（它选择不说）') -eq '')
-    'advisor-dsh 用 SKIP 报忙' = ((Get-Content -LiteralPath (Join-Path $PSScriptRoot 'advisor-dsh.ps1') -Raw -Encoding UTF8) -match 'SKIP: 主 agent 正忙')
+  # 口径现在是**数据**：behavior-cases\silence.json（语言无关，三份实现共用一份）。
+  # ⚠ 表里那条 'silent'（小写）不是笔误：这两条判定用 PowerShell 的 -match，它默认
+  #   **不区分大小写** —— 换语言实现时最该盯的就是它（C# 要显式 IgnoreCase）。
+  $silencePath = Join-Path (Split-Path $PSScriptRoot -Parent) 'behavior-cases\silence.json'
+  if (-not (Test-Path -LiteralPath $silencePath)) {
+    Write-Output ("  ✘ 找不到用例表：{0} —— 5l 这一段等于没测" -f $silencePath)
+  } else {
+    $silenceDoc = Get-Content -LiteralPath $silencePath -Raw -Encoding UTF8 | ConvertFrom-Json
+    $sPass = 0
+    $sFail = 0
+    foreach ($row in $silenceDoc.silence) {
+      $got = [bool](Test-SilentText ([string]$row.text))
+      $want = [bool]$row.silent
+      $ok = ($got -eq $want)
+      if ($ok) { $sPass++ } else { $sFail++ }
+      $label = [string]$row.text
+      if ($label -eq '') { $label = '（空串）' } elseif ($label -match '^\s+$') { $label = '（全空白）' }
+      Write-Output ("  {0} 沉默={1,-5} 「{2}」" -f $(if ($ok) { '✔' } else { '✘' }), $want, $label)
+      if (-not $ok) { Write-Output ("      实际 {0} —— {1}" -f $got, [string]$row.why) }
+    }
+    # SKIP 是第三条通道：抢不到会话锁（主会话正被别的写入者占着）时 advisor 吐一行 SKIP。
+    # 它既不是"它说了什么"、也不是"它选择不说" —— 混进沉默会污染沉默率那片标注数据。
+    foreach ($row in $silenceDoc.skip) {
+      $got = [string](Get-JudgeSkipReason ([string]$row.text))
+      $want = [string]$row.reason
+      $ok = ($got -eq $want)
+      if ($ok) { $sPass++ } else { $sFail++ }
+      $label = [string]$row.text
+      if ($label -eq '') { $label = '（空串）' }
+      Write-Output ("  {0} SKIP 理由=「{1}」 ← 「{2}」" -f $(if ($ok) { '✔' } else { '✘' }), $want, $label)
+      if (-not $ok) { Write-Output ("      实际「{0}」 —— {1}" -f $got, [string]$row.why) }
+    }
+    # 这一条不是行为用例，是"实现里真的这么写"的源码级检查：advisor-dsh 报忙必须走 SKIP 通道，
+    # 不能冒成"内部错误"（那是两个完全不同的语义，混了会让用户以为桌宠坏了）。
+    $skipSrc = ((Get-Content -LiteralPath (Join-Path $PSScriptRoot 'advisor-dsh.ps1') -Raw -Encoding UTF8) -match 'SKIP: 主 agent 正忙')
+    if ($skipSrc) { $sPass++ } else { $sFail++ }
+    Write-Output ("  {0} advisor-dsh 用 SKIP 报忙（不是冒成内部错误）" -f $(if ($skipSrc) { '✔' } else { '✘' }))
+    Write-Output ("  5l 沉默/SKIP 用例表：{0}/{1} 项通过" -f $sPass, ($sPass + $sFail))
   }
-  foreach ($k in $skipOk.Keys) { Write-Output ("  {0} {1}" -f $(if ($skipOk[$k]) { '✔' } else { '✘' }), $k) }
-  Write-Output ("  5l2 {0}/{1} 项通过" -f @($skipOk.Values | Where-Object { $_ }).Count, $skipOk.Count)
 
   Write-Output '=== 5j. 打字派活输入条（一个圆角长框 + 一个发送按钮）==='
   # 这条路径只干一件事：敲一句话派出去。所以界面上只有两个东西 —— 长框和按钮。
@@ -4988,25 +5004,62 @@ $probe3 = New-Object DesktopGuide.PetForm -ArgumentList @([double]$script:UiScal
   # 自检跑在定时器创建之前，所以这里装一个**假定时器**，看 Interval 有没有被真的写进去。
   # 用 pscustomobject 而不是真的 WinForms Timer：自检不该改真实节奏、也不该起消息循环。
   # 变量用 $script: 前缀，函数里读的就是它（PowerShell 的变量查找会走到脚本作用域）。
-  $fakeTimer = [pscustomobject]@{ Interval = 0 }
-  $script:sampleTimer = $fakeTimer
-  $script:appliedSampleMs = 0
-  [void](Sync-SampleCadence -Sample 0.6)       # 卡牌档（balatro）
-  Write-Output ("  卡牌档 0.6s            → Interval={0}ms" -f $fakeTimer.Interval)
-  [void](Sync-SampleCadence -Sample 0.42)      # 跳变学习把 balatro 调快 → 必须当场生效
-  Write-Output ("  学习值热更新 → 0.42s   → Interval={0}ms（调了当场生效，不用等换档）" -f $fakeTimer.Interval)
-  $keep = $fakeTimer.Interval
-  [void](Sync-SampleCadence -Sample 0.42)      # 同值重复：不该重复写（写 Interval 会重排计时器）
-  Write-Output ("  同一个值再算一遍       → Interval={0}ms（{1}）" -f $fakeTimer.Interval, $(if ($fakeTimer.Interval -eq $keep) { '没重复写' } else { '重复写了 —— 不该' }))
-  [void](Sync-SampleCadence -Sample 0.6)       # 同规则、无学习值的另一个进程（hearthstone）
-  Write-Output ("  换到同档另一个进程     → Interval={0}ms（老逻辑会停在 420）" -f $fakeTimer.Interval)
-  [void](Sync-SampleCadence -Sample 0.05)      # 异常学习值：下限 300ms 必须兜住
-  Write-Output ("  被学出 0.05s（异常）   → Interval={0}ms（下限 300）" -f $fakeTimer.Interval)
-  # 判据是**窗口句柄**：同一个进程的两个窗口 pid 相同、句柄不同，所以能区分换窗口。
-  $h1 = [DesktopGuide.Native]::ForegroundHwnd()
-  Write-Output ("  前台窗口句柄           → {0}（0 = 拿不到）" -f $h1)
-  $script:sampleTimer = $null
-  $script:appliedSampleMs = 0
+  # 用例表：behavior-cases\cadence.json（语言无关，三份实现共用一份）。
+  # 节奏是**有状态**的（appliedSampleMs 记住上次真正应用的值），所以用例写成步骤序列。
+  $cadencePath = Join-Path (Split-Path $PSScriptRoot -Parent) 'behavior-cases\cadence.json'
+  if (-not (Test-Path -LiteralPath $cadencePath)) {
+    Write-Output ("  ✘ 找不到用例表：{0} —— 5q 这一段等于没测" -f $cadencePath)
+  } else {
+    $cadenceDoc = Get-Content -LiteralPath $cadencePath -Raw -Encoding UTF8 | ConvertFrom-Json
+    $sentinelMs = [int]$cadenceDoc.defaults.sentinelMs
+    $fakeTimer = [pscustomobject]@{ Interval = 0 }
+    $script:sampleTimer = $fakeTimer
+    $script:appliedSampleMs = 0
+    $qPass = 0
+    $qFail = 0
+    foreach ($c in $cadenceDoc.cases) {
+      Write-Output ("  —— {0}：{1}" -f [string]$c.id, [string]$c.why)
+      foreach ($step in $c.steps) {
+        if ($step.reset) {
+          # 模拟"桌宠刚起来 / 换档重置"：把记住的已应用值清掉
+          $script:appliedSampleMs = 0
+          $fakeTimer.Interval = 0
+          Write-Output '      ↺ appliedSampleMs 清零'
+          continue
+        }
+        $expectNoRewrite = [bool]$step.expectNoRewrite
+        # 同值不重写这条要能证出来：先把 Interval 设成哨兵值，跑完还是它 = 没碰计时器
+        if ($expectNoRewrite) { $fakeTimer.Interval = $sentinelMs }
+        $ret = Sync-SampleCadence -Sample ([double]$step.sampleSeconds)
+        $okMs = $true
+        $okRet = $true
+        if ($expectNoRewrite) {
+          $okMs = ($fakeTimer.Interval -eq $sentinelMs)
+        } elseif ($null -ne $step.expectMs) {
+          $okMs = ($fakeTimer.Interval -eq [int]$step.expectMs)
+        }
+        if ($null -ne $step.expectReturn) {
+          $okRet = ([math]::Abs([double]$ret - [double]$step.expectReturn) -lt 0.001)
+        }
+        $ok = ($okMs -and $okRet)
+        if ($ok) { $qPass++ } else { $qFail++ }
+        $shown = $(if ($expectNoRewrite) { "Interval 保持 $sentinelMs（没重复写）" } else { "Interval=$($fakeTimer.Interval)ms" })
+        Write-Output ("    {0} 采样 {1}s → {2}" -f $(if ($ok) { '✔' } else { '✘' }), [double]$step.sampleSeconds, $shown)
+        if (-not $ok) {
+          $want = $(if ($expectNoRewrite) { "Interval 保持 $sentinelMs" } else { "Interval=$($step.expectMs)ms" })
+          if ($null -ne $step.expectReturn) { $want += "，返回 $($step.expectReturn)" }
+          Write-Output ("         期望：{0}" -f $want)
+          Write-Output ("         实际：Interval=$($fakeTimer.Interval)ms，返回 $ret　{0}" -f [string]$step.why)
+        }
+      }
+    }
+    # 判据是**窗口句柄**：同一个进程的两个窗口 pid 相同、句柄不同，所以能区分换窗口。
+    $h1 = [DesktopGuide.Native]::ForegroundHwnd()
+    Write-Output ("  前台窗口句柄           → {0}（0 = 拿不到）" -f $h1)
+    $script:sampleTimer = $null
+    $script:appliedSampleMs = 0
+    Write-Output ("  5q 采样节奏用例表：{0}/{1} 项通过" -f $qPass, ($qPass + $qFail))
+  }
   Write-Output '=== 5r. 设置窗口（一个窗口改完 config.json）==='
   # 这一块盯两件事：(1) 界面自己的机械自检 + 存盘往返（见 settings-window.ps1 的 -SelfTest）；
   # (2) config.json 里的参数**一个都没漏** —— 需求原话是"能改的参数都提供给用户"，
@@ -5204,6 +5257,37 @@ $probe3 = New-Object DesktopGuide.PetForm -ArgumentList @([double]$script:UiScal
   Write-Output ("  当前快捷方式：仓库里={0}｜桌面={1}（生成方式见 make-launcher.ps1）" -f (Test-Path -LiteralPath $lnkRoot), (Test-Path -LiteralPath $lnkDesk))
   Write-Output ("  5x {0}/{1} 项通过" -f @($xOk | Where-Object { $_ }).Count, $xOk.Count)
   Write-Output '=== 5y. 自己别触发自己（指纹里挖掉桌宠自己那块）==='
+  # 两段：
+  #   (A) 纯几何：掩码规则本身（behavior-cases\fingerprint.json）—— 不碰屏幕、确定性、三份实现共用。
+  #   (B) 端到端：真在屏幕上闪一块白板，看指纹跟不跟着动 —— 会受窗口层叠与截屏时序影响，
+  #       所以判据放宽成「信号够大时，掩码后的差值必须更小」，信号太弱报 ⚠ 而不是误报 ✘。
+  $fpCasePath = Join-Path (Split-Path $PSScriptRoot -Parent) 'behavior-cases\fingerprint.json'
+  if (-not (Test-Path -LiteralPath $fpCasePath)) {
+    Write-Output ("  ✘ 找不到用例表：{0} —— 5y 的几何部分等于没测" -f $fpCasePath)
+  } else {
+    $fpDoc = Get-Content -LiteralPath $fpCasePath -Raw -Encoding UTF8 | ConvertFrom-Json
+    $fpPass = 0
+    $fpFail = 0
+    foreach ($fc in $fpDoc.cases) {
+      $cap = [System.Drawing.Rectangle]::new([int]$fc.captured.x, [int]$fc.captured.y, [int]$fc.captured.w, [int]$fc.captured.h)
+      $slf = $(if ($fc.selfEmpty) {
+          [System.Drawing.Rectangle]::Empty
+        } else {
+          [System.Drawing.Rectangle]::new([int]$fc.self.x, [int]$fc.self.y, [int]$fc.self.w, [int]$fc.self.h)
+        })
+      $got = [string][DesktopGuide.Capture]::SelfMaskFor($cap, $slf)
+      $want = [string]$fc.expectMask
+      $ok = ($got -eq $want)
+      if ($ok) { $fpPass++ } else { $fpFail++ }
+      Write-Output ("  {0} {1,-24} 挖掉 {2,-2} 格" -f $(if ($ok) { '✔' } else { '✘' }), [string]$fc.id, ([regex]::Matches($got, '1')).Count)
+      if (-not $ok) {
+        Write-Output ("      期望 {0}" -f $want)
+        Write-Output ("      实际 {0}　—— {1}" -f $got, [string]$fc.why)
+      }
+    }
+    Write-Output ("  5y 掩码几何用例表：{0}/{1} 项通过" -f $fpPass, ($fpPass + $fpFail))
+  }
+
   # 复现手法：在**桌宠当前所在的位置**放一块它那么大的白板代替它的气泡，看指纹跟不跟着动。
   # 位置取自 run\pet.json（桌宠可拖，不能假设它在右下角），大小取它默认的 430x250 逻辑 px。
   # 老行为它自己的气泡一弹，那几格就变了 —— 等于"我自己说了一句话"被当成"画面变了"，
@@ -5241,18 +5325,30 @@ $probe3 = New-Object DesktopGuide.PetForm -ArgumentList @([double]$script:UiScal
       return [DesktopGuide.Capture]::LastFingerprint
     }
 
-    # ① 不挖自己 —— 老行为
-    [DesktopGuide.Capture]::SelfRect = [System.Drawing.Rectangle]::Empty
-    $probeSelf.Show(); $fpRawOn = & $grab
-    $probeSelf.Hide(); $fpRawOff = & $grab
-    $dRaw = Get-FpDistance $fpRawOn $fpRawOff
+    # 白板出现/消失各测一轮。**重试一次**：这一段测的是屏幕 —— 板子可能被别的置顶窗口压住、
+    # 或者截屏赶在渲染之前，单次结果偶尔不可信。重试能把"偶发"和"真没挖"分开
+    #（实测踩过：某次 dRaw 只有 8、dMasked 却是 10，于是报了「挖了但没起作用」，而下次跑就正常）。
+    $dRaw = 0; $dMasked = 0; $maskedCells = 0
+    for ($attempt = 1; $attempt -le 2; $attempt++) {
+      # ① 不挖自己 —— 老行为
+      [DesktopGuide.Capture]::SelfRect = [System.Drawing.Rectangle]::Empty
+      $probeSelf.Show(); $fpRawOn = & $grab
+      $probeSelf.Hide(); $fpRawOff = & $grab
+      $dRaw = Get-FpDistance $fpRawOn $fpRawOff
 
-    # ② 挖掉自己那块 —— 现在的行为
-    $probeSelf.Show(); [DesktopGuide.Capture]::SelfRect = $selfRect
-    $fpOn = & $grab
-    $maskedCells = [int][DesktopGuide.Capture]::SelfMaskedCells
-    $probeSelf.Hide(); $fpOff = & $grab
-    $dMasked = Get-FpDistance $fpOn $fpOff
+      # ② 挖掉自己那块 —— 现在的行为
+      $probeSelf.Show(); [DesktopGuide.Capture]::SelfRect = $selfRect
+      $fpOn = & $grab
+      $maskedCells = [int][DesktopGuide.Capture]::SelfMaskedCells
+      $probeSelf.Hide(); $fpOff = & $grab
+      $dMasked = Get-FpDistance $fpOn $fpOff
+
+      # 这一轮算数：掩码生效 + 信号够大（≥ judgeMinFpDelta）+ 掩码后更小
+      if ($maskedCells -gt 0 -and $dRaw -ge [int]$cfg.judgeMinFpDelta -and $dMasked -lt $dRaw) { break }
+      if ($attempt -lt 2) {
+        Write-Output ("  （第 {0} 次只测出「不挖」{1} / 「挖了」{2}，重试一次）" -f $attempt, $dRaw, $dMasked)
+      }
+    }
 
     Write-Output ("  不挖自己那块：同一块白板出现/消失 → 指纹差 {0}（judgeMinFpDelta = {1}，超过它就算「画面变了」）" -f $dRaw, [int]$cfg.judgeMinFpDelta)
     Write-Output ("  挖掉自己那块：同样的变化        → 指纹差 {0}（挖掉 {1}/64 格）" -f $dMasked, $maskedCells)
@@ -5262,6 +5358,9 @@ $probe3 = New-Object DesktopGuide.PetForm -ArgumentList @([double]$script:UiScal
       Write-Output '  判定：⚠ 测不出来（画面本来就没动：黑屏 / 锁屏 / 远程会话）'
     } elseif ($dMasked -lt $dRaw) {
       Write-Output '  判定：✔ 自己的变化被屏蔽掉了（老行为会被自己触发，现在不会）'
+    } elseif ($dRaw -lt [int]$cfg.judgeMinFpDelta) {
+      # 信号比阈值还小 = 这一轮根本测不出"不挖会不会触发"，不能据此判失败（以前就是在这里误报的）
+      Write-Output ("  判定：⚠ 测不出来（「不挖」只有 {0}，还没到阈值 {1} —— 板子多半被别的置顶窗口压住了）" -f $dRaw, [int]$cfg.judgeMinFpDelta)
     } else {
       Write-Output '  判定：✘ 挖了但没起作用'
     }

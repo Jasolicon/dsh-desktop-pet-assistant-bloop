@@ -1,0 +1,35 @@
+{
+  "_note": "沉默判定（Test-SilentText）与「这一轮没判成」（Get-JudgeSkipReason）的输入输出表。语言无关：三份实现读同一份。",
+  "_why": "四个 advisor 大脑输出的文字不一样（'（它选择不说）' / '（它选择没说）' / 裸哨兵词 SILENT / '你在做：…'），判定口径统一在这两个函数里。判错的后果很重：沉默被当成发言 → 自动模式下把「没说」弹成气泡、退避不生效、沉默率偏低；而沉默率按项目总纲是要攒的标注资产。",
+  "_trap": "⚠ 这两条判定用 PowerShell 的 -match，它**默认不区分大小写** —— 所以 'silent' / 'skip: …' 也算。换语言实现时这里最容易漏（C# 要显式加 RegexOptions.IgnoreCase），表里专门留了用例钉住。",
+  "silence": [
+    { "text": "（它选择不说）", "silent": true, "why": "advisor-ollama / advisor-openai 的原文" },
+    { "text": "（它选择没说）", "silent": true, "why": "advisor-dsh / advisor-minimax 的原文" },
+    { "text": "  （它选择不说）  ", "silent": true, "why": "前后带空白也要认（先 Trim）" },
+    { "text": "SILENT", "silent": true, "why": "大脑原样吐出哨兵词（还没翻译）" },
+    { "text": "AMBIENT_SILENT", "silent": true, "why": "带前缀的哨兵词：别的插件可能这么写" },
+    { "text": "silent", "silent": true, "why": "-match 不区分大小写，小写哨兵词也算" },
+    { "text": "SILENT!", "silent": true, "why": "哨兵词两侧允许非单词字符" },
+    { "text": "（它选择", "silent": true, "why": "前缀匹配的兜底（只有前缀、没有后半）" },
+    { "text": "你在做：正在读 README", "silent": true, "why": "看懂了但没给建议 = 没说" },
+    { "text": "你在做: x", "silent": true, "why": "半角冒号也认" },
+    { "text": "", "silent": false, "why": "空串不是沉默（是「没有输出」）" },
+    { "text": "   ", "silent": false, "why": "全空白同理" },
+    { "text": "（大脑没有输出）", "silent": false, "why": "这是错误提示，不该当成「它选择不说」混进沉默率" },
+    { "text": "（它把监控范围调回整屏了）", "silent": false, "why": "以「（」开头但不在沉默前缀里 —— 别写成「所有括号都算沉默」" },
+    { "text": "在作：x", "silent": false, "why": "「你在做」只匹配开头" },
+    { "text": "SKIP: 主 agent 正忙", "silent": false, "why": "SKIP 不是沉默 —— 混进去会污染沉默率那片标注数据" },
+    { "text": "把定时轮询改成变化触发，只喂最新那张截图", "silent": false, "why": "正常建议" }
+  ],
+  "skip": [
+    { "text": "SKIP: 主 agent 正忙", "reason": "主 agent 正忙", "why": "advisor 抢不到会话锁时报的那一行" },
+    { "text": "SKIP：主 agent 正忙", "reason": "主 agent 正忙", "why": "全角冒号也认" },
+    { "text": "先给结论\nSKIP: 抢不到锁", "reason": "抢不到锁", "why": "多行输出里挑出 SKIP 那一行" },
+    { "text": "skip: 小写也认", "reason": "小写也认", "why": "-match 不区分大小写" },
+    { "text": "SKIP:", "reason": "", "why": "只有前缀、没有理由 → 空理由" },
+    { "text": "把第三行的选择器改一下", "reason": "", "why": "正常建议里没有 SKIP" },
+    { "text": "（它选择不说）", "reason": "", "why": "沉默句里没有 SKIP" },
+    { "text": "跳过这一轮", "reason": "", "why": "中文「跳过」不算（只认 SKIP 字面）" },
+    { "text": "", "reason": "", "why": "空串" }
+  ]
+}
