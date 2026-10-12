@@ -62,12 +62,10 @@ internal static class Program
         {
             var statePath = Path.Combine(runDir, "pet.json");
             var cfg = BotConfig.Load(Path.Combine(paths.Home(), "config.json"));
-            // 大脑先接"假大脑"：它不花钱、不等模型，专门用来把环路验通
-            //（真大脑接 DSH 那一侧，走文件协议/插件 —— 见 blop-net/README 的「DSH 现状」）。
             Rectangle selfRect = Rectangle.Empty;
             var monitor = new PetMonitor(
                 cfg,
-                new FakeBrain(),
+                CreateBrain(runDir),
                 Path.Combine(paths.Home(), "logs", "decisions.jsonl"),
                 Path.Combine(runDir, "shots"),
                 () => selfRect);
@@ -98,6 +96,26 @@ internal static class Program
         return false;
     }
 
+    /// <summary>
+    /// 选大脑：默认走**桥**（DSH 应用那一侧跑的心智 —— 见 blop-net/brain-bridge），
+    /// <c>DG_BRAIN=fake</c> 时用假大脑（不花钱、不等模型，专门验环路/界面）。
+    /// </summary>
+    private static IBrain CreateBrain(string runDir)
+    {
+        if (string.Equals(Environment.GetEnvironmentVariable("DG_BRAIN"), "fake", StringComparison.OrdinalIgnoreCase))
+        {
+            AppendStartupLog(runDir, "brain=FakeBrain（DG_BRAIN=fake）");
+            return new FakeBrain();
+        }
+
+        var bridge = new FileBridgeBrain(
+            FileBridgeBrain.DefaultDir(),
+            180000,
+            line => AppendStartupLog(runDir, "bridge: " + line));
+        AppendStartupLog(runDir, "brain=FileBridgeBrain(" + bridge.Dir + ")，桥装过=" + bridge.Available);
+        return bridge;
+    }
+
     private static int RunShellSmoke(string runDir, Paths paths)
     {
         var preview = Path.Combine(runDir, "pet-preview.png");
@@ -106,7 +124,7 @@ internal static class Program
         Rectangle selfRect = Rectangle.Empty;
         var monitor = new PetMonitor(
             cfg,
-            new FakeBrain(),
+            CreateBrain(runDir),
             Path.Combine(paths.Home(), "logs", "decisions.jsonl"),
             Path.Combine(runDir, "shots"),
             () => selfRect);

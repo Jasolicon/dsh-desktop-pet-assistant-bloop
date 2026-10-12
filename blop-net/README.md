@@ -140,6 +140,22 @@ $dotnet = "$env:LOCALAPPDATA\Microsoft\dotnet\dotnet.exe"   # SDK 没进 PATH，
 里跑的那几节（5h / 5l / 5q / 5y）。三份实现结论必须逐条一致 —— 差别只能是表里写明的"有意不同"，
 或者还没搬完。
 
+## 大脑桥（`brain-bridge/`）：不自己起 dsh，让应用那一侧去问
+
+**姿态**：既然 stdio 那三个接口都要求"我们当父进程"（本机会被拒写 profile），那就反过来 ——
+**让已经在运行的 DSH 应用去问模型**，我们只写一个请求文件、等一个应答文件。
+
+- **插件**（`brain-bridge/`，Host-only bundle）：`dsh plugin --profile desktop add file:<绝对目录>` 安装。
+  它用官方插件 API（`packages/core/agent`）：`ctx.agents.create()` 起一个常驻 agent，
+  收到请求就 `agent.followup({ content: [text, image] })`（**支持内联图片**），
+  等 `whenIdle()` 之后把最后一条 `assistant/message` 的文本写回应答文件。
+- **桌宠侧** `FileBridgeBrain`：写 `req-<id>.json`（含截图路径）、轮询 `ans-<id>.json`。
+  两边约定同一个目录（默认 `%LOCALAPPDATA%\Bloop\brain`；`BLOOP_BRAIN_DIR` 可覆盖，测试用）。
+  两边都"先写 .tmp 再改名"，所以谁也读不到写了一半的文件。
+- **装完不用重启应用**（HMR 会加载新 bundle）；但**改包内容**（例如改 `config.dir`）要重启才生效 ——
+  pnpm 换了磁盘上的包，运行中的进程还用着旧的那份。
+- **卸载**：`dsh plugin --profile desktop remove dsh-blop-brain-bridge`。
+
 ## 进度
 
 | 模块 | 状态 | 验收 |
@@ -161,6 +177,9 @@ $dotnet = "$env:LOCALAPPDATA\Microsoft\dotnet\dotnet.exe"   # SDK 没进 PATH，
 合计：`verify-addtype.ps1` **64/64 项通过**。
 
 ## DSH 现状（2026-10-12 晚，卡住的地方）
+
+> **大脑已接上（2026-10-12 深夜）**：不再自己起 dsh 进程，改成**让 DSH 应用那一侧跑** ——
+> 见下面「大脑桥」一节。这一节保留，作为"为什么不自己起 dsh"的记录。
 
 `DshSession` 已经把协议搬完（`initialize` 必须等响应、`session/prompt` 带 contentBlocks、
 `session.status=idle` 收轮、UTF-8 直写 stdin 基础流、必须持续读 stderr 否则子进程被管道堵死），

@@ -1,0 +1,13 @@
+# 只做一件事：把这个桥挂进 profile。真正的活儿在 index.js 的 apply 里。
+# dir 是桌宠那边的状态目录（和实例锁一样放机器级位置，和桌宠形态无关）。
+- insert:
+    - id: blop-brain-bridge
+      name: dsh-blop-brain-bridge
+      config:
+        # ⚠️ 两边（插件与桌宠）必须约定同一个目录。放机器级位置：和实例锁同理，
+        # 与桌宠的形态/安装位置无关。
+        # （桌宠侧用环境变量 BLOOP_BRAIN_DIR 可覆盖，测试时才用，两边要一起改。）
+        dir: 'C:/Users/62487/AppData/Local/Bloop/brain'
+        provider: deepseek-account
+        model: deepseek-flash
+        pollMs: 300

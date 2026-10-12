@@ -1,0 +1,22 @@
+{
+  "name": "dsh-blop-brain-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "description": "泡泡 · Bloop 的大脑桥：把桌宠那边的提问（含截图）交给本进程里的 agent，再把一句话答案写回去。",
+  "type": "module",
+  "main": "index.js",
+  "license": "PolyForm-Noncommercial-1.0.0",
+  "exports": {
+    ".": "./index.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "cordis.patch.yml"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

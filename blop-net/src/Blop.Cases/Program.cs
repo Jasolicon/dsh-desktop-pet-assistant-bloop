@@ -146,7 +146,21 @@ public static class Program
         Console.WriteLine("配置：" + cfgPath);
         Console.WriteLine("  speakStyle=" + cfg.SpeakStyle + " sampleSeconds=" + cfg.SampleSeconds +
                           " judgeMinSeconds=" + cfg.JudgeMinSeconds + " roastMinSeconds=" + cfg.RoastMinSeconds);
-        var monitor = new PetMonitor(cfg, new FakeBrain(),
+        // 桥可用就走真大脑（agent 跑在 DSH 应用自己的进程里，我们不起任何进程）；
+        // 否则用假大脑 —— 环路本身照样能验。
+        IBrain brain = new FakeBrain();
+        var bridge = new FileBridgeBrain(FileBridgeBrain.DefaultDir(), 180000, Console.WriteLine);
+        if (bridge.Available)
+        {
+            Console.WriteLine("大脑：FileBridgeBrain（桥已装）");
+            brain = bridge;
+        }
+        else
+        {
+            Console.WriteLine("大脑：FakeBrain（没装桥，或用 DG_BRAIN=fake）");
+        }
+
+        var monitor = new PetMonitor(cfg, brain,
             Path.Combine(runDir, "decisions.jsonl"), Path.Combine(runDir, "shots"));
         for (var i = 1; i <= 4; i++)
         {
