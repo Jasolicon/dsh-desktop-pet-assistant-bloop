@@ -16,6 +16,7 @@ import { session as electronSession } from 'electron';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { ROOT, dshPaths, petImage } from './paths.mjs';
+import { acquire, lockPath, release } from './lock.mjs';
 import { loadConfig, saveConfig } from './config.mjs';
 import { askDsh } from './brain.mjs';
 import { createMonitor } from './monitor.mjs';
@@ -446,27 +447,24 @@ function registerIpc() {
   });
 }
 
-// 单实例：第二次启动就唤醒已有那只。
-//
-// ⚠️ 这一句失败时**必须留下痕迹**：requestSingleInstanceLock() 返回 false 有两种原因 ——
-// "已经有另一只在跑"（正常）和"锁文件根本写不出来"（异常，比如目录权限）。
-// 两者都静默 app.quit()，用户看到的就是"双击一闪就没了"，无从下手。实测踩过。
-// PET_NO_LOCK=1 可以跳过（诊断用）。
+// 单实例：机器级锁，**和 PowerShell 版共用同一个锁文件**（见 src/lock.mjs 里的理由）。
+//   · 有另一只活着 → 说清是谁，然后退出（同时只有一只）
+//   · 锁写不出来   → 记一行，继续跑（静默起不来比重一只更糟）
+// PET_NO_LOCK=1 跳过（诊断用：要同时开两只对照时也用得上）。
 const noLock = process.env.PET_NO_LOCK === '1';
-const gotLock = noLock ? true : app.requestSingleInstanceLock();
-log('单实例锁：', noLock ? '跳过（PET_NO_LOCK=1）' : gotLock ? '已获得' : '没拿到 —— 另一个实例在跑，或锁文件写不出来');
-if (!gotLock) {
-  // 拿不到锁时**继续启动**，只在日志里记一笔。
-  // 为什么不像原来那样 app.quit()：这两件事分不开 —— ①真的已经有一只（该退出）
-  // ②锁文件写不出来（权限/杀软，此时退出等于白跑）。原来一律静默退出，
-  // 用户看到的就是"双击闪退"，连一行原因都没有（实测踩过）。
-  // 真起了两只的话，托盘里会看到两个图标，退出其中一个即可。
-  log('按"可能已有一只"继续启动；如果看到两只桌宠，退出其中一只');
-}
-if (gotLock) {
-  app.on('second-instance', () => {
-    if (win) { win.show(); win.focus(); }
-  });
+const lockFile = lockPath();
+let lockHeld = false;
+if (noLock) {
+  log('实例锁：跳过（PET_NO_LOCK=1）');
+} else {
+  const got = acquire(lockFile);
+  lockHeld = got.ok;
+  if (got.ok) {
+    log('实例锁：已获得', lockFile, got.why ? `（${got.why}）` : '');
+  } else {
+    log(`实例锁：已被 pid ${got.holder} 占着 —— 同时只会有一只桌宠，这次退出`);
+    app.quit();
+  }
 }
 
 app.whenReady().then(() => {
@@ -548,5 +546,10 @@ app.whenReady().then(() => {
     powerMonitor.on('unlock-screen', () => monitor?.setStandby(false));
   });
 
-  app.on('will-quit', () => { tray?.destroy(); askWatcher?.stop(); session?.stop(); });
+  app.on('will-quit', () => {
+    if (lockHeld) release(lockFile);        // 只清自己那把（别人的锁不能被我删掉）
+    tray?.destroy();
+    askWatcher?.stop();
+    session?.stop();
+  });
   app.on('window-all-closed', () => app.quit());
