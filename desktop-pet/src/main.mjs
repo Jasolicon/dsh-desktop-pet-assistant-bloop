@@ -405,6 +405,15 @@ function createWindow() {
   });
   win.webContents.on('render-process-gone', (_e, details) => {
     console.error('[pet] 渲染进程退出', JSON.stringify(details));
+    // 崩了就**自己回来**：透明窗口一旦没有渲染进程，屏幕上什么都画不出来，
+    // 用户看到的是"进程还在、桌宠没了"（他长按录音时遇到的就是这个）。
+    // 重载之后最坏情况是回到初始状态，总好过一只看不见的桌宠挂在那儿。
+    try {
+      win.webContents.reload();
+      log('[pet] 渲染进程崩了 → 已自动重载（桌宠应该会自己回来）');
+    } catch (err) {
+      console.error('[pet] 自动重载也没成：', err.message);
+    }
   });
   win.webContents.on('console-message', (_e, level, message) => {
     if (level >= 2) console.error('[renderer]', message);

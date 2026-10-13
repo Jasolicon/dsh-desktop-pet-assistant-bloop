@@ -43,6 +43,15 @@ function setState(state) {
   petEl.dataset.state = state;
 }
 
+// 渲染进程里出的任何错都留个痕：这一侧崩掉的表现是"窗口透明、看着像桌宠没了"，
+// 而控制台没人会去看 —— 打日志至少能在 start.log 里看见是哪一步炸的。
+window.addEventListener('error', (e) => {
+  console.error('[renderer] 未捕获错误：', e.message, e.filename, e.lineno);
+});
+window.addEventListener('unhandledrejection', (e) => {
+  console.error('[renderer] 未处理的 Promise 拒绝：', (e.reason && (e.reason.stack || e.reason.message)) || e.reason);
+});
+
 // ---------------------------------------------------------------------------
 // 窗口跟着内容长：气泡/问答/输入条一出现，窗口就要变高，否则长消息会被裁掉一半。
 // PowerShell 版是 FitToBubble（量完 set 窗口高度）；这里是量完告诉主进程调（见 main.mjs 的 pet:fit）。
@@ -511,7 +520,13 @@ async function beginRecording() {
     const chunks = [];
     proc.onaudioprocess = (e) => chunks.push(new Float32Array(e.inputBuffer.getChannelData(0)));
     src.connect(proc);
-    proc.connect(ctx.destination);
+    // 接一个**零增益**的出口，而不是直接接到扬声器：
+    // 直接接扬声器等于把你的麦克风原样放出来（啸叫 / 回声），某些驱动上还会把音频线程搞炸。
+    // ScriptProcessor 必须有下游节点才会被调用，所以这里要的是"通路存在、音量为零"。
+    const sink = ctx.createGain();
+    sink.gain.value = 0;
+    proc.connect(sink);
+    sink.connect(ctx.destination);
     rec = { stream, ctx, src, proc, chunks };
     setState('listening');
     showBubble('正在听…（松开结束）', 0);
