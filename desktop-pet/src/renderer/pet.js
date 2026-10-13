@@ -17,6 +17,8 @@
 // 整个脚本不执行 —— 表现就是窗口一片透明（实测踩过）。
 const petEl = document.getElementById('pet');
 const bubble = document.getElementById('bubble');
+const bubbleText = document.getElementById('bubbleText');
+const bubbleClose = document.getElementById('bubbleClose');
 const bar = document.getElementById('bar');
 const input = document.getElementById('task');
 const send = document.getElementById('send');
@@ -28,10 +30,53 @@ const askOpts = document.getElementById('askOpts');
 const askInput = document.getElementById('askInput');
 const askSend = document.getElementById('askSend');
 const askBar = document.getElementById('askBar');
+const tools = document.getElementById('tools');
+const tip = document.getElementById('tip');
+const btnAsk = document.getElementById('t-ask');
+const btnChat = document.getElementById('t-chat');
+const btnType = document.getElementById('t-type');
+const btnRegion = document.getElementById('t-region');
+const btnHistory = document.getElementById('t-history');
 
 /** 当前状态 → 光晕颜色由 CSS 管，这里只切 data-state。 */
 function setState(state) {
   petEl.dataset.state = state;
+}
+
+// ---------------------------------------------------------------------------
+// 窗口跟着内容长：气泡/问答/输入条一出现，窗口就要变高，否则长消息会被裁掉一半。
+// PowerShell 版是 FitToBubble（量完 set 窗口高度）；这里是量完告诉主进程调（见 main.mjs 的 pet:fit）。
+//
+// 只改高度、且**保持底边不动** —— 桌宠站在屏幕底边，长高应该是"往上长"，
+// 而不是整只往下挪（那样每来一条消息它就往屏幕外爬一点）。
+// ---------------------------------------------------------------------------
+/** 量一次"现在这些可见的块加起来要多高"。 */
+function measureNeeded() {
+  const stage = document.getElementById('stage');
+  const kids = [...stage.children].filter((el) => !el.classList.contains('hidden') && el.offsetHeight > 0);
+  if (!kids.length) return 0;
+  const style = getComputedStyle(stage);
+  const gap = parseFloat(style.rowGap || style.gap) || 0;
+  const pad = (parseFloat(style.paddingTop) || 0) + (parseFloat(style.paddingBottom) || 0);
+  return Math.ceil(kids.reduce((a, el) => a + el.offsetHeight, 0) + gap * (kids.length - 1) + pad);
+}
+
+let lastFit = 0;
+function petFit() {
+  const needed = measureNeeded();
+  if (!needed) return;
+  if (needed !== lastFit) {
+    lastFit = needed;
+    window.pet.fit(needed);
+  }
+  // 再过一帧复量：字体/换行有时要到下一帧才定下来，差那几个像素的后果就是顶上那行被裁掉。
+  requestAnimationFrame(() => {
+    const again = measureNeeded();
+    if (again && again !== lastFit) {
+      lastFit = again;
+      window.pet.fit(again);
+    }
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -60,11 +105,30 @@ function setState(state) {
 let bubbleOwner = null;
 function showBubble(text, ms = 12000, owner = null) {
   bubbleOwner = owner;
-  bubble.textContent = text;
+  bubbleText.textContent = text;
   bubble.classList.remove('hidden');
+  petFit();
   clearTimeout(showBubble.timer);
-  if (ms > 0) showBubble.timer = setTimeout(() => bubble.classList.add('hidden'), ms);
+  if (ms > 0) {
+    showBubble.timer = setTimeout(() => {
+      hideBubble();
+    }, ms);
+  }
 }
+
+/** 收起气泡（并让窗口跟着收回去）。**只在这里收** —— 免得有的地方忘了同时调 petFit。 */
+function hideBubble() {
+  clearTimeout(showBubble.timer);
+  bubble.classList.add('hidden');
+  bubbleOwner = null;
+  petFit();
+}
+
+/** 气泡右上角那个 ×：收起（PowerShell 版同一件事：CollapseRequested）。 */
+bubbleClose.addEventListener('click', (e) => {
+  e.stopPropagation();
+  hideBubble();
+});
 
 // ---------------------------------------------------------------------------
 // 朗读：把**结论句**读出来。
@@ -119,7 +183,7 @@ window.pet.onSpeak((text) => {
 });
 
 // 「看它判过什么」：把判断记录画成一张卡片（不翻日志就能看）
-window.pet.onShowDecisions(async () => {
+async function showDecisionsCard() {
   const { rows, stats, why } = await window.pet.decisions();
   if (why) { showBubble(`读不到判断记录：${why}`, 8000); return; }
   if (!rows || rows.length === 0) { showBubble('还没有判断记录。', 6000); return; }
@@ -133,7 +197,9 @@ window.pet.onShowDecisions(async () => {
     return `${t} 说了 · ${String(r.text || '').slice(0, 40)}`;
   });
   showBubble([head, sub, '———', ...lines].join('\n'), 25000);
-});
+}
+
+window.pet.onShowDecisions(() => showDecisionsCard());
 
 // ---------------------------------------------------------------------------
 // 选项问答 / 审批：DSH 问过来的问题，直接在球上点
@@ -151,6 +217,7 @@ function hideAsk() {
   askOpts.replaceChildren();
   askInput.value = '';
   askBar.style.transform = 'scaleX(1)';
+  petFit();
 }
 
 function submitAsk(choice) {
@@ -175,6 +242,7 @@ window.pet.onAsk((prompt) => {
   // 「稍后」= 不回答；其余选项是真正要写回 DSH 的回答
   askInput.placeholder = (prompt.options || []).length ? '也可以自己写…' : '写一句回答…';
   ask.classList.remove('hidden');
+  petFit();
   askInput.focus();
 
   const seconds = Number(prompt.seconds) > 0 ? Number(prompt.seconds) : 45;
@@ -198,8 +266,7 @@ window.pet.onSubagents((line) => {
   if (line) {
     showBubble(`（${line}）`, 0, 'subagents');
   } else if (bubbleOwner === 'subagents') {
-    bubble.classList.add('hidden');
-    bubbleOwner = null;
+    hideBubble();
   }
 });
 
@@ -223,7 +290,7 @@ askInput.addEventListener('keydown', (e) => {
 // ---------------------------------------------------------------------------
 // 1) 鼠标穿透：只有指针落在真控件上才让窗口接收鼠标
 // ---------------------------------------------------------------------------
-const INTERACTIVE = [petEl, bubble, bar, ask];   // ask 也要拦鼠标，否则按钮点不到
+const INTERACTIVE = [petEl, bubble, bar, ask, tools];   // ask / tools 也要拦鼠标，否则按钮点不到
 let hovering = false;
 function updateHover(target) {
   const on = INTERACTIVE.some((el) => !el.classList.contains('hidden') && (el === target || el.contains(target)));
@@ -250,6 +317,9 @@ petEl.addEventListener('mousedown', (e) => {
   window.pet.userAction();
   dragFrom = { x: e.screenX, y: e.screenY, moved: false };
   petEl.style.cursor = 'grabbing';
+  // 弹性按压的第一半：按住就压扁（锚在底边中点，见 pet.css）
+  petEl.classList.remove('pop');
+  petEl.classList.add('press');
   // 按住不动 400ms = 开始说话（和"点一下说一句"共用一个手势，靠时长区分）
   holdTimer = setTimeout(() => {
     holdTimer = null;
@@ -271,8 +341,16 @@ window.addEventListener('mousemove', (e) => {
 
 window.addEventListener('mouseup', () => {
   if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
+  // 第二半：松手从"压扁"过冲到"略拉长"再收住（拖动过就不弹 —— 那是搬家，不是摸它）
+  const poke = !!dragFrom && !dragFrom.moved;
+  petEl.classList.remove('press');
+  if (poke) {
+    petEl.classList.remove('pop');
+    void petEl.offsetWidth;      // 强制重排：不然连点两下，第二次动画不会重播
+    petEl.classList.add('pop');
+  }
   if (rec) { finishRecording(); dragFrom = null; petEl.style.cursor = 'grab'; return; }
-  if (dragFrom && !dragFrom.moved) {
+  if (poke) {
     // 正在朗读时点一下 = 打断（而不是再让它说一句）——和 PowerShell 版的"双击打断"同义
     if (window.speechSynthesis && window.speechSynthesis.speaking) {
       window.speechSynthesis.cancel();
@@ -282,6 +360,10 @@ window.addEventListener('mouseup', () => {
   }
   dragFrom = null;
   petEl.style.cursor = 'grab';
+});
+
+petEl.addEventListener('animationend', (e) => {
+  if (e.animationName === 'pop') petEl.classList.remove('pop');
 });
 
 // ---------------------------------------------------------------------------
@@ -322,7 +404,7 @@ async function finishRecording() {
   const total = r.chunks.reduce((a, c) => a + c.length, 0);
   if (total < rate * 0.3) {           // 比 0.3 秒还短当作没说话（和 sttMinSeconds 同义）
     setState('idle');
-    bubble.classList.add('hidden');
+    hideBubble();
     return;
   }
   const samples = new Float32Array(total);
@@ -365,6 +447,38 @@ petEl.addEventListener('contextmenu', (e) => {
 });
 
 // ---------------------------------------------------------------------------
+// 2b) 拖东西到宠物身上（文件 / 文字 / 网址）—— PowerShell 版也吃这一口（AllowDrop）
+//
+// 拖进来之后**不直接开跑**：把内容填进"打字派活"那个框里等回车。
+// 理由：拖拽是最容易误触的入口（手滑拖到宠物身上很常见），而派活是**真动用户电脑**的事；
+// 让用户看见"要派的是什么"再回车，比"拖上去它就开始干"安全得多。
+// ---------------------------------------------------------------------------
+document.addEventListener('dragover', (e) => {
+  e.preventDefault();
+  if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+});
+
+document.addEventListener('drop', (e) => {
+  e.preventDefault();
+  const files = [...(e.dataTransfer?.files || [])].map((f) => f.path).filter(Boolean);
+  const text = String(e.dataTransfer?.getData('text') || '').trim();
+  const payload = (files.length ? files.join(' ') : text).trim();
+  if (!payload) return;
+  toggleBar(true);
+  input.value = payload;
+  input.focus();
+  const head = files.length ? `拖进来 ${files.length} 个文件` : '拖进来一段文字';
+  showBubble(`${head}：\n${payload.slice(0, 120)}\n\n（确认没问题就回车，它按这条去做）`, 15000);
+});
+
+// Esc = 收起气泡（气泡上那个 × 的键盘等价物）
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !bubble.classList.contains('hidden')) {
+    hideBubble();
+  }
+});
+
+// ---------------------------------------------------------------------------
 // 3) 两条能力：说一句 / 打字派活
 // ---------------------------------------------------------------------------
 async function askSay() {
@@ -380,7 +494,7 @@ async function askSay() {
   if (/^\W*SILENT\W*$/i.test(r.text)) {
     setState('silent');
     showBubble('', 0);
-    bubble.classList.add('hidden');
+    hideBubble();
     return;
   }
   setState('speaking');
@@ -391,6 +505,8 @@ async function askSay() {
 function toggleBar(show) {
   const willShow = show ?? bar.classList.contains('hidden');
   bar.classList.toggle('hidden', !willShow);
+  petFit();
+  refreshToolbar();          // 输入条开着时，按钮条上「打字派活」那格要亮着
   if (willShow) {
     input.focus();
     updateHover(input);
@@ -437,4 +553,133 @@ input.addEventListener('keydown', (e) => {
 window.pet.info().then((info) => {
   console.log('[renderer] dsh =', info.paths);
   if (!info.paths.exe) showBubble('没找到 DSH：设环境变量 DG_DSH_ROOT 指一下安装位置。', 0);
+});
+
+// ---------------------------------------------------------------------------
+// 4) 底部功能按钮条：五个图标 + 悬停提示 + "开着"高亮
+//
+// 为什么图标还有提示：图标是省空间的手段，不是猜谜 —— 悬停 0.1 秒就给出全名。
+// 五个按钮对应 PowerShell 版那一排，**顺序和含义都不改**：
+//   问一句 / 对话 / 打字派活 / 框选监控区域 / 看它判过什么
+// 「框选」那格右键 = 取消框选（PS 里这条在右键菜单的「更多」下，这里多给一条捷径，
+// 因为"框错了想撤销"是当场就会发生的念头）。
+// ---------------------------------------------------------------------------
+let toolbarState = { region: null, chat: false };
+
+function regionLabel() {
+  const r = toolbarState.region;
+  if (r && r.w) return `框选监控区域（现在是 ${r.w}×${r.h}，右键取消）`;
+  return '框选监控区域';
+}
+
+function refreshToolbar() {
+  btnType.classList.toggle('on', !bar.classList.contains('hidden'));
+  btnChat.classList.toggle('on', !!toolbarState.chat);
+  btnRegion.classList.toggle('on', !!(toolbarState.region && toolbarState.region.w));
+  btnRegion.dataset.label = regionLabel();
+}
+
+function showTip(btn) {
+  const stage = document.getElementById('stage');
+  const r = btn.getBoundingClientRect();
+  const s = stage.getBoundingClientRect();
+  tip.textContent = btn.dataset.label || '';
+  tip.classList.remove('hidden');
+  // 贴着这块按钮居中，但别越出窗口（最边上的那两格会往回收）
+  const tw = tip.offsetWidth;
+  const center = r.left - s.left + r.width / 2;
+  tip.style.left = `${Math.min(Math.max(center, tw / 2 + 2), s.width - tw / 2 - 2)}px`;
+  tip.style.bottom = `${s.bottom - r.top + 5}px`;
+}
+
+function hideTip() { tip.classList.add('hidden'); }
+
+for (const btn of tools.querySelectorAll('button')) {
+  btn.addEventListener('mouseenter', () => showTip(btn));
+  btn.addEventListener('mouseleave', hideTip);
+  btn.addEventListener('blur', hideTip);
+}
+
+btnAsk.addEventListener('click', () => { hideTip(); askSay(); });
+
+btnType.addEventListener('click', () => {
+  hideTip();
+  // 和双击宠物同一条路：点一次开、再点一次收起（以前只有"开"那半边）
+  toggleBar();
+});
+
+btnHistory.addEventListener('click', () => { hideTip(); showDecisionsCard(); });
+
+btnChat.addEventListener('click', async () => {
+  hideTip();
+  setState('thinking');
+  showBubble('正在开对话窗口（第一次要起 DSH 的 Web 服务，约十秒）…', 0);
+  const r = await window.pet.chat();
+  toolbarState.chat = !!r.open;
+  refreshToolbar();
+  if (!r.ok) {
+    setState('silent');
+    showBubble(`（对话窗口没开起来：${r.why}）`, 12000);
+    return;
+  }
+  setState('idle');
+  showBubble(r.open ? '（对话窗口开着，再点这格收起）' : '（对话窗口已收起）', 4000);
+});
+
+btnRegion.addEventListener('click', async () => {
+  hideTip();
+  const r = await window.pet.pickRegion();
+  if (r.cancelled) {
+    showBubble('已取消框选，监控区域不变。', 6000);
+    return;
+  }
+  toolbarState.region = r.region;
+  refreshToolbar();
+  showBubble(`监控区域已设为 ${r.region.w}×${r.region.h}\n以后只截图这一块（省 token，也更私密）。`, 8000);
+});
+
+// 右键那一格 = 取消框选（框错了要能当场撤销，别逼用户去翻菜单）
+btnRegion.addEventListener('contextmenu', async (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  hideTip();
+  if (!toolbarState.region) { showBubble('现在没有框选区域（本来就在看整屏）。', 5000); return; }
+  await window.pet.clearRegion();
+  toolbarState.region = null;
+  refreshToolbar();
+  showBubble('监控区域已取消，恢复抓整个屏幕。', 6000);
+});
+
+// 主进程那边区域/对话窗口的状态变了（比如从设置窗口或右键菜单改的）→ 亮灯跟着变
+window.pet.onToolbar((s) => {
+  toolbarState = { ...toolbarState, ...(s || {}) };
+  refreshToolbar();
+});
+
+// 右键菜单里的那两条（菜单在主进程，动作在这边）——和按钮走同一条路
+window.pet.onSayCmd(() => askSay());
+window.pet.onTypeCmd(() => toggleBar(true));
+
+/** 应用"外观类"配置（字号 / 字体 / 按钮条）。设置窗口保存后主进程会推一遍新的。 */
+function applyLook(info) {
+  if (!info) return;
+  const px = Number(info.fontSize);
+  if (px > 3) document.documentElement.style.setProperty('--bubble-size', `${px}px`);
+  if (info.fontFamily) {
+    document.documentElement.style.setProperty('--ui-font', `"${info.fontFamily}", "Microsoft YaHei UI", "Segoe UI", sans-serif`);
+  }
+  tools.classList.toggle('hidden', info.showToolbar === false);
+  petFit();
+}
+
+window.pet.onSettingsChanged((next) => {
+  applyLook(next);
+  toolbarState.region = next?.region ?? toolbarState.region;
+  refreshToolbar();
+});
+
+window.pet.info().then((info) => {
+  applyLook(info);
+  toolbarState.region = info.region ?? null;
+  refreshToolbar();
 });

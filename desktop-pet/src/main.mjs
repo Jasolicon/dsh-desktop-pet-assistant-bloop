@@ -11,7 +11,7 @@
  *   还没搬的    ：屏幕采样与本地闸门、语音（STT）、朗读（TTS）、选项问答、子 agent 观察
  * 没搬的那些在 desktop-guide/ 里仍然可用；两边的路径解析是**同一套规则**（paths.ps1 / paths.mjs）。
  */
-import { app, BrowserWindow, ipcMain, Menu, nativeImage, powerMonitor, screen, shell, Tray } from 'electron';
+import { app, BrowserWindow, globalShortcut, ipcMain, Menu, nativeImage, powerMonitor, screen, shell, Tray } from 'electron';
 import { session as electronSession } from 'electron';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -27,6 +27,10 @@ import { transcribe } from './stt.mjs';
 import { route } from './router.mjs';
 import { createAskWatcher } from './ask.mjs';
 import { createSubagentTracker, describeSubagents } from './subagents.mjs';
+import { pickRegion } from './region-picker.mjs';
+import { describeRegion } from './region.mjs';
+import { startWebUi, stopWebUi } from './webui.mjs';
+import { autostartCommand, disable as disableAutostart, enable as enableAutostart, isEnabled as autostartOn } from './autostart.mjs';
 
 let win = null;
 let cfg = loadConfig();
@@ -40,6 +44,10 @@ let askWatcher = null;
 let subagents = null;
 /** 托盘图标。桌宠窗口 skipTaskbar + 可以隐藏，没有它"隐藏"就等于找不回来了。 */
 let tray = null;
+/** 「对话」窗口（DSH 自己的 Web 界面）。点一次开、再点一次收起 —— 和 PowerShell 版同一条语义。 */
+let chatWin = null;
+/** 对话窗口开着时正忙（正在起 DSH Web 服务）：防连点开两次 */
+let chatBusy = false;
 /** 暂停 = 关掉观察循环（不采样、不判断、不自动开口）。手动点它"说一句"仍然有效。 */
 let paused = false;
 /** 观察循环这次启动到底开没开（PET_NO_AUTO=1 时不启动，“继续”也不该把它拉起来）。 */
@@ -77,8 +85,21 @@ function refreshTray() {
     { label: visible ? '隐藏桌宠' : '显示桌宠', click: toggleVisible },
     { label: paused ? '继续（恢复观察）' : '暂停（停止观察）', click: () => setPaused(!paused) },
     { type: 'separator' },
+    { label: '对话', click: () => { showPet(); void toggleChatWindow(); } },
+    { label: '打字派活…', click: () => { showPet(); win?.webContents.send('pet:typeCmd'); } },
     { label: '看它判过什么', click: () => { showPet(); win?.webContents.send('pet:showDecisions'); } },
+    {
+      label: cfg.region ? `框选监控区域…（现在是 ${describeRegion(cfg.region)}）` : '框选监控区域…',
+      click: () => { void pickRegionNow(); },
+    },
+    { label: '取消监控区域', enabled: !!cfg.region, click: () => clearRegionNow() },
     { label: '设置…', click: () => openSettingsWindow() },
+    {
+      label: '开机启动（跟 Windows 一起起）',
+      type: 'checkbox',
+      checked: autostartEnabled(),
+      click: (item) => toggleAutostart(item.checked),
+    },
     // 设置窗口改的是 config.json；这个只是"把那个目录打开"，改动还是靠编辑器
     { label: '打开配置目录（文件夹）', click: () => shell.openPath(dataDir()) },
     { type: 'separator' },
@@ -149,9 +170,15 @@ async function ask(text, { imagePaths = [] } = {}) {
 
 function createWindow() {
   const { workArea } = screen.getPrimaryDisplay();
-  const [w, h] = [cfg.petWidth || 220, 260];
+  // 窗口尺寸要**装得下**最宽的那一行：宠物本体 / 气泡 / 底部那排按钮
+  // （5×40 + 4×5 = 220，两边各 8 的留白）。以前只按宠物宽度算，加按钮条时按钮会被裁掉一截。
+  const toolsW = 5 * 40 + 4 * 5 + 16;
+  const [w, h] = [Math.max(cfg.petWidth || 220, toolsW), 480];
   const x = typeof cfg.x === 'number' ? cfg.x : Math.round(workArea.x + (workArea.width - w) / 2);
-  const y = typeof cfg.y === 'number' ? cfg.y : Math.round(workArea.y + workArea.height - h - 8);
+  // 位置优先按"底边"还原（窗口高度会随内容变，只认 y 会让桌宠上下飘，见 config.mjs 的 bottom）
+  const y = typeof cfg.bottom === 'number'
+    ? Math.round(cfg.bottom - h)
+    : (typeof cfg.y === 'number' ? cfg.y : Math.round(workArea.y + workArea.height - h - 8));
 
   win = new BrowserWindow({
     width: w,
@@ -186,6 +213,8 @@ function createWindow() {
   win.webContents.on('console-message', (_e, level, message) => {
     if (level >= 2) console.error('[renderer]', message);
   });
+  // 页面就绪后把"哪几格灯亮着"推过去（按钮条的高亮状态）
+  win.webContents.on('did-finish-load', pushToolbar);
 
   // 开发用：设了 PET_DEBUG_CAPTURE=<png 路径> 就把页面渲染结果存下来再退出。
   // 为什么需要它：桌面截图走 BitBlt，**拍不到透明的置顶窗口**（实测：窗口明明在 z=02，
@@ -193,8 +222,14 @@ function createWindow() {
   if (process.env.PET_DEBUG_CAPTURE) {
     win.webContents.once('did-finish-load', async () => {
       await new Promise((r) => setTimeout(r, 1500));
+      // PET_DEBUG_BUBBLE=<一段文字>：截图前先放一条气泡出来（看气泡排版/那个 × 时用）
+      if (process.env.PET_DEBUG_BUBBLE) {
+        win.webContents.send('pet:speak', process.env.PET_DEBUG_BUBBLE);
+        await new Promise((r) => setTimeout(r, 800));
+      }
       try {
         const img = await win.webContents.capturePage();
+        log('[debug] 快照前窗口 =', JSON.stringify(win.getBounds()), '缩放 =', screen.getPrimaryDisplay().scaleFactor);
         writeFileSync(process.env.PET_DEBUG_CAPTURE, img.toPNG());
         log('渲染快照已保存:', process.env.PET_DEBUG_CAPTURE);
       } catch (err) {
@@ -229,12 +264,72 @@ function createWindow() {
     });
   }
 
+  // 开发用：设了 PET_DEBUG_TOOLBAR=1 就把底部那排按钮过一遍：
+  //   · 悬停时提示条有没有出来、文字对不对
+  //   · 「打字派活」点一次开、再点一次收（那格灯跟着亮灭）
+  //   · 摸一下宠物：按住 = 压扁（.press），松手 = 弹回来（.pop 且 .press 已摘掉）
+  // 这三件全是"看得见才算数"的东西，静态代码看不出来；和 PET_DEBUG_TOGGLE 同一个理由。
+  if (process.env.PET_DEBUG_TOOLBAR) {
+    win.webContents.once('did-finish-load', async () => {
+      try {
+        const out = await win.webContents.executeJavaScript(`(async () => {
+          const pet = document.getElementById('pet');
+          const bar = document.getElementById('bar');
+          const tip = document.getElementById('tip');
+          const typeBtn = document.getElementById('t-type');
+          const regionBtn = document.getElementById('t-region');
+          const r = {};
+
+          // 1) 悬停提示
+          regionBtn.dispatchEvent(new MouseEvent('mouseenter', { bubbles: false }));
+          r.提示可见 = !tip.classList.contains('hidden');
+          r.提示文字 = tip.textContent;
+          regionBtn.dispatchEvent(new MouseEvent('mouseleave', { bubbles: true }));
+          r.离开后收起 = tip.classList.contains('hidden');
+
+          // 2) 打字派活：开 → 关（以前只有"开"那半边，双击关不掉）
+          typeBtn.click(); r.开输入条 = !bar.classList.contains('hidden'); r.开时那格亮 = typeBtn.classList.contains('on');
+          typeBtn.click(); r.再点收起 = bar.classList.contains('hidden'); r.收后那格灭 = !typeBtn.classList.contains('on');
+
+          // 3) 弹性按压：按住压扁、松手弹回
+          //    （把 speaking 打成 true，让"松手"走**打断朗读**那条分支 ——
+          //      否则它会真的去问一句，这个自检就变成一次真模型调用了）
+          try { Object.defineProperty(window.speechSynthesis, 'speaking', { get: () => true }); } catch { }
+          pet.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0 }));
+          r.按住 = pet.classList.contains('press');
+          window.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+          r.松手摘掉压扁 = !pet.classList.contains('press');
+          r.松手弹回来 = pet.classList.contains('pop');
+
+          // 4) 长消息 → 窗口要跟着变高（否则长文案被裁掉一半）
+          window.showBubble('长消息测试：' + '这一步会写满好几行。'.repeat(4), 0);
+          await new Promise((res) => setTimeout(res, 60));
+          const stage = document.getElementById('stage');
+          const kids = [...stage.children].filter((el) => !el.classList.contains('hidden') && el.offsetHeight > 0);
+          const st = getComputedStyle(stage);
+          r.需要的高度 = Math.ceil(kids.reduce((a, el) => a + el.offsetHeight, 0)
+            + (parseFloat(st.rowGap || st.gap) || 0) * (kids.length - 1)
+            + (parseFloat(st.paddingTop) || 0) + (parseFloat(st.paddingBottom) || 0));
+          r.明细 = kids.map((el) => el.id + '=' + el.offsetHeight).join(' ');
+          return r;
+        })()`);
+        // 给主进程一点时间真的把窗口调过去，然后把两个高度都打出来对照
+        await new Promise((r) => setTimeout(r, 400));
+        log('[debug] 按钮条与弹性按压:', JSON.stringify(out, null, 0));
+        log('[debug] 窗口高度 =', win.getBounds().height, '（渲染进程算出来的需要值 =', out?.需要的高度, '）');
+      } catch (err) {
+        console.error('[pet][debug] 按钮条自检失败', err);
+      }
+      app.quit();
+    });
+  }
+
   // 初始整窗穿透；渲染进程在鼠标移到宠物身上时打开
   win.setIgnoreMouseEvents(true, { forward: true });
 
   win.on('moved', () => {
     const [nx, ny] = win.getPosition();
-    cfg = { ...cfg, x: nx, y: ny };
+    cfg = { ...cfg, x: nx, y: ny, bottom: ny + win.getSize()[1] };
     saveConfig(cfg);
   });
 
@@ -252,6 +347,142 @@ function sayPrompt() {
     '如果你此刻确实看到一件值得现在说、且用户自己很可能没注意到的事，就只输出那一句话，最多两行，不要客套。',
     '如果没有值得说的，就只输出 SILENT 这一个词。',
   ].join('\n');
+}
+
+// ---------------------------------------------------------------------------
+// 底部那排按钮要的两个"开/关"状态；以及它们背后的两个窗口/动作
+//   · 对话：DSH 自己的 Web 界面（见 src/webui.mjs），点一次开、再点一次收起
+//   · 框选监控区域：铺一层遮罩拖一个矩形（见 src/region-picker.mjs）
+// ---------------------------------------------------------------------------
+function chatOpen() {
+  return !!chatWin && !chatWin.isDestroyed() && chatWin.isVisible();
+}
+
+/** 把"哪几格灯亮着"推给渲染进程（它自己知道输入条那格，这边管另外两格）。 */
+function pushToolbar() {
+  win?.webContents.send('pet:toolbar', { region: cfg.region || null, chat: chatOpen() });
+}
+
+/**
+ * 打开 / 收起对话窗口。
+ *
+ * 为什么用 DSH 自己的 Web 界面而不是自绘聊天：Markdown、工具卡片、流式输出、
+ * 审批按钮都得自己重画一遍，而发行包里本来就带这套界面（PowerShell 版也是这么做的，
+ * 见 desktop-guide/web-ui.ps1）。这里只是把"开一个窗口指向它"从 Edge 换成 Electron。
+ */
+async function toggleChatWindow() {
+  if (chatBusy) return { ok: false, open: chatOpen(), why: '正在起对话服务，等一下' };
+  if (chatOpen()) {
+    chatWin.hide();                       // 收起窗口，**不关**服务（下次点开秒回）
+    pushToolbar();
+    return { ok: true, open: false };
+  }
+  chatBusy = true;
+  try {
+    const svc = await startWebUi(cfg, { logger: console });
+    if (!svc.ok) return { ok: false, open: false, why: svc.why };
+
+    // 已经开着（只是被收起了）→ 直接显回来，别开第二个
+    if (chatWin && !chatWin.isDestroyed()) {
+      chatWin.loadURL(svc.url).catch(() => { /* 载入失败后续会自己显出来 */ });
+      chatWin.show();
+      chatWin.focus();
+      pushToolbar();
+      return { ok: true, open: true };
+    }
+
+    const pet = win?.getBounds();
+    const width = Number(cfg.chatWidth) > 0 ? Number(cfg.chatWidth) : 560;
+    const height = Number(cfg.chatHeight) > 0 ? Number(cfg.chatHeight) : 800;
+    // 贴着桌宠的左边放（和 PowerShell 版一样）—— 桌宠通常在右下角，窗口在它左侧最顺手
+    const x = pet ? Math.max(0, pet.x - width - 8) : undefined;
+    const y = pet ? Math.max(0, pet.y + pet.height - height) : undefined;
+    chatWin = new BrowserWindow({
+      width,
+      height,
+      x,
+      y,
+      title: '对话 · 泡泡',
+      autoHideMenuBar: true,
+      backgroundColor: '#ffffff',
+      webPreferences: { contextIsolation: true, nodeIntegration: false },
+    });
+    chatWin.loadURL(svc.url).catch((err) => log('对话窗口载入失败：', err.message));
+    chatWin.on('closed', () => { chatWin = null; pushToolbar(); });
+    chatWin.on('show', pushToolbar);
+    chatWin.on('hide', pushToolbar);
+    chatWin.on('minimize', pushToolbar);
+    chatWin.on('restore', pushToolbar);
+    return { ok: true, open: true };
+  } catch (err) {
+    return { ok: false, open: false, why: err.message };
+  } finally {
+    chatBusy = false;
+  }
+}
+
+/** 框选监控区域：铺遮罩 → 用户拖一个矩形 → 立刻生效并落盘。 */
+async function pickRegionNow() {
+  const wasVisible = !!win?.isVisible();
+  win?.hide();                            // 别把桌宠自己也框进去（PowerShell 版同样处理）
+  let result;
+  try {
+    result = await pickRegion({ logger: console });
+  } catch (err) {
+    log('框选出错：', err.message);
+    result = { cancelled: true, region: null };
+  }
+  if (wasVisible) win?.show();
+  if (result?.cancelled) return { cancelled: true, region: cfg.region || null };
+
+  cfg = { ...cfg, region: result.region };
+  try { saveConfig(cfg); } catch (err) { log('区域存不进去（这次仍然生效）：', err.message); }
+  monitor?.setRegion(cfg.region);
+  pushToolbar();
+  log(`监控区域：${describeRegion(cfg.region)}`);
+  return { cancelled: false, region: cfg.region };
+}
+
+/** 取消框选，回到整屏。 */
+function clearRegionNow() {
+  cfg = { ...cfg, region: null };
+  try { saveConfig(cfg); } catch (err) { log('区域存不进去（这次仍然生效）：', err.message); }
+  monitor?.setRegion(null);
+  pushToolbar();
+  log('监控区域：整屏');
+  return { ok: true, region: null };
+}
+
+// ---------------------------------------------------------------------------
+// 开机启动（HKCU\...\Run，不需要管理员权限；见 src/autostart.mjs）
+// ---------------------------------------------------------------------------
+function autostartCmd() {
+  return autostartCommand({ exe: process.execPath, appPath: app.getAppPath(), packaged: app.isPackaged });
+}
+
+function autostartEnabled() {
+  return autostartOn(autostartCmd());
+}
+
+/** 勾/取消「开机启动」。返回 {ok, on, why} —— 失败要说清原因，不能默默没写进去。 */
+function toggleAutostart(want) {
+  if (want) {
+    const r = enableAutostart(autostartCmd());
+    if (!r.ok) {
+      log('写开机启动失败：', r.why);
+      return { ok: false, on: autostartEnabled(), why: r.why };
+    }
+    log('已设为开机启动：', autostartCmd());
+  } else {
+    const r = disableAutostart();
+    if (!r.ok) {
+      log('删开机启动失败：', r.why);
+      return { ok: false, on: autostartEnabled(), why: r.why };
+    }
+    log('已取消开机启动');
+  }
+  refreshTray();
+  return { ok: true, on: autostartEnabled() };
 }
 
 /**
@@ -332,6 +563,26 @@ function registerIpc() {
     win.setPosition(Math.round(x + dx), Math.round(y + dy));
   });
 
+  /**
+   * 内容变长/变短 → 调窗口高度（渲染进程量完报过来，见 pet.js 的 petFit）。
+   *
+   * 两个约束，缺一个就会出怪现象：
+   *   · **底边不动**：桌宠站在屏幕底边，长高该是往上长。不锚底边的话，
+   *     每来一条长消息它整只往下挪一截，几次之后就爬出屏幕了。
+   *   · **封顶**（工作区的 80%）：一条超长消息不该让窗口变成一个盖住半屏的透明大块。
+   */
+  ipcMain.on('pet:fit', (_e, desired) => {
+    if (!win) return;
+    const want = Math.round(Number(desired) || 0);
+    if (process.env.PET_DEBUG_TOOLBAR) log('[debug] fit ←', want);
+    if (!want) return;
+    const { x, y, width, height } = win.getBounds();
+    const area = screen.getDisplayNearestPoint({ x: x + Math.round(width / 2), y: Math.round(y + height / 2) }).workArea;
+    const next = Math.max(160, Math.min(want, Math.round(area.height * 0.8)));
+    if (next === height) return;
+    win.setBounds({ x, y: Math.max(area.y, y + height - next), width, height: next });
+  });
+
   ipcMain.handle('pet:info', () => ({
     paths: dshPaths(cfg),
     image: petImage(cfg),
@@ -339,9 +590,25 @@ function registerIpc() {
     electron: process.versions.electron,
     node: process.versions.node,
     monitor: monitor?.snapshot() ?? null,
+    // 底部按钮条要的两件事：区域设了没（那格灯亮不亮）、整条要不要显示
+    region: cfg.region || null,
+    showToolbar: cfg.showToolbar !== false,
   }));
 
   ipcMain.handle('pet:status', () => monitor?.snapshot() ?? null);
+
+  // 「对话」：点一次开、再点一次收起（收的是窗口，服务还在 —— 下次点开秒回）
+  ipcMain.handle('pet:chat', () => {
+    monitor?.noteUserAction(cfg.userQuietSeconds || 6);
+    return toggleChatWindow();
+  });
+
+  // 「框选监控区域」/「取消框选」
+  ipcMain.handle('pet:pickRegion', () => {
+    monitor?.noteUserAction(cfg.userQuietSeconds || 6);
+    return pickRegionNow();
+  });
+  ipcMain.handle('pet:clearRegion', () => clearRegionNow());
 
   /** 用户在气泡上点了一个选项（或自己写了内容）。 */
   ipcMain.handle('pet:answer', (_e, choice) => {
@@ -511,11 +778,25 @@ ipcMain.handle('settings:save', (_e, values) => {
   }
   try {
     saveConfig(cfg);
+    // 有些键改完要顺手把"看得见的东西"跟着更新，否则会出现"配置改了、界面还是老的"
+    if (changed) {
+      pushToolbar();                                        // 区域/按钮条的灯
+      monitor?.reload();                                    // 采样间隔这类"定时器周期"要重建才生效
+      win?.webContents.send('pet:settingsChanged', cfg);    // 渲染进程按需重读（例如字号）
+    }
     return { ok: true, changed };
   } catch (err) {
     return { ok: false, why: String((err && err.message) || err), changed };
   }
 });
+
+// 设置窗口里「监控区域」那一行的两个动作（框选 / 恢复整屏）——和按钮条走同一套实现，
+// 免得两处各写一遍、行为漂移（PowerShell 版这块踩过：四个入口改了三个）
+ipcMain.handle('settings:pickRegion', async () => {
+  const r = await pickRegionNow();
+  return { cancelled: !!r.cancelled, region: cfg.region || null };
+});
+ipcMain.handle('settings:clearRegion', () => clearRegionNow());
 
   ipcMain.on('pet:menu', () => {
     if (!win) return;
@@ -523,7 +804,30 @@ ipcMain.handle('settings:save', (_e, values) => {
     Menu.buildFromTemplate([
       { label: `资源：${p.root ? '已找到 DSH' : '未找到 DSH'}`, enabled: false },
       { type: 'separator' },
+      // 顶层这几条和 PowerShell 版一致：常用的动作放前面，开关类收进「设置…」
+      { label: '现在说一句', click: () => win.webContents.send('pet:speakCmd') },
+      { label: '对话', click: () => { void toggleChatWindow(); } },
+      { label: '打字派活（和说话同一条路）', click: () => { showPet(); win.webContents.send('pet:typeCmd'); } },
+      { type: 'separator' },
       { label: '看它判过什么', click: () => win.webContents.send('pet:showDecisions') },
+      {
+        label: cfg.region ? `框选监控区域…（现在是 ${describeRegion(cfg.region)}）` : '框选监控区域…',
+        click: () => { void pickRegionNow(); },
+      },
+      { label: '取消监控区域', enabled: !!cfg.region, click: () => clearRegionNow() },
+      // 待机卡住时的手动出口：系统通知漏发会让它一直以为在待机，点这一下就重新看一眼
+      { label: '我是醒着的（现在就看一眼）', click: () => { monitor?.wake(); log('手动唤醒：立刻看一眼'); } },
+      { type: 'separator' },
+      {
+        label: '开机启动（跟 Windows 一起起）',
+        type: 'checkbox',
+        checked: autostartEnabled(),
+        click: (item) => {
+          const r = toggleAutostart(item.checked);
+          // 写不进去要说出来：静默失败的话用户下次开机才发现"它怎么没起来"
+          if (!r.ok) { showPet(); win?.webContents.send('pet:speak', `（开机启动没设成：${r.why}）`); }
+        },
+      },
       { label: paused ? '继续（恢复观察）' : '暂停（停止观察）', click: () => setPaused(!paused) },
       { label: '隐藏桌宠（托盘里能叫回来）', click: () => win.hide() },
       { label: '设置…', click: () => openSettingsWindow() },
@@ -566,9 +870,23 @@ app.whenReady().then(() => {
     registerIpc();
     createTray();
 
+    // 全局热键（和 PowerShell 版同一组：Ctrl+Alt+G 说一句 / Ctrl+Alt+T 打字派活）。
+    // 注册失败**不算错误** —— 别的软件占着这两个组合键是常事，静默降级即可
+    // （菜单和按钮条上有同样的入口，不会因为热键没了就没法用）。
+    for (const [accel, channel] of [['Control+Alt+G', 'pet:speakCmd'], ['Control+Alt+T', 'pet:typeCmd']]) {
+      try {
+        const ok = globalShortcut.register(accel, () => { showPet(); win?.webContents.send(channel); });
+        log(`热键 ${accel}：${ok ? '已注册' : '被占用（不影响菜单/按钮）'}`);
+      } catch (err) {
+        log(`热键 ${accel} 注册失败：`, err.message);
+      }
+    }
+
     // 观察循环：采样 → 本地闸门 →（值了才）叫模型
     monitor = createMonitor({
       config: cfg,
+      // 配置要现读（设置窗口写回是"整份替换 cfg"，启动时抄的那份会停在老值上）
+      live: () => cfg,
       // 把"后台还有活在跑"塞进判断 payload
       context: () => {
         const list = subagents?.list() ?? [];
@@ -638,9 +956,14 @@ app.whenReady().then(() => {
   });
 
   app.on('will-quit', () => {
+    try { globalShortcut.unregisterAll(); } catch { /* 已经退了 */ }
     if (lockHeld) release(lockFile);        // 只清自己那把（别人的锁不能被我删掉）
     tray?.destroy();
     askWatcher?.stop();
     session?.stop();
+    // 对话窗口和它背后的 DSH Web 服务：服务是我们起的就收掉（用户自己起的那个不动）。
+    // 窗口先关 —— 服务一停，那个页面就只剩"打不开"的错误页。
+    try { if (chatWin && !chatWin.isDestroyed()) chatWin.destroy(); } catch { /* 已经关了 */ }
+    try { stopWebUi(cfg); } catch { /* 没起过就算了 */ }
   });
   app.on('window-all-closed', () => app.quit());

@@ -138,6 +138,13 @@
 | 语音意图分流 | `src/router.mjs` | 识别完先判 TASK/CHAT，**聊天不起 agent**。真实模型实测 4 例全对（0.7–1.6s/次） |
 | 选项问答 / 审批应答 | `src/ask.mjs` | 与 pet-responder 同一套文件协议；16 项单测 + 合成请求在真应用里跑通（日志打出完整提示词） |
 | 子 agent 观察 | `src/subagents.mjs` | 从常驻会话事件流跟踪 `agent-start/end`；7 项单测 |
+| **底部功能按钮条 + 弹性按压** | `renderer/` | 五个图标（同批码位）、悬停提示、"开着"的灯；按住压扁/松手弹回（锚底边中点）。`PET_DEBUG_TOOLBAR=1` 一键自检这几件事 |
+| **框选监控区域** | `src/region.mjs` + `region-picker.mjs` + `capture.mjs` | 几何换算 10 项单测；`tools/pick-probe.mjs` 合成拖拽走通 IPC；`tools/region-probe.mjs` 存出裁出来的那张图人工核对 |
+| **对话窗口 = DSH 自己的 Web 界面** | `src/webui.mjs` | `--patch` 顺序 + 一次性 token 两个坑写进注释；`tools/brain-probe.mjs` 验两条大脑路径 |
+| **开机启动** | `src/autostart.mjs` | HKCU Run（键名与 PS 版同名）；引号规则 4 项单测 |
+| 窗口跟着内容长 | `renderer/pet.js` 的 `petFit` + main 的 `pet:fit` | 长气泡不再被裁；底边不动（`config.bottom`），窗口变高时宠物不上移 |
+| 拖文件/文字到宠物 | `renderer/pet.js` | 只填进输入条等你回车，不直接开跑 |
+| 气泡 × / Esc 收起 + 全局热键 | `renderer/` + `main.mjs` | Ctrl+Alt+G / Ctrl+Alt+T（占用时静默降级） |
 
 **常驻会话带来的一个额外好处**：`session/prompt` 的 `contentBlocks` **支持内联图片**
 （TypeScript 版那边 headless CLI 没有附件入口，只能让模型用 `read_image` 读路径、多花一轮）。

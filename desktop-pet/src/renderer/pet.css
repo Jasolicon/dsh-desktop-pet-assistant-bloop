@@ -14,6 +14,9 @@
   --idle: #5c6b7f;
   --ink: #1a1e28;
   --surface: #fafbfd;
+  /* 设置窗口里改的字体/字号：主进程推过来，这里只负责应用（改完立刻生效） */
+  --ui-font: "Microsoft YaHei UI", "Segoe UI", system-ui, sans-serif;
+  --bubble-size: 12px;
 }
 
 * { box-sizing: border-box; }
@@ -23,7 +26,7 @@ html, body {
   height: 100%;
   background: transparent;      /* 关键：整窗透明 */
   overflow: hidden;
-  font-family: "Microsoft YaHei UI", "Segoe UI", system-ui, sans-serif;
+  font-family: var(--ui-font);
   user-select: none;
   -webkit-user-select: none;
 }
@@ -41,23 +44,57 @@ html, body {
   pointer-events: none;          /* 默认不拦鼠标；下面给真控件单独打开 */
 }
 
+/*
+  ⚠️ 每一块都 `flex: none`：默认 flex-shrink:1，窗口一旦比内容矮（调整高度的 IPC 还没落地、
+  或者某次 fit 失败），宠物会被**压扁**成 35px 高 —— 看着像"它坏了"，而且用户完全不知道
+  是窗口高度的问题。不许缩之后，装不下就往上溢出（被裁的也是多出来的气泡，宠物自己不变形）。
+*/
+#bubble, #pet, #bar, #ask, #tools { flex: none; }
+
 /* ---------- 气泡 ---------- */
 #bubble {
   pointer-events: auto;
+  position: relative;
   max-width: 100%;
-  max-height: 120px;
+  /* 高度由"窗口自动跟着内容长"来兜（见 pet.js 的 petFit）——
+     这里只留一个安全上限，免得一条超长消息把窗口撑到屏幕外。
+     ⚠️ 上限必须是**固定像素**、不能用 vh：vh 是相对窗口高的，而窗口高又是按气泡高算出来的 ——
+     互相咬住会收敛到一个偏小的值，顶上那几行就被 overflow:hidden 裁掉了（实测踩过）。 */
+  max-height: 360px;
   overflow: hidden;
-  padding: 8px 10px;
+  /* 右边多留一点：那个 × 是叠在气泡右上角的（不然长句子会钻到它底下） */
+  padding: 8px 24px 8px 10px;
   border-radius: 12px;
   background: var(--surface);
   color: var(--ink);
-  font-size: 12px;
+  font-size: var(--bubble-size);
   line-height: 1.5;
   border: 1px solid rgba(47, 127, 208, 0.35);
   box-shadow: 0 4px 14px rgba(20, 26, 38, 0.18);
   white-space: pre-wrap;
   word-break: break-word;
 }
+
+#bubbleText { white-space: pre-wrap; word-break: break-word; }
+
+#bubbleClose {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: #98a0ae;
+  font-family: "Segoe Fluent Icons", "Segoe MDL2 Assets", "Segoe UI Symbol", sans-serif;
+  font-size: 9px;
+  line-height: 18px;
+  text-align: center;
+  cursor: pointer;
+}
+#bubbleClose:hover { background: #eef3fa; color: var(--ink); }
 
 /* ---------- 宠物本体 ---------- */
 #pet {
@@ -71,7 +108,27 @@ html, body {
   justify-content: center;
   border-radius: 50% 50% 42% 42%;
   background: radial-gradient(circle at 50% 38%, rgba(92, 107, 127, 0.0) 40%, rgba(92, 107, 127, 0.0) 100%);
-  transition: filter 0.25s ease;
+  /*
+    弹性按压：锚在**底部中心**把宽高缩一下（不是整体缩放，也不是位移）——
+    这是"球被按了一下"的手感。曲线抄 dsh-whale-widget 那条
+    cubic-bezier(.34,1.56,.64,1)（带过冲），所以松手会"弹回来"而不是平移回来。
+    PowerShell 版是等价的阻尼正弦（那边只能逐帧重绘），观感一致。
+  */
+  transform-origin: 50% 100%;
+  transition: filter 0.25s ease, transform 0.22s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* 按住时：压扁。过渡曲线同上，所以按下这一下本身就是弹性动作 */
+#pet.press { transform: scale(1.12, 0.88); transition-duration: 0.12s; }
+
+/* 松手时：从"压扁"过冲到"略拉长"再收住。和按住那一下接力，看着就是弹回来的 */
+#pet.pop { animation: pop 0.5s cubic-bezier(0.34, 1.56, 0.64, 1); }
+
+@keyframes pop {
+  0%   { transform: scale(1.12, 0.88); }
+  40%  { transform: scale(0.95, 1.06); }
+  70%  { transform: scale(1.03, 0.98); }
+  100% { transform: scale(1, 1); }
 }
 
 /* 状态光晕：图片改不了色，就用背后一圈柔光表达 */
@@ -223,6 +280,65 @@ html, body {
 #close:hover { background: #eef3fa; color: var(--ink); }
 
 .hidden { display: none !important; }
+
+/* ---------- 底部功能按钮条 ----------
+   和 PowerShell 版同一套观感：半透明药丸 + 图标 + 悬停变亮 + "开着"的那格淡黄高亮。
+   区别只有一个：那边的图标在 C# 里画，这里用图标字体的**同一批码位**（见 index.html）。 */
+#tools {
+  pointer-events: auto;
+  display: flex;
+  gap: 5px;
+}
+
+#tools button {
+  width: 40px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 13px;                     /* 半径 = 高度一半 → 药丸形 */
+  background: rgba(250, 251, 253, 0.38);
+  color: rgba(26, 30, 40, 0.8);
+  font-family: "Segoe Fluent Icons", "Segoe MDL2 Assets", "Segoe UI Symbol", sans-serif;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  /* 按钮自己也有"按一下"的弹性，和宠物同一条曲线 */
+  transition: transform 0.16s cubic-bezier(0.34, 1.56, 0.64, 1), background 0.16s ease, border-color 0.16s ease;
+}
+
+#tools button::before { content: attr(data-icon); }
+
+#tools button:hover {
+  background: rgba(250, 251, 253, 0.65);
+  color: rgba(26, 30, 40, 1);
+}
+
+/* 按下去：缩小一点再弹回来（弹性按压的"按压"那一半） */
+#tools button:active { transform: scale(0.9); transition-duration: 0.08s; }
+
+/* "这格开着"：淡黄底 + 黄描边。框选过区域 / 对话窗口开着 / 输入条开着 都会亮这一格 */
+#tools button.on {
+  background: rgba(255, 240, 150, 0.8);
+  border-color: rgba(255, 205, 60, 0.85);
+  color: #1a1e28;
+}
+
+/* 悬停提示：按钮条上方浮一条深色小胶囊（图标看不懂时唯一的解释出口） */
+#tip {
+  pointer-events: none;
+  position: absolute;
+  bottom: 40px;                            /* 由 JS 按实际按钮位置覆盖 */
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 3px 9px;
+  border-radius: 11px;
+  background: rgba(26, 30, 40, 0.92);
+  color: #fafbfc;
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(20, 26, 38, 0.28);
+}
 
 /* 沉默角标：右肩上的小灰点，数字 = 累计"看过了但决定不说"的次数 */
 #badge {

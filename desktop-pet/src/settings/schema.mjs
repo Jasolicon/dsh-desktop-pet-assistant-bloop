@@ -41,8 +41,23 @@ export const SCHEMA = [
   {
     title: '采集与节奏',
     items: [
+      // region 是"专用控件"（type: region）：它不是一个能打字的框，而是"框选 / 取消"两个动作，
+      // 值由主进程框选后写回（见 src/region-picker.mjs）。别把它改成 string —— 手写坐标没人对得上。
+      { key: 'region', label: '监控区域', type: 'region', live: true, help: '只截图这一块：省 token，也更私密。区域外的变化不会叫醒模型。' },
       { key: 'sampleSeconds', label: '采样间隔（秒）', type: 'int', min: 1, max: 60, live: true, help: '采样只算 160px 缩略图的指纹，闸门放行时才抓高质量截图。' },
       { key: 'autoMinutes', label: '自动看一眼（分钟）', type: 'int', min: 1, max: 60, live: true, help: '非损友模式下"多久自动判断一次"。' },
+      { key: 'screenshotMaxWidth', label: '截图最大宽度', type: 'int', min: 320, max: 3840, live: true, help: '给模型看的那张图的宽度上限；框选区域比它还窄时按原生分辨率给，不放大。' },
+      { key: 'jpegQuality', label: '截图 JPEG 质量', type: 'int', min: 10, max: 100, live: true, help: '越低越省 token，越高越清楚。' },
+    ],
+  },
+  {
+    title: '对话窗口',
+    items: [
+      // 对话用的是 DSH 自带的 Web 界面（Markdown / 工具卡片 / 流式都是现成的），
+      // 所以这一组只有"起在哪个端口、窗口多大"。
+      { key: 'webPort', label: 'DSH Web 端口', type: 'int', min: 1024, max: 65535, live: false, help: '「对话」按钮起的本地服务端口；被占用就换一个。' },
+      { key: 'chatWidth', label: '窗口宽', type: 'int', min: 360, max: 2000, live: false },
+      { key: 'chatHeight', label: '窗口高', type: 'int', min: 300, max: 2000, live: false },
     ],
   },
   {
@@ -56,6 +71,7 @@ export const SCHEMA = [
   {
     title: '行为',
     items: [
+      { key: 'showToolbar', label: '显示功能按钮条', type: 'bool', live: true, help: '宠物脚下那排小按钮（问一句 / 对话 / 打字派活 / 框选 / 记录）。' },
       { key: 'userQuietSeconds', label: '用户操作后安静（秒）', type: 'int', min: 1, max: 60, live: true, help: '你刚动过（点它/打字/拖东西）时，自动判断先让位，停手这么久再补做。' },
       { key: 'askSeconds', label: '等回答（秒）', type: 'int', min: 5, max: 600, live: true, help: 'DSH 问过来的审批/提问等多久算放弃；放弃 = 不写应答文件，交回给 agent 自己决定。' },
       { key: 'routeTyped', label: '打字也先判意图', type: 'bool', live: true, help: '默认关：输入框本来就写着"派活"，敲进去就是明确要做事。开了之后打字也先判 TASK/CHAT。' },

@@ -20,6 +20,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { ROOT } from './paths.mjs';
+import { runDir as dataRunDir } from './dirs.mjs';
 
 /** 默认的 agents.json。迁移期先共用 desktop-guide 那份，避免两边配置漂移。 */
 export function defaultAgentsFile() {
@@ -81,8 +82,12 @@ export function buildPatch({ model, access, accessList = [] } = {}) {
   return lines.length ? `${lines.join('\n')}\n` : '';
 }
 
-/** 把 patch 写到 run/ 下（run/ 已被 .gitignore 忽略），返回路径；没有内容时返回 null。 */
-export function writePatch(yaml, id = 'pet', runDir = join(ROOT, 'run')) {
+/**
+ * 把 patch 写到 run/ 下（run/ 已被 .gitignore 忽略），返回路径；没有内容时返回 null。
+ * 目录走 dirs.mjs：打包后源码目录在 app.asar 里**只读**，patch 得落到 userData
+ * （这个 bug 只有真打包过一次才会暴露，见 dirs.mjs 的头注释）。
+ */
+export function writePatch(yaml, id = 'pet', runDir = dataRunDir()) {
   if (!yaml) return null;
   mkdirSync(runDir, { recursive: true });
   const file = join(runDir, `agent-patch-${id}.yml`);

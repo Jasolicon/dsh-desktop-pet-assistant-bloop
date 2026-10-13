@@ -37,14 +37,24 @@ const TIMELINE_SIZE = 40;
  *        （子 agent 观察就是从这里塞 `agents` 进去的 —— 否则主 agent 会把
  *         "屏幕很久没动"误读成"用户卡住了"，而真相是用户派了活出去正在跑）
  */
-export function createMonitor({ config = {}, onDecision, onState, logger = console, context = null } = {}) {
-  const sampleSeconds = Number(config.sampleSeconds) > 0 ? Number(config.sampleSeconds) : 2;
-  const gateCfg = {
-    judgeMinSeconds: config.judgeMinSeconds ?? GATE_DEFAULTS.judgeMinSeconds,
-    judgeMinFpDelta: config.judgeMinFpDelta ?? GATE_DEFAULTS.judgeMinFpDelta,
-    silentBackoffMax: config.silentBackoffMax ?? GATE_DEFAULTS.silentBackoffMax,
-    judgeIdleSkipSeconds: config.judgeIdleSkipSeconds ?? GATE_DEFAULTS.judgeIdleSkipSeconds,
-    judgeMaxGapSeconds: config.judgeMaxGapSeconds ?? GATE_DEFAULTS.judgeMaxGapSeconds,
+export function createMonitor({ config = {}, live = null, onDecision, onState, logger = console, context = null } = {}) {
+  /**
+   * 配置要**每次读**，不能启动时抄一份。
+   * 为什么：设置窗口写回时主进程是"整份替换" cfg 对象（`cfg = { ...cfg, x }`），
+   * 启动时抄下来的那份引用就永远停在老值上 —— 表现是"改了采样/闸门参数没反应"，
+   * 而界面上还标着"立即生效"（等于骗用户）。PowerShell 版是每拍重新读一次 $cfg。
+   */
+  const C = () => (typeof live === 'function' ? (live() || config) : config);
+  const gateCfgNow = () => ({
+    judgeMinSeconds: C().judgeMinSeconds ?? GATE_DEFAULTS.judgeMinSeconds,
+    judgeMinFpDelta: C().judgeMinFpDelta ?? GATE_DEFAULTS.judgeMinFpDelta,
+    silentBackoffMax: C().silentBackoffMax ?? GATE_DEFAULTS.silentBackoffMax,
+    judgeIdleSkipSeconds: C().judgeIdleSkipSeconds ?? GATE_DEFAULTS.judgeIdleSkipSeconds,
+    judgeMaxGapSeconds: C().judgeMaxGapSeconds ?? GATE_DEFAULTS.judgeMaxGapSeconds,
+  });
+  const sampleSecondsNow = () => {
+    const v = Number(C().sampleSeconds);
+    return v > 0 ? v : 2;
   };
 
   const st = {
@@ -65,6 +75,9 @@ export function createMonitor({ config = {}, onDecision, onState, logger = conso
     silentTotal: 0,     // 判断过、但决定不说 的累计次数（角标用）
     lastSkipReason: '',
     busy: false,
+    // 监控区域（config.json 的 region；null = 整屏）。运行时可以改 —— 用户框选完立刻生效，
+    // 不用重开桌宠（PowerShell 版这块踩过：改了 cfg 但抓屏 runspace 还抓着老区域）
+    region: config.region || null,
   };
 
   function touchWindow(key, now) {
@@ -91,6 +104,7 @@ export function createMonitor({ config = {}, onDecision, onState, logger = conso
       screen: {
         stillSeconds: Math.round((now - st.stillSince) / 1000),
         fingerprint: st.lastFp,
+        region: st.region ? `${st.region.w}×${st.region.h}` : '整屏',
       },
       shots: st.shots.map((s) => s.path),
       shotTimes: st.shots.map((s) => s.at),
@@ -115,7 +129,8 @@ export function createMonitor({ config = {}, onDecision, onState, logger = conso
       touchWindow(win.key, now);
 
       // 2) 画面指纹（便宜的缩略图）
-      const shot = await grabScreen({ width: 160, height: 90 });
+      // 指纹只要 8×8，所以不编码 JPEG（省掉每拍一次无用的编码）
+      const shot = await grabScreen({ width: 160, height: 90, region: st.region, jpeg: false });
       if (shot) {
         st.captureFails = 0;
         if (shot.fingerprint !== st.lastFp) {
@@ -126,7 +141,7 @@ export function createMonitor({ config = {}, onDecision, onState, logger = conso
         // 抓不到屏（远程会话断开、显示器切换…）：连续几次就自己进待机，
         // 否则会拿着旧图一直判断 —— 那正是要避免的"静默降级"。
         st.captureFails = (st.captureFails || 0) + 1;
-        if (st.captureFails >= (config.captureFailLimit || 3)) {
+        if (st.captureFails >= (C().captureFailLimit || 3)) {
           st.standby = true;
           logger.log?.('[pet] 连续抓不到屏幕，进入待机');
         }
@@ -146,7 +161,7 @@ export function createMonitor({ config = {}, onDecision, onState, logger = conso
         lastJudgedAt: st.lastJudgedAt,
         silentStreak: st.silentStreak,
         idleSeconds,
-        config: gateCfg,
+        config: gateCfgNow(),
       });
       if (why) {
         st.skipped += 1;
@@ -168,9 +183,11 @@ export function createMonitor({ config = {}, onDecision, onState, logger = conso
       st.busy = true;
       try {
         const hi = await grabScreen({
-          width: Number(config.screenshotMaxWidth) || 1024,
-          height: Math.round((Number(config.screenshotMaxWidth) || 1024) * 0.5625),
-          quality: Number(config.jpegQuality) || 60,
+          width: Number(C().screenshotMaxWidth) || 1024,
+          height: Math.round((Number(C().screenshotMaxWidth) || 1024) * 0.5625),
+          quality: Number(C().jpegQuality) || 60,
+          region: st.region,
+          native: true,   // 给模型看的这一张：按原生分辨率裁，别把框选出来的细节缩没了
         });
         if (hi) pushShot(now, hi.jpegBase64);
         const payload = { ...buildPayload(now, idleSeconds), ...(context?.() || {}) };
@@ -203,6 +220,7 @@ export function createMonitor({ config = {}, onDecision, onState, logger = conso
       busy: st.busy,
       lastJudgedAt: st.lastJudgedAt,
       shots: st.shots.length,
+      region: st.region,
     };
   }
 
@@ -229,14 +247,34 @@ export function createMonitor({ config = {}, onDecision, onState, logger = conso
     }
   }
 
+  /**
+   * 换监控区域（用户框选/取消框选）。
+   *
+   * 三件事缺一不可，少一件就会有"看着像生效了、其实没有"的假象：
+   *   ① 丢掉截图环 —— 环里的图是**老区域**拍的，还带着老区域的水印/内容，
+   *      交给模型等于让它看已经不该看的东西（PowerShell 版这里踩过，并且写进了 README）
+   *   ② 清指纹与"静止了多久" —— 换了取景范围，指纹根本不可比，不清就会出现
+   *      "刚框完就被判成画面变了"（或反过来，等到天荒地老都不动）
+   *   ③ lastJudgedAt 归零 —— 让闸门下一次采样就重新看一眼新区域
+   */
+  function clearShots() {
+    st.shots = [];
+    try {
+      for (const f of readdirSync(shotDir()).filter((x) => x.endsWith('.jpg'))) {
+        try { rmSync(join(shotDir(), f)); } catch { /* 别人占着就算了 */ }
+      }
+    } catch { /* 目录不在就算了 */ }
+  }
+
   return {
     start() {
       if (st.running) return;
       st.running = true;
       st.lastJudgedAt = 0;   // 启动后第一次采样就该看一眼
-      st.timer = setInterval(tick, sampleSeconds * 1000);
+      st.timer = setInterval(tick, sampleSecondsNow() * 1000);
+      st.timerMs = sampleSecondsNow() * 1000;
       void tick();
-      logger.log?.(`[pet] 观察循环启动：每 ${sampleSeconds}s 采样一次`);
+      logger.log?.(`[pet] 观察循环启动：每 ${sampleSecondsNow()}s 采样一次`);
     },
     stop() {
       st.running = false;
@@ -244,6 +282,38 @@ export function createMonitor({ config = {}, onDecision, onState, logger = conso
       st.timer = null;
     },
     setStandby(v) { st.standby = !!v; },
+    /** 换监控区域：立刻生效（抓屏下一次就用新的），并让闸门重新看一次。 */
+    setRegion(region) {
+      st.region = region || null;
+      st.lastFp = '';
+      st.lastJudgedFp = '';
+      st.stillSince = Date.now();
+      st.lastJudgedAt = 0;
+      clearShots();
+      onState?.(snapshot());
+    },
+    /** 手动"我是醒着的，现在就看一眼"：把待机标记清掉，并让闸门立刻放行一次。 */
+    wake() {
+      st.standby = false;
+      st.captureFails = 0;
+      st.lastJudgedAt = 0;
+      st.lastJudgedFp = '';
+      void tick();
+      onState?.(snapshot());
+    },
+    /**
+     * 配置改完叫一声：采样间隔是 setInterval 的周期，改它必须重建定时器才真生效
+     * （闸门那几个参数不用，它们每拍现读，见上面 C()）。
+     */
+    reload() {
+      if (!st.running) return;
+      const want = sampleSecondsNow() * 1000;
+      if (st.timerMs === want) return;
+      st.timerMs = want;
+      if (st.timer) clearInterval(st.timer);
+      st.timer = setInterval(tick, want);
+      logger.log?.(`[pet] 采样间隔改为 ${want / 1000}s`);
+    },
     /** 用户刚动过桌宠：把闸门的时间戳往后推，别在人家操作时插话 */
     noteUserAction(quietSeconds = 6) {
       st.lastJudgedAt = Date.now() + quietSeconds * 1000;

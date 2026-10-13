@@ -29,9 +29,32 @@ export const DEFAULTS = {
   /** 说话风格：guard 保守 / coach 陪练 / roast 损友 / scout 找事（换的是整段定位，见 settings/schema.mjs）。 */
   speakStyle: 'coach',
   showSeconds: 12,
+  /** 底部功能按钮条（问一句/对话/打字派活/框选/记录）。关掉就只剩宠物本体。 */
+  showToolbar: true,
   // 位置（null = 屏幕底部居中）
   x: null,
   y: null,
+  /**
+   * 桌宠**底边**的屏幕坐标（和 y 一起记）。
+   * 为什么要它：窗口高度是跟着内容变的（长气泡 → 窗口往上长，见 main.mjs 的 pet:fit）。
+   * 只记窗口左上角的 y，退出时若正好开着一条长消息，下次起来桌宠就会往上飘一截 ——
+   * 用户摆好的位置得放回原处，所以锚的是"脚踩在哪条线上"。
+   */
+  bottom: null,
+  /**
+   * 监控区域（框选出来的那块屏）：{ displayId, x, y, w, h }，坐标是**相对那块屏左上角的 DIP**；
+   * null = 整屏。见 src/region.mjs（为什么不是绝对物理像素）。
+   */
+  region: null,
+  // 采集
+  sampleSeconds: 2,
+  screenshotMaxWidth: 1024,
+  jpegQuality: 60,
+  captureFailLimit: 3,
+  // 对话窗口：用 DSH 自己的 Web 界面（见 src/webui.mjs）
+  webPort: 4319,
+  chatWidth: 560,
+  chatHeight: 800,
   // 大脑
   advisor: 'pwsh -NoProfile -ExecutionPolicy Bypass -File "{root}\\advisor-dsh.ps1"',
   advisorFast: 'pwsh -NoProfile -ExecutionPolicy Bypass -File "{root}\\advisor-openai.ps1"',

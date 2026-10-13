@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>框选监控区域</title>
+    <link rel="stylesheet" href="region.css" />
+  </head>
+  <body>
+    <!-- 洞里露出的是真实屏幕：用四个矩形拼一个"挖空"的罩子，比 canvas 便宜也更好对齐 -->
+    <div id="veil"></div>
+    <div id="hole" class="hidden"></div>
+    <div id="tip">拖出一个矩形 = 只监控这一块　　Esc / 拖太小 = 取消</div>
+    <div id="size" class="hidden"></div>
+    <script src="region.js"></script>
+  </body>
+</html>

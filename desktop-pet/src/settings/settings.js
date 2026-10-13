@@ -18,6 +18,30 @@ function el(tag, className, text) {
 function buildInput(item, value) {
   const wrap = el('div');
 
+  // 监控区域：不是输入框，是"框选 / 取消"两个动作（值由主进程框选后写回）。
+  // 故意**不注册 reader** —— 这一项的值不该被"保存"那条路覆盖（它是对象，不是文本）。
+  if (item.type === 'region') {
+    const box = el('div', 'region');
+    const text = el('span', 'regionText', regionText(value));
+    const pick = el('button', null, '框选…');
+    const clear = el('button', null, '恢复整屏');
+    clear.disabled = !(value && value.w);
+    pick.addEventListener('click', async () => {
+      const r = await window.settings.pickRegion();
+      if (r.cancelled) { say('已取消框选，监控区域不变。'); return; }
+      text.textContent = regionText(r.region);
+      clear.disabled = false;
+      say(`监控区域已设为 ${r.region.w}×${r.region.h}（立刻生效）`, 'ok');
+    });
+    clear.addEventListener('click', async () => {
+      const r = await window.settings.clearRegion();
+      if (r.ok) { text.textContent = regionText(null); clear.disabled = true; say('已恢复抓整个屏幕（立刻生效）', 'ok'); }
+    });
+    box.append(pick, clear, text);
+    wrap.append(box);
+    return wrap;
+  }
+
   if (item.type === 'bool') {
     const box = el('label', 'bool');
     const input = document.createElement('input');
@@ -55,6 +79,11 @@ function buildInput(item, value) {
   readers.set(item.key, () => (item.type === 'string' ? input.value : input.value === '' ? null : Number(input.value)));
   wrap.append(input);
   return wrap;
+}
+
+/** 监控区域那一行右边的文字（和桌宠气泡里的说法保持一致）。 */
+function regionText(value) {
+  return value && value.w ? `${value.w}×${value.h}` : '整屏';
 }
 
 function buildGroup(group, config) {

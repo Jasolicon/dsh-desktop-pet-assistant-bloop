@@ -85,6 +85,9 @@ section.group > h2 {
 .row input[type="number"] { max-width: 140px; }
 .row .bool { display: flex; align-items: center; gap: 8px; }
 .row .bool input { width: 16px; height: 16px; }
+.row .region { display: flex; align-items: center; gap: 8px; }
+.row .regionText { color: var(--dim); font-size: 12px; }
+.row .region button:disabled { opacity: 0.5; cursor: default; }
 .row .key { color: #98a2b3; font-size: 11px; font-family: ui-monospace, Consolas, monospace; }
 
 footer {

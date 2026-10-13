@@ -1,0 +1,48 @@
+/* 框选层：整屏压暗，拖出来的那块保持原亮度。配色与 PowerShell 版的 RegionPicker 同一套。 */
+html, body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: #0a0a0e;
+  cursor: crosshair;
+  font-family: "Microsoft YaHei UI", "Segoe UI", system-ui, sans-serif;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+#veil {
+  position: fixed;
+  inset: 0;
+  background: rgba(10, 10, 14, 0.62);
+}
+
+#hole {
+  position: fixed;
+  border: 3px solid #3c8cf0;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.55), 0 0 22px rgba(60, 140, 240, 0.55);
+  background: transparent;
+  pointer-events: none;
+}
+
+#tip {
+  position: fixed;
+  left: 32px;
+  top: 28px;
+  color: #fff;
+  font-size: 15px;
+  font-weight: 600;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.75);
+  pointer-events: none;
+}
+
+#size {
+  position: fixed;
+  left: 32px;
+  top: 56px;
+  color: #cfe4ff;
+  font-size: 13px;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.75);
+  pointer-events: none;
+}
+
+.hidden { display: none !important; }

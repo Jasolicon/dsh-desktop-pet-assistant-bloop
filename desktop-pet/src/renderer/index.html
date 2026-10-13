@@ -14,7 +14,11 @@
   <body>
     <!-- 整窗透明：只有 #stage 里的东西会画出来，其余区域靠主进程切鼠标穿透 -->
     <div id="stage">
-      <div id="bubble" class="hidden"></div>
+      <!-- 气泡：右上角那个 × 是"收起"（PowerShell 版也有；没有它就只能等它自己消失） -->
+      <div id="bubble" class="hidden">
+        <div id="bubbleText"></div>
+        <button id="bubbleClose" type="button" title="收起气泡（Esc）" aria-label="收起气泡">&#xE711;</button>
+      </div>
 
       <div id="pet" data-state="idle" title="点我：说一句　双击：打字派活　右键：菜单">
         <!-- 沉默角标：把"看过了但决定不说"变成一个看得见的数字（沿用 PowerShell 版的做法） -->
@@ -47,6 +51,22 @@
         </div>
         <div id="askBar"></div>
       </div>
+
+      <!--
+        底部功能按钮条：PowerShell 版那颗一排小按钮，一个不少地搬过来。
+        图标用 Windows 自带的图标字体（Segoe Fluent Icons，Win10 回退到 Segoe MDL2 Assets）——
+        和 PowerShell 版**同一批码位**，零素材。
+        为什么是图标不是文字：五个中文标签横着排至少要 300px，桌宠窗口没那么宽。
+        悬停时在上面浮一条深色提示说明它是干嘛的（和那边一样）。
+      -->
+      <div id="tools" class="hidden" role="toolbar" aria-label="桌宠功能">
+        <button id="t-ask" type="button" data-icon="&#xE8BD;" data-label="问一句"></button>
+        <button id="t-chat" type="button" data-icon="&#xE8F2;" data-label="对话"></button>
+        <button id="t-type" type="button" data-icon="&#xE765;" data-label="打字派活"></button>
+        <button id="t-region" type="button" data-icon="&#xE7A8;" data-label="框选监控区域"></button>
+        <button id="t-history" type="button" data-icon="&#xE81C;" data-label="看它判过什么"></button>
+      </div>
+      <div id="tip" class="hidden"></div>
     </div>
     <script src="pet.js"></script>
   </body>
