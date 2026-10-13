@@ -224,6 +224,18 @@ html, body {
 #pet.has-image .body,
 #pet.has-image .shadow { display: none; }
 
+/*
+  ⚠️ 自绘那只（白色 C 形身体 + 两只眼睛）**默认不显示**。
+
+  之前它是"默认显示、有图再收起来"，于是启动那几百毫秒里先露出一张白脸白球，
+  再被角色图顶掉 —— 用户原话："刚启动的时候有个白球白脸替代桌宠"。
+  现在反过来：只在**确认没有角色图**（data-img="none"，见 pet.js 的 loadPetImage）时才显示它；
+  有图但还在加载 → 先什么都不画（空着不丑，好歹不像坏了）。
+*/
+.body, .shadow { display: none; }
+#pet[data-img="none"] .body,
+#pet[data-img="none"] .shadow { display: block; }
+
 #pet[data-state="idle"]      { color: var(--idle); }
 #pet[data-state="thinking"]  { color: var(--think); }
 #pet[data-state="speaking"]  { color: var(--speak); }

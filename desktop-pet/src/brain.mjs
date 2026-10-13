@@ -77,7 +77,26 @@ export function askDsh(task, config = {}, { timeoutMs = DEFAULT_TIMEOUT_MS, onCh
     child.on('close', (code) => {
       if (last) return finish(true, last.trim());
       if (code === 0) return finish(false, '', 'agent 没有产出结论');
-      finish(false, '', (err.trim().split(/\r?\n/).slice(-3).join(' / ') || `退出码 ${code}`));
+      finish(false, '', summarizeFailure(err, code));
     });
   });
+}
+
+/**
+ * 把子进程的 stderr 揉成一句能看的话。
+ *
+ * 为什么要有这一步：DSH 起不来时 node 会把整个崩溃现场打到 stderr，尾巴上是
+ * `} / / Node.js v24.18.1` 这种**纯噪音** —— 原样塞进气泡就是用户看到的那行乱码。
+ * 规则：优先挑像错误的那一行（Error:/EPERM/…）；挑不到就按退出码说人话。
+ */
+export function summarizeFailure(errText, code = null) {
+  const rows = String(errText || '')
+    .split(/\r?\n/)
+    .map((s) => s.trim())
+    .filter((s) => s && !/^[}\]){,]+$/.test(s) && !/^Node\.js v/.test(s) && !/^\^+$/.test(s) && !/^\s*at /.test(s));
+  const good = rows.find((s) => /^(Error|TypeError|RangeError|SyntaxError)\b/.test(s)) ||
+    rows.find((s) => /\b(EPERM|EACCES|ENOENT|EBUSY|ETIMEDOUT|MISSING_CREDENTIAL)\b/.test(s));
+  if (good) return good.slice(0, 200);
+  if (code != null) return `DSH 没跑起来（退出码 ${code}，细节看 start.log）`;
+  return 'DSH 没跑起来（细节看 start.log）';
 }

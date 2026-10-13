@@ -122,3 +122,12 @@ test('resolveAgents 缺 agents.json 的字段时不炸（返回空/回落）', (
   assert.equal(r.access, null);
   assert.deepEqual(r.disableRows, []);
 });
+
+// summarizeFailure 在 brain.mjs 里（这里只测它的行为，放在同一批 agent 相关测试里）
+test('summarizeFailure：从崩溃输出里挑出能看的那句，纯粹是噪音就按退出码说人话', async () => {
+  const { summarizeFailure } = await import('../src/brain.mjs');
+  const noise = '\n}\n^\nNode.js v24.18.1\n    at writeFileSync (node:fs:2422:20)\nError: EPERM: operation not permitted, open C:\\x\\cordis.yml\n';
+  assert.match(summarizeFailure(noise, 1), /EPERM/);
+  assert.match(summarizeFailure('}\nNode.js v24.18.1\n', 1), /退出码 1/);
+  assert.doesNotMatch(summarizeFailure('}\nNode.js v24.18.1\n', 1), /Node\.js v/);
+});

@@ -92,17 +92,22 @@ function petFit() {
 // ---------------------------------------------------------------------------
 (function loadPetImage() {
   const img = document.getElementById('petimg');
-  if (!img || !window.pet || typeof window.pet.info !== 'function') return;
+  // 还没拿到角色图之前**什么都不画**（见 pet.css 里那段：白脸白球就是在这里冒出来的）。
+  // 只有确认"没有角色图"才退回自绘那只。
+  if (!img || !window.pet || typeof window.pet.info !== 'function') { petEl.dataset.img = 'none'; return; }
   window.pet.info()
     .then((info) => {
-      if (!info || !info.image) return;              // 没配角色图：继续用自绘那只
+      if (!info || !info.image) { petEl.dataset.img = 'none'; return; }   // 没配角色图：用自绘那只
       img.addEventListener('load', () => petEl.classList.add('has-image'));
-      img.addEventListener('error', () => {          // 图坏了也别变成空白：退回自绘
+      img.addEventListener('error', () => {
+        // 图坏了：**不退回白脸**（用户嫌那个），而是明说一句 —— 至少知道是图的问题
         petEl.classList.remove('has-image');
+        console.error('[renderer] 角色图加载失败：', info.image);
+        showBubble(`角色图没加载出来：\n${info.image}\n（检查一下这个文件在不在；设置里可以换一张）`, 15000);
       });
       img.src = encodeURI('file:///' + String(info.image).replace(/\\/g, '/'));
     })
-    .catch(() => { /* 拿不到就自绘 */ });
+    .catch(() => { petEl.dataset.img = 'none'; });
 })();
 
 /** bubbleOwner：这条气泡是谁放的（子 agent 那条只在自己还握着气泡时才清掉它） */

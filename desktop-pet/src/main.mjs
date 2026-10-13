@@ -2095,13 +2095,19 @@ app.whenReady().then(() => {
     // 表现就是"工具精简看着配了、其实没生效"（实测踩过一次：两条请求头一字不差）
     setSession('judge', new DshSession({ config: cfg, patchId: 'judge' }));
     setSession('work', new DshSession({ config: cfg, patchId: 'work', onEvent: onSessionEvent }));
-    for (const purpose of ['judge', 'work']) {
+    const warm = (purpose) => {
       const s = sessionOf(purpose);
+      if (!s) return;
       s.start().catch((err) => {
         log(`常驻会话（${purpose}）起不来，退回一次性调用：`, err.message);
         setSession(purpose, null);
       });
-    }
+    };
+    warm('judge');
+    // ⚠️ work 那条**错开十秒再热**，不要和 judge 同时起 —— 两条 DSH 进程会在同一瞬间
+    // 抢写同一个 `~\.dsh\profiles\sdk\cordis.yml`，后到的那个直接崩（用户截图里那串
+    // "} / / Node.js v24.18.1" 就是它的 stderr 尾巴）。派活时若还没热好，ask() 会顺手拉起来。
+    setTimeout(() => warm('work'), 10_000);
 
     // 选项问答 / 审批应答：盯 run/ask 目录，把按钮画到气泡上
     askWatcher = createAskWatcher({
