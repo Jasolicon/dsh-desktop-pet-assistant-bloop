@@ -15,6 +15,8 @@ contextBridge.exposeInMainWorld('pet', {
   transcribe: (samples, sampleRate) => ipcRenderer.invoke('pet:transcribe', { samples, sampleRate }),
   voice: (samples, sampleRate) => ipcRenderer.invoke('pet:voice', { samples, sampleRate }),
   task: (text) => ipcRenderer.invoke('pet:task', text),
+  // 拖图片到宠物身上：直接"给它看"（常驻会话支持内联图片，不用先存文件再让它读路径）
+  askImage: (paths, text) => ipcRenderer.invoke('pet:askImage', { paths, text }),
   say: () => ipcRenderer.invoke('pet:say'),
   hover: (hovering) => ipcRenderer.send('pet:hover', !!hovering),
   drag: (dx, dy) => ipcRenderer.send('pet:drag', { dx, dy }),

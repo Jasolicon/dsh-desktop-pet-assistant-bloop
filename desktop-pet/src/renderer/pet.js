@@ -500,6 +500,13 @@ document.addEventListener('drop', (e) => {
   e.preventDefault();
   const files = [...(e.dataTransfer?.files || [])].map((f) => f.path).filter(Boolean);
   const text = String(e.dataTransfer?.getData('text') || '').trim();
+  // 全是图片 → **直接给它看**（常驻会话支持内联图片，它能真的看到画面；
+  // 只塞路径的话它还得自己多花一轮去读）。混着别的文件就退回下面那条"填进输入框"的路。
+  const IMG = /\.(png|jpe?g|webp|gif)$/i;
+  if (files.length && files.every((p) => IMG.test(p))) {
+    void showImages(files);
+    return;
+  }
   const payload = (files.length ? files.join(' ') : text).trim();
   if (!payload) return;
   toggleBar(true);
@@ -508,6 +515,26 @@ document.addEventListener('drop', (e) => {
   const head = files.length ? `拖进来 ${files.length} 个文件` : '拖进来一段文字';
   showBubble(`${head}：\n${payload.slice(0, 120)}\n\n（确认没问题就回车，它按这条去做）`, 15000);
 });
+
+/** 拖进来的图片：给它看，结论照常进气泡 + 朗读。 */
+async function showImages(paths) {
+  setState('thinking');
+  showBubble(`在看这 ${paths.length} 张图…`, 0);
+  const r = await window.pet.askImage(paths, '');
+  if (!r.ok) {
+    setState('silent');
+    showBubble(`（没看成：${r.why}）`, 10000);
+    return;
+  }
+  if (/^\W*SILENT\W*$/i.test(r.text || '')) {
+    setState('silent');
+    showBubble('（它看了，但没什么值得说的）', 8000);
+    return;
+  }
+  setState('speaking');
+  showBubble(r.text, 20000);
+  say(r.text);
+}
 
 // Esc = 收起气泡（气泡上那个 × 的键盘等价物）
 document.addEventListener('keydown', (e) => {

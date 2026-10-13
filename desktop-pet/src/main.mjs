@@ -1348,6 +1348,39 @@ function registerIpc() {
     }
   });
 
+  /**
+   * 拖图片到宠物身上：直接"给它看"。
+   *
+   * 为什么不做成"把路径塞进输入框"：常驻会话的 contentBlocks **支持内联图片**，
+   * 它能真的看到画面；而只给路径的话，还得它多花一轮去 read_image（PowerShell 版
+   * 那边 headless CLI 没有附件入口，只能走路径那条笨路）。
+   */
+  ipcMain.handle('pet:askImage', async (_e, { paths = [], text = '' } = {}) => {
+    if (busy) return { ok: false, why: '上一个活还在跑（可以先中断）' };
+    const images = (Array.isArray(paths) ? paths : []).filter((p) => typeof p === 'string' && p).slice(0, 4);
+    if (!images.length) return { ok: false, why: '没有可用的图片' };
+    monitor?.noteUserAction(cfg.userQuietSeconds || 6);
+    busy = true;
+    const prompt = String(text || '').trim() || '看看这张图，说一句你注意到的、值得我知道的事（没问题就说 SILENT）。';
+    const rec = tasks.add({ kind: 'image', text: `看这 ${images.length} 张图：${prompt.slice(0, 40)}` });
+    pushTasks();
+    try {
+      const before = await balanceBeforeCall();
+      const r = await ask(prompt, { imagePaths: images });
+      void recordCallCost(before);
+      tasks.update(rec.id, {
+        status: r.ok ? 'done' : 'failed',
+        result: r.ok ? r.text : '',
+        error: r.ok ? '' : (r.why || ''),
+        endedAt: new Date().toISOString(),
+      });
+      return { ok: r.ok, text: r.text, why: r.why, seconds: r.seconds };
+    } finally {
+      busy = false;
+      pushTasks();
+    }
+  });
+
   // 「它派出去的活」窗口那三条：拿表、派活、中断
   ipcMain.handle('tasks:list', () => taskRows());
   ipcMain.handle('tasks:interrupt', () => interruptRunning());

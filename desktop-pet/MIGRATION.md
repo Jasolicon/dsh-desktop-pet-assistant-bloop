@@ -151,6 +151,7 @@
 | **用哪个模型 / 干活时多大权限** | `agents.mjs` 的 `preparePatch` + 右键/托盘菜单 + 设置窗口 | 候选读 `agents.json`，选中项记进 config（`mainAgentModel` / `workAgentAccess`）；换完丢掉常驻会话按新配置重建。实测三种组合生成的 patch 分别落到 `deepseek-flash`/`deepseek-v4-pro` 与 `read-only`/`danger-full-access` |
 | **「它派出去的活」窗口**（对应 `agents-window.ps1`） | `src/tasks.mjs` + `src/agents/` 窗口 | 记录（有界 20 条、写 run\tasks.json、重启对账把假"在跑"记成失败）；看记录 / 中断（停会话或杀子进程）/ 派活（与输入框同一条路）。9 项单测；`PET_DEBUG_AGENTS=1` 验窗口真的画出来（行数 / 状态标记 / 按钮可用性） |
 | **待机两条兜底 + 截图保鲜** | `monitor.mjs` 的 `probeStandby` + `src/shots.mjs` | 显示器电源通知 Electron 拿不到（PS 靠 RegisterPowerSettingNotification），改用"待机自愈探测 + 连续抓不到屏 + 截图太旧就不发且明说看不到画面"。5 项单测；`PET_DEBUG_STANDBY=1` 实测能自己醒（日志："待机自愈：探测到人在动且抓得到屏，退出待机"） |
+| **拖图片给它看** | `pet:askImage` + 渲染进程 drop | 常驻会话支持内联图片，所以图片**直接发进去**（不是塞路径让它多跑一轮 read_image）。实测：发一张自己截的图，模型准确描述出气泡文案、角色、底部图标排 |
 
 **常驻会话带来的一个额外好处**：`session/prompt` 的 `contentBlocks` **支持内联图片**
 （TypeScript 版那边 headless CLI 没有附件入口，只能让模型用 `read_image` 读路径、多花一轮）。
