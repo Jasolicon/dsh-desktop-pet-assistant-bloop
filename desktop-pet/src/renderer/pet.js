@@ -798,6 +798,8 @@ function applyLook(info) {
   // 把状态挂到 <html> 上：一是排查时一眼能看出"朗读到底开没开"（这个开关曾经是摆设），
   // 二是以后要按朗读状态改样式不用再动 JS。
   document.documentElement.dataset.tts = ttsEnabled ? 'on' : 'off';
+  // 状态光晕整圈开关（空闲时本来就不显示，见 pet.css 的 #pet::before）
+  petEl.dataset.halo = info.showHalo === false ? 'off' : 'on';
   micDeviceId = String(info.sttDeviceId || '');
   petFit();
   recheckHover('look');   // 字号/按钮条一变，元素框就变了 → 按当前坐标重判一次

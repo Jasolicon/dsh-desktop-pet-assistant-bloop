@@ -1590,6 +1590,7 @@ function registerIpc() {
     // 少给一个的症状是"设置里改了、重启后又变回去"（实测踩过：字号/朗读开关都没传）
     fontSize: cfg.fontSize,
     fontFamily: cfg.fontFamily,
+    showHalo: cfg.showHalo !== false,
     ttsEnabled: cfg.ttsEnabled !== false,
     speakStyle: cfg.speakStyle,
     sttDeviceId: cfg.sttDeviceId || '',

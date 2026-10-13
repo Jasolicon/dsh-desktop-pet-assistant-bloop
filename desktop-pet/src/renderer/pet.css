@@ -177,17 +177,34 @@ html, body {
   100% { transform: scale(1, 1); }
 }
 
-/* 状态光晕：图片改不了色，就用背后一圈柔光表达 */
+/*
+  状态光晕：角色图改不了色，所以用背后一圈柔光表达"此刻在干什么"。
+
+  ⚠️ 它**空闲时不出现**（用户原话："一定要有那个白球吗"）——
+  一直挂着的那圈柔光没在表达任何事，只像贴了个白球在背后。
+  现在只有真的有事时才亮：思考（琥珀）/ 说话（蓝）/ 聆听录音（红）/ 暂停（灰）。
+  另外用 `--halo-strength` 统一控制强度（0 = 整套关掉，见 applyLook 的 showHalo）。
+*/
 #pet::before {
   content: "";
   position: absolute;
   inset: -6px -6px -2px -6px;
   border-radius: 50%;
   background: radial-gradient(circle, currentColor 0%, transparent 68%);
-  opacity: 0.35;
+  opacity: 0;                                   /* 空闲 = 完全看不见 */
   transition: color 0.25s ease, opacity 0.25s ease;
   pointer-events: none;
 }
+
+/* 有事的时候才亮起来（这几档的 opacity 就是"光晕强度"） */
+#pet[data-state="thinking"]::before  { opacity: 0.34; }
+#pet[data-state="speaking"]::before  { opacity: 0.32; }
+#pet[data-state="listening"]::before { opacity: 0.38; }
+#pet[data-state="paused"]::before    { opacity: 0.22; }
+#pet[data-state="silent"]::before    { opacity: 0.16; }
+
+/* 整圈关掉（设置里的"状态光晕"关掉时，applyLook 把它置 0） */
+#pet[data-halo="off"]::before { opacity: 0 !important; }
 
 /* 角色图：撑满宠物框、不变形；没图（或加载失败）时保持 display:none，让自绘那只顶上 */
 #petimg {

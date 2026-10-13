@@ -30,6 +30,7 @@ export const SCHEMA = [
       { key: 'fontFamily', label: '气泡字体', type: 'string', live: false },
       { key: 'fontSize', label: '气泡字号', type: 'number', min: 6, max: 40, live: false },
       { key: 'showSeconds', label: '气泡停留（秒）', type: 'int', min: 2, max: 120, live: true, help: '自动消失的气泡也能点 × 提前收起。' },
+      { key: 'showHalo', label: '状态光晕', type: 'bool', live: true, help: '角色图背后那圈柔光（思考/说话/聆听时才亮，空闲不显示）。关掉就完全不要它。' },
     ],
   },
   {
