@@ -349,18 +349,37 @@ html, body {
   line-height: 1;
   cursor: pointer;
   /* 按钮自己也有"按一下"的弹性，和宠物同一条曲线 */
-  transition: transform 0.16s cubic-bezier(0.34, 1.56, 0.64, 1), background 0.16s ease, border-color 0.16s ease;
+  transition: transform 0.16s cubic-bezier(0.34, 1.56, 0.64, 1),
+              background 0.14s ease, border-color 0.14s ease, color 0.14s ease, box-shadow 0.14s ease;
 }
 
 #tools button::before { content: attr(data-icon); }
 
-#tools button:hover {
-  background: rgba(250, 251, 253, 0.65);
-  color: rgba(26, 30, 40, 1);
+/*
+  三级反馈（照 PS 的观感，但做得**更明显**一点，因为我们的按钮浮在任意桌面上、
+  而不像 PS 那样压在半透明气泡上 —— 那边 96→165 的透明度差在这边几乎看不出来）：
+    ① 指针进这一排   → 整排提亮（PS 就是这么做的：整行一起亮，一眼看出"这里是一排按钮"）
+    ② 指针到某一格   → 那一格再亮一档、图标变实、加一圈柔光
+    ③ 按住某一格     → 直接反白（近乎纯白底 + 深色图标）+ 缩一点 = 有"按下去了"的手感
+*/
+#tools:hover button {
+  background: rgba(250, 251, 253, 0.62);
+  border-color: rgba(255, 255, 255, 0.6);
 }
-
-/* 按下去：缩小一点再弹回来（弹性按压的"按压"那一半） */
-#tools button:active { transform: scale(0.9); transition-duration: 0.08s; }
+#tools button:hover {
+  background: rgba(255, 255, 255, 0.88);
+  border-color: rgba(255, 255, 255, 0.95);
+  color: rgba(20, 24, 32, 1);
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.35), 0 2px 8px rgba(20, 26, 38, 0.22);
+}
+/* 按下去：反白 + 缩一点（松手由 transition 弹回来） */
+#tools button:active {
+  background: rgba(255, 255, 255, 0.98);
+  border-color: #ffffff;
+  color: #0d1017;
+  transform: scale(0.9);
+  transition-duration: 0.08s;
+}
 
 /* "这格开着"：淡黄底 + 黄描边。框选过区域 / 对话窗口开着 / 输入条开着 都会亮这一格 */
 #tools button.on {
@@ -368,6 +387,13 @@ html, body {
   border-color: rgba(255, 205, 60, 0.85);
   color: #1a1e28;
 }
+/* 开着 + 指针在上面：黄得更实一点（不然"开着"那格悬停时反而看不出反馈） */
+#tools button.on:hover {
+  background: rgba(255, 244, 170, 0.95);
+  border-color: rgba(255, 196, 30, 1);
+  box-shadow: 0 0 0 2px rgba(255, 205, 60, 0.45), 0 2px 8px rgba(20, 26, 38, 0.22);
+}
+#tools button.on:active { background: rgba(255, 250, 205, 1); }
 
 /* 悬停提示：按钮条上方浮一条深色小胶囊（图标看不懂时唯一的解释出口） */
 #tip {

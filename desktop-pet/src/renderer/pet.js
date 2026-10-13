@@ -446,12 +446,11 @@ window.addEventListener('mouseup', () => {
   }
   if (rec) { finishRecording(); dragFrom = null; window.pet.holdMouse(false); petEl.style.cursor = 'grab'; return; }
   if (poke) {
-    // 正在朗读时点一下 = 打断（而不是再让它说一句）——和 PowerShell 版的"双击打断"同义
-    if (window.speechSynthesis && window.speechSynthesis.speaking) {
-      window.speechSynthesis.cancel();
-    } else {
-      askSay();
-    }
+    // 单击本体**只剩两件事**：弹一下（上面那行）+ 说话中点一下 = 打断朗读。
+    // 为什么不再顺手"看一眼"：那有三个正经入口（按钮条「问一句」/ 右键菜单 / Ctrl+Alt+G），
+    // 而"摸一下有反应"只有点本体这一条路 —— 后者才像一只宠物，前者像一个大按钮。
+    // （PowerShell 版当年也是这么改的："单击本体不再是问一句，而是摸一下"。）
+    if (window.speechSynthesis && window.speechSynthesis.speaking) window.speechSynthesis.cancel();
   }
   dragFrom = null;
   window.pet.holdMouse(false);   // 松手了：还回"按坐标决定穿透"的常态

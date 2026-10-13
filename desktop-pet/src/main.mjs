@@ -502,8 +502,8 @@ function createWindow() {
           typeBtn.click(); r.再点收起 = bar.classList.contains('hidden'); r.收后那格灭 = !typeBtn.classList.contains('on');
 
           // 3) 弹性按压：按住压扁、松手弹回
-          //    （把 speaking 打成 true，让"松手"走**打断朗读**那条分支 ——
-          //      否则它会真的去问一句，这个自检就变成一次真模型调用了）
+          //    （单击本体现在**只会弹一下**、不再"看一眼"；speaking 那条分支仍然要能走到 ——
+          //      所以这里把 speaking 打成 true，顺带验"点一下能打断朗读"）
           try { Object.defineProperty(window.speechSynthesis, 'speaking', { get: () => true }); } catch { }
           pet.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0 }));
           r.按住 = pet.classList.contains('press');
@@ -807,6 +807,40 @@ function createWindow() {
         }));
       } catch (err) {
         console.error('[pet][debug] 穿透自检失败', err);
+      }
+      app.quit();
+    });
+  }
+
+  /**
+   * 开发用：设了 PET_DEBUG_BTNHOVER=1 就验按钮条的三级反馈（悬停/按下/开着）。
+   * 用 Electron 自己的 sendInputEvent 合成鼠标事件 —— 这条路能真正驱动 CSS 的
+   * `:hover` / `:active`（派发 DOM 事件不能），而且不用去挪真光标。
+   */
+  if (process.env.PET_DEBUG_BTNHOVER) {
+    win.webContents.once('did-finish-load', async () => {
+      try {
+        await new Promise((r) => setTimeout(r, 1200));
+        const box = await win.webContents.executeJavaScript(`(() => {
+          const r = document.getElementById('t-chat').getBoundingClientRect();
+          return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) };
+        })()`);
+        const read = () => win.webContents.executeJavaScript(`(() => {
+          const b = document.getElementById('t-chat');
+          const cs = getComputedStyle(b);
+          return { hover: b.matches(':hover'), active: b.matches(':active'), bg: cs.backgroundColor, border: cs.borderColor, shadow: cs.boxShadow.slice(0, 24), transform: cs.transform };
+        })()`);
+        const idle = await read();
+        win.webContents.sendInputEvent({ type: 'mouseMove', x: box.x, y: box.y });
+        await new Promise((r) => setTimeout(r, 350));
+        const hovered = await read();
+        win.webContents.sendInputEvent({ type: 'mouseDown', x: box.x, y: box.y, button: 'left', clickCount: 1 });
+        await new Promise((r) => setTimeout(r, 250));
+        const pressed = await read();
+        win.webContents.sendInputEvent({ type: 'mouseUp', x: box.x, y: box.y, button: 'left', clickCount: 1 });
+        log('[debug] 按钮反馈 =', JSON.stringify({ 常态: idle, 悬停: hovered, 按下: pressed }, null, 0));
+      } catch (err) {
+        console.error('[pet][debug] 按钮反馈自检失败', err);
       }
       app.quit();
     });
