@@ -154,6 +154,7 @@
 | **拖图片给它看** | `pet:askImage` + 渲染进程 drop | 常驻会话支持内联图片，所以图片**直接发进去**（不是塞路径让它多跑一轮 read_image）。实测：发一张自己截的图，模型准确描述出气泡文案、角色、底部图标排 |
 | **工具精简 + 两条会话分工**（对应 PS 的 `disableTools`） | `agents.mjs` 的 `buildPatch/resolveAgents` + `main.mjs` 的 `sessions` | judge（只读 + 关 16 行工具 + effort low）/ work（有手有脚）。实测量到 `request/header`：judge 2893 字符 vs work 19918 字符 → 每轮省 ≈17k 字符 ≈ 5k token。4 项单测锁住"两条不许合并"的分工 |
 | **DSH 位置探测兜底** | `paths.mjs` 的 `registryDshRoot` + main 回写 `dshRoot` | DSH 装在非默认盘、又没在跑、也不在 PATH 上时（实测就是这种状态）整条链探不到 → 加"注册表安装信息"这一条，并把探测到的位置写回配置。单测覆盖解析（含"没有 InstallLocation 就退回 DisplayIcon 目录"） |
+| **说话风格 = 整份预设 + 可编辑的 system prompt** | `src/prompt.mjs` + `desktop-pet/presets/` | 四档预设从 desktop-guide/presets 搬过来（不再是一句话）；生效的那份是 system-prompt.txt，接在提示词最后一节并照 PS 原文标"最高优先级"。5 项单测；`PET_DEBUG_PROMPT=1` 验它真在最后（1304 字符 / 48 行 / 含该节） |
 
 **常驻会话带来的一个额外好处**：`session/prompt` 的 `contentBlocks` **支持内联图片**
 （TypeScript 版那边 headless CLI 没有附件入口，只能让模型用 `read_image` 读路径、多花一轮）。

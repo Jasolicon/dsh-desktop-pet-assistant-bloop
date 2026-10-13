@@ -40,6 +40,9 @@ import { contextMemory, observeFile, DEFAULTS as MEMORY_DEFAULTS } from './memor
 import { readSamples, taskProfile } from './profile.mjs';
 import { createTaskLog, toRow } from './tasks.mjs';
 import { usableShots } from './shots.mjs';
+import {
+  customSection, readPreset, readSystemPrompt, shouldAdoptPreset, systemPromptFile, writeSystemPrompt,
+} from './prompt.mjs';
 
 let win = null;
 let cfg = loadConfig();
@@ -594,6 +597,30 @@ function createWindow() {
     });
   }
 
+  /**
+   * 开发用：设了 PET_DEBUG_PROMPT=1 就把判断提示词的**头和尾**打出来 ——
+   * 验的是"风格那一段真的接在最后、并且标着最高优先级"（接错了不会有任何报错，
+   * 只会在用的时候表现为"我明明改了 prompt，它还是照老规矩说话"）。
+   */
+  if (process.env.PET_DEBUG_PROMPT) {
+    win.webContents.once('did-finish-load', () => {
+      try {
+        const prompt = buildLookPrompt({
+          current: { process: '自检', title: 'Code', inWindowS: 12 },
+          screen: { stillSeconds: 3 }, human: { idleSeconds: 1 }, timeline: [], shots: [],
+        });
+        const rows = prompt.split('\n');
+        log('[debug] 提示词总长', prompt.length, '字符、', rows.length, '行');
+        log('[debug] 头 3 行 =', JSON.stringify(rows.slice(0, 3)));
+        log('[debug] 尾 6 行 =', JSON.stringify(rows.slice(-6)));
+        log('[debug] 含"最高优先级"这一节吗 =', prompt.includes('用户自定义指令（最高优先级'));
+      } catch (err) {
+        console.error('[pet][debug] prompt 自检失败', err);
+      }
+      app.quit();
+    });
+  }
+
   // 初始整窗穿透；渲染进程在鼠标移到宠物身上时打开
   win.setIgnoreMouseEvents(true, { forward: true });
 
@@ -723,12 +750,27 @@ function clearRegionNow() {
   return { ok: true, region: null };
 }
 
-/** 换说话风格（四种；换的是整段提示词定位，见 styleLine）。 */
+/**
+ * 换说话风格（四种）。
+ * 换的是**整段提示词**（presets\<风格>.txt），所以顺手把它写进 system-prompt.txt ——
+ * 那份文件就是"当前生效的那一份"（PS 同一条路）。
+ * ⚠️ 只在文件还是"某个预设"（= 没被手改过）时覆盖；手改过就不动，并明确告诉用户怎么换成预设。
+ */
 function setStyle(style) {
   cfg = { ...cfg, speakStyle: style };
   try { saveConfig(cfg); } catch (err) { log('风格存不进去（这次仍然生效）：', err.message); }
   win?.webContents.send('pet:settingsChanged', cfg);
-  log('说话风格：', style);
+  const file = systemPromptFile();
+  const current = readSystemPrompt(file);
+  const preset = readPreset(style);
+  if (preset && shouldAdoptPreset(current)) {
+    writeSystemPrompt(preset, file);
+    log('说话风格：', style, '（预设已写进 system-prompt.txt）');
+  } else if (preset && current && current !== preset) {
+    log('说话风格：', style, '（system-prompt.txt 是你手改过的，这次没有覆盖它）');
+    win?.webContents.send('pet:card', `风格已切到「${style}」，但 system-prompt.txt 是你手改过的，我没有覆盖它。\n想换成这个风格的预设：右键 →「用当前风格的预设覆盖 system prompt」。`);
+    return;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -767,6 +809,41 @@ function setAccess(name) {
   try { saveConfig(cfg); } catch (err) { log('权限存不进去（这次仍然生效）：', err.message); }
   dropSessions();
   log('[agent] 干活权限 →', name, '（常驻会话会按新权限重建）');
+}
+
+/**
+ * 「编辑 system prompt…」：拿系统默认的方式打开那个文件。
+ * 为什么不开自绘编辑窗口：PS 那边为此写了一整个 WinForms 表单，而这里"用记事本改一个文本文件"
+ * 已经够用且更可预期（改完保存即生效，下一次判断就读新内容）。文件不存在就先按当前风格铺一份。
+ */
+function editSystemPrompt() {
+  const file = systemPromptFile();
+  try {
+    if (!readSystemPrompt(file)) writeSystemPrompt(readPreset(cfg.speakStyle) || '', file);
+    void shell.openPath(file);
+    log('[prompt] 打开 system prompt：', file);
+  } catch (err) {
+    log('[prompt] 打开失败：', err.message);
+  }
+}
+
+/** 「看现在生效的 system prompt…」：内容可能上千字，所以画在气泡卡片里（比朗读合适）。 */
+function showSystemPromptCard() {
+  const file = systemPromptFile();
+  const text = styleText();
+  const from = readSystemPrompt(file) ? 'system-prompt.txt（你自己改过的那份）' : `预设 presets\\${cfg.speakStyle || 'coach'}.txt`;
+  win?.webContents.send('pet:card', `现在生效的风格文本（${from}）\n————\n${text.slice(0, 1200)}`);
+}
+
+/** 「用当前风格的预设覆盖 system prompt」：明确的一次覆盖动作（免得手改的东西被悄悄吃掉）。 */
+function adoptPresetNow() {
+  const preset = readPreset(cfg.speakStyle);
+  if (!preset) { win?.webContents.send('pet:card', `没找到预设：presets\\${cfg.speakStyle}.txt`); return; }
+  const ok = writeSystemPrompt(preset, systemPromptFile());
+  log('[prompt] 用预设覆盖 system prompt：', ok ? '成功' : '失败');
+  win?.webContents.send('pet:card', ok
+    ? `已用「${cfg.speakStyle}」的预设覆盖 system-prompt.txt。\n想改就右键「编辑 system prompt…」。`
+    : '写不进去（文件被占用？）——看看日志。');
 }
 
 /** 丢掉两条常驻会话（换模型/换权限之后必须丢：它们是按配置 initialize 出来的）。 */
@@ -1003,16 +1080,22 @@ function toggleAutostart(want) {
  * 四档说话风格的"这一轮语气"。换风格换的是**整段定位**，不是语气词 ——
  * 完整版在 desktop-guide/presets/*.txt（那边一份一份写全的），这里先要那一条分界线。
  */
-function styleLine(style) {
+/**
+ * 现在生效的那份"语气 / 风格"文本。
+ *
+ * 顺序：用户自定义的 system-prompt.txt（= 最高优先级那一段，切风格时会被预设覆盖）→
+ * 当前风格的**预设**（presets\<风格>.txt，写全了的）→ 一句话兜底（免得提示词里出现空段）。
+ */
+function styleText(style = cfg.speakStyle) {
+  const custom = readSystemPrompt();
+  if (custom) return custom;
+  const preset = readPreset(style);
+  if (preset) return preset;
   switch (String(style || 'coach')) {
-    case 'guard':
-      return '保守：只在屏幕上存在可证明的错误、反复失败、或做法与目标明显冲突时才开口，否则 SILENT。';
-    case 'roast':
-      return '损友：像认识十年、嘴上不饶人的朋友 —— 可以吐槽屏幕上那件事（不是人），一句拆台 +（有建议的话）一句有用的；画面没变也可以开口。';
-    case 'scout':
-      return '找事：不评论屏幕，而是找一件你**真能替用户做掉**的事提出来（「我来…」而不是「你应该…」）；提不出具体的活就 SILENT。';
-    default:
-      return '陪练：屏幕上是一个需要决定的局面时，直接给出你推荐的那一个，并给一句话理由。';
+    case 'guard': return '保守：只在屏幕上存在可证明的错误、反复失败、或做法与目标明显冲突时才开口，否则 SILENT。';
+    case 'roast': return '损友：可以吐槽屏幕上那件事（不是人），一句拆台 +（有建议的话）一句有用的。';
+    case 'scout': return '找事：找一件你真能替用户做掉的事提出来（「我来…」）；提不出具体的活就 SILENT。';
+    default: return '陪练：屏幕上是一个需要决定的局面时，直接给出你推荐的那一个，并给一句话理由。';
   }
 }
 
@@ -1022,7 +1105,7 @@ function buildLookPrompt(payload) {
     '你是常驻的「随时指导」助手，在后台看着用户的屏幕。',
     '',
     '【这一轮的语气】',
-    styleLine(cfg.speakStyle),
+    `风格：${cfg.speakStyle || 'coach'}（完整的风格规则在**最后那一节**，以它为准）`,
     '',
     '【此刻的观察】',
     `- 前台窗口：${p.process || '(未知)'}《${p.title || ''}》，已停留 ${p.inWindowS || 0} 秒`,
@@ -1065,6 +1148,10 @@ function buildLookPrompt(payload) {
     '直接说，最多两行；不要复述屏幕上已有的信息，不要客套，不要问"需要我帮忙吗"。',
     '如果没有值得说的，就**只输出 SILENT 这一个词**，不要输出任何其他内容。',
   );
+  // 风格 / 用户自定义指令在整个提示词的**最后**，并且照 PS 的原文标明"最高优先级" ——
+  // 模型对"最后那一节 + 冲突时以它为准"这种写法最敏感，前置反而容易被上面的规则压住。
+  const style = customSection(styleText());
+  if (style) lines.push('', style);
   return lines.join('\n');
 }
 
@@ -1607,6 +1694,10 @@ ipcMain.handle('settings:clearRegion', () => clearRegionNow());
       // 这两项决定"花谁的钱"和"它派出去的活能碰什么"，所以放在顶层（PS 版收在「设置」下）
       { label: '用哪个模型', submenu: modelSubmenu() },
       { label: '干活时的权限', submenu: accessSubmenu() },
+      // system prompt：整段风格规则就在那个文件里，用户可以直接改（PS 那边是个编辑窗口）
+      { label: '编辑 system prompt…（打开文件）', click: () => editSystemPrompt() },
+      { label: '看现在生效的 system prompt…', click: () => showSystemPromptCard() },
+      { label: '用当前风格的预设覆盖 system prompt', click: () => adoptPresetNow() },
       {
         label: cfg.region ? `框选监控区域…（现在是 ${describeRegion(cfg.region)}）` : '框选监控区域…',
         click: () => { void pickRegionNow(); },
@@ -1732,6 +1823,13 @@ app.whenReady().then(() => {
     // 不做这一步，表里会永远有一条在跑 —— 用户以为它卡住了（PS 版踩过同样的坑）。
     const fixed = tasks.resetStale();
     if (fixed) log(`[tasks] 清理了 ${fixed} 条上次重启遗留的"在跑"记录`);
+
+    // system prompt：第一次跑就按当前风格铺一份出来（用户看得见、能改；PS 同一条路）。
+    // 已经有了就一个字都不动 —— 那是用户自己改过的。
+    if (!readSystemPrompt()) {
+      const preset = readPreset(cfg.speakStyle);
+      if (preset && writeSystemPrompt(preset)) log('[prompt] 已按当前风格铺好 system-prompt.txt');
+    }
 
     // 预热两条常驻会话（各约 4.5 秒，后台并行）：这样第一次判断/第一次派活
     // 都不用再付进程启动的钱。起不来就退化成一次性调用，桌宠照常能用 —— 只是慢一点。

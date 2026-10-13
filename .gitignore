@@ -93,3 +93,7 @@ desktop-pet/diag-userdata/
 desktop-pet/ud-*/
 desktop-pet/diag-*.log
 desktop-pet/render-*.*
+
+# Electron 版「当前生效的 system prompt」：切风格时从 presets\ 复制过来、用户也可以直接改，
+# 属于本机状态（不是代码）。风格预设本身在 desktop-pet/presets/ 里，那才是进库的东西。
+desktop-pet/system-prompt.txt
