@@ -151,9 +151,20 @@ function speakable(text) {
   return t.split(/\r?\n/)[0].slice(0, 180);
 }
 
+/**
+ * 朗读开关 + 上一句。
+ *
+ * ⚠️ `ttsEnabled` 原先只是设置窗口里的一个摆设：渲染进程从来没读过它，
+ * 关掉"启用"照样出声（等于骗用户）。现在它跟着配置走（applyLook 里同步）。
+ */
+let ttsEnabled = true;
+let lastSpoken = '';
+
 function say(text) {
   const line = speakable(text);
   if (!line) return;
+  lastSpoken = line;
+  if (!ttsEnabled) return;
   try {
     if (!window.speechSynthesis) return;
     window.speechSynthesis.cancel();          // 新的盖掉旧的，别排队念一串
@@ -669,6 +680,10 @@ function applyLook(info) {
     document.documentElement.style.setProperty('--ui-font', `"${info.fontFamily}", "Microsoft YaHei UI", "Segoe UI", sans-serif`);
   }
   tools.classList.toggle('hidden', info.showToolbar === false);
+  ttsEnabled = info.ttsEnabled !== false;
+  // 把状态挂到 <html> 上：一是排查时一眼能看出"朗读到底开没开"（这个开关曾经是摆设），
+  // 二是以后要按朗读状态改样式不用再动 JS。
+  document.documentElement.dataset.tts = ttsEnabled ? 'on' : 'off';
   petFit();
 }
 
@@ -677,6 +692,10 @@ window.pet.onSettingsChanged((next) => {
   toolbarState.region = next?.region ?? toolbarState.region;
   refreshToolbar();
 });
+
+// 菜单里的「朗读」那一组（出声的开关也在设置窗口里，两边改的是同一个键）
+window.pet.onSpeakStop(() => { try { window.speechSynthesis?.cancel(); } catch { /* 没音色 */ } });
+window.pet.onSpeakReplay(() => { if (lastSpoken) say(lastSpoken); });
 
 window.pet.info().then((info) => {
   applyLook(info);

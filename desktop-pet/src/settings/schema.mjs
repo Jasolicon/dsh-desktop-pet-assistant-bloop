@@ -26,7 +26,7 @@ export const SCHEMA = [
     title: '外观',
     items: [
       { key: 'petImage', label: '角色图', type: 'string', live: false, help: '带透明通道的 PNG；留空 = 用仓库自带的 assets/pet.png。' },
-      { key: 'petWidth', label: '角色宽度', type: 'int', min: 80, max: 600, live: false, help: '逻辑像素；DPI 缩放会自己乘上去。' },
+      { key: 'petWidth', label: '窗口宽度', type: 'int', min: 240, max: 900, live: false, help: '气泡有多宽、角色图有多大地方站。默认 320（和 PowerShell 版同比例）；比按钮条窄时按按钮条算。' },
       { key: 'fontFamily', label: '气泡字体', type: 'string', live: false },
       { key: 'fontSize', label: '气泡字号', type: 'number', min: 6, max: 40, live: false },
       { key: 'showSeconds', label: '气泡停留（秒）', type: 'int', min: 2, max: 120, live: true, help: '自动消失的气泡也能点 × 提前收起。' },

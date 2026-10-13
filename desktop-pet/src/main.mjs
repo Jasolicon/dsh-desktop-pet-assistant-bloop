@@ -94,6 +94,35 @@ function refreshTray() {
     },
     { label: '取消监控区域', enabled: !!cfg.region, click: () => clearRegionNow() },
     { label: '设置…', click: () => openSettingsWindow() },
+    // 「朗读」：出声开关 + 打断 + 重读上一句（和 PowerShell 版同一组三条）
+    {
+      label: '朗读',
+      submenu: [
+        {
+          label: '出声朗读',
+          type: 'checkbox',
+          checked: cfg.ttsEnabled !== false,
+          click: (item) => {
+            cfg = { ...cfg, ttsEnabled: item.checked };
+            try { saveConfig(cfg); } catch (err) { log('朗读开关存不进去：', err.message); }
+            win?.webContents.send('pet:settingsChanged', cfg);
+            log('朗读：', item.checked ? '出声' : '静音');
+          },
+        },
+        { label: '停止朗读（打断）', click: () => win?.webContents.send('pet:speakStop') },
+        { label: '重读上一句', click: () => win?.webContents.send('pet:speakReplay') },
+      ],
+    },
+    // 「说话风格」：换的是整段定位（见 main.mjs 的 styleLine）
+    {
+      label: '说话风格',
+      submenu: [
+        { label: '保守（只在明显问题时说）', type: 'radio', checked: cfg.speakStyle === 'guard', click: () => setStyle('guard') },
+        { label: '陪练（每次判断都给建议）', type: 'radio', checked: cfg.speakStyle === 'coach', click: () => setStyle('coach') },
+        { label: '损友（先吐槽再给建议）', type: 'radio', checked: cfg.speakStyle === 'roast', click: () => setStyle('roast') },
+        { label: '找事（提一件它真能替你做的事）', type: 'radio', checked: cfg.speakStyle === 'scout', click: () => setStyle('scout') },
+      ],
+    },
     {
       label: '开机启动（跟 Windows 一起起）',
       type: 'checkbox',
@@ -173,7 +202,7 @@ function createWindow() {
   // 窗口尺寸要**装得下**最宽的那一行：宠物本体 / 气泡 / 底部那排按钮
   // （5×40 + 4×5 = 220，两边各 8 的留白）。以前只按宠物宽度算，加按钮条时按钮会被裁掉一截。
   const toolsW = 5 * 40 + 4 * 5 + 16;
-  const [w, h] = [Math.max(cfg.petWidth || 220, toolsW), 480];
+  const [w, h] = [Math.max(cfg.petWidth || 320, toolsW), 480];
   const x = typeof cfg.x === 'number' ? cfg.x : Math.round(workArea.x + (workArea.width - w) / 2);
   // 位置优先按"底边"还原（窗口高度会随内容变，只认 y 会让桌宠上下飘，见 config.mjs 的 bottom）
   const y = typeof cfg.bottom === 'number'
@@ -311,6 +340,35 @@ function createWindow() {
             + (parseFloat(st.rowGap || st.gap) || 0) * (kids.length - 1)
             + (parseFloat(st.paddingTop) || 0) + (parseFloat(st.paddingBottom) || 0));
           r.明细 = kids.map((el) => el.id + '=' + el.offsetHeight).join(' ');
+          // 配置里的外观项有没有真的落到页面上（字号就是个最容易"传丢了"的例子）
+          r.气泡字号 = getComputedStyle(document.getElementById('bubble')).fontSize;
+          r.朗读开关 = document.documentElement.dataset.tts || '(没设置)';
+          r.气泡高 = Math.round(document.getElementById('bubble').getBoundingClientRect().height);
+          r.气泡文字高 = Math.round(bubbleText.getBoundingClientRect().height);
+          {
+            const bc = getComputedStyle(document.getElementById('bubble'));
+            const sc = getComputedStyle(stage);
+            r.布局 = 'bubble flex=' + bc.flexGrow + '/' + bc.flexShrink + '/' + bc.flexBasis
+              + ' h=' + bc.height + ' maxH=' + bc.maxHeight
+              + '; stage ' + sc.display + ' ' + sc.flexDirection
+              + ' justify=' + sc.justifyContent + ' align=' + sc.alignItems + ' h=' + sc.height;
+          }
+
+          // 5) 闲着的时候要在轻轻浮动（PowerShell 版是 sin 波 ±3px）——
+          //    在动画里量两次：位移没变就说明"浮动"根本没生效（看着就是一张贴纸）
+          window.hideBubble();
+          const mover = document.getElementById('petimg');
+          await new Promise((res) => setTimeout(res, 600));   // 等窗口高度回落稳定，别把窗口的位移当成浮动
+          r.浮动动画 = (mover.getAnimations?.() || [])
+            .map((a) => a.animationName + '@' + (a.effect?.getTiming?.().duration ?? '?') + 'ms')
+            .join(',') || '(没有动画)';
+          const tops = [];
+          for (let i = 0; i < 9; i++) {
+            tops.push(Math.round(mover.getBoundingClientRect().top * 10) / 10);
+            await new Promise((res) => setTimeout(res, 150));
+          }
+          r.浮动的采样 = tops.join(' → ');
+          r.真的在动 = new Set(tops).size > 1;
           return r;
         })()`);
         // 给主进程一点时间真的把窗口调过去，然后把两个高度都打出来对照
@@ -453,6 +511,14 @@ function clearRegionNow() {
   return { ok: true, region: null };
 }
 
+/** 换说话风格（四种；换的是整段提示词定位，见 styleLine）。 */
+function setStyle(style) {
+  cfg = { ...cfg, speakStyle: style };
+  try { saveConfig(cfg); } catch (err) { log('风格存不进去（这次仍然生效）：', err.message); }
+  win?.webContents.send('pet:settingsChanged', cfg);
+  log('说话风格：', style);
+}
+
 // ---------------------------------------------------------------------------
 // 开机启动（HKCU\...\Run，不需要管理员权限；见 src/autostart.mjs）
 // ---------------------------------------------------------------------------
@@ -593,6 +659,12 @@ function registerIpc() {
     // 底部按钮条要的两件事：区域设了没（那格灯亮不亮）、整条要不要显示
     region: cfg.region || null,
     showToolbar: cfg.showToolbar !== false,
+    // 外观那几项：渲染进程启动时要拿它们初始化（applyLook），
+    // 少给一个的症状是"设置里改了、重启后又变回去"（实测踩过：字号/朗读开关都没传）
+    fontSize: cfg.fontSize,
+    fontFamily: cfg.fontFamily,
+    ttsEnabled: cfg.ttsEnabled !== false,
+    speakStyle: cfg.speakStyle,
   }));
 
   ipcMain.handle('pet:status', () => monitor?.snapshot() ?? null);

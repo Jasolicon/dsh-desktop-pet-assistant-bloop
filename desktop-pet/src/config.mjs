@@ -25,7 +25,12 @@ export const DEFAULTS = {
   petImage: '',
   fontFamily: 'Microsoft YaHei UI',
   fontSize: 12,
-  petWidth: 220,
+  /**
+   * 桌宠窗口宽度（也就是气泡的可用宽度、宠物图片槽位的宽度）。
+   * 默认 320 是照 PowerShell 版来的：那边窗口 320 逻辑 px，150 宽的角色居中、按钮条 220 居中 —— 
+   * 摆在一起才是同一个比例（之前按 220 算，宠物看着比 PS 版小一圈、气泡也窄）。
+   */
+  petWidth: 320,
   /** 说话风格：guard 保守 / coach 陪练 / roast 损友 / scout 找事（换的是整段定位，见 settings/schema.mjs）。 */
   speakStyle: 'coach',
   showSeconds: 12,

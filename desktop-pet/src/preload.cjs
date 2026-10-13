@@ -36,6 +36,9 @@ contextBridge.exposeInMainWorld('pet', {
   // 右键菜单里的「现在说一句」「打字派活」：菜单在主进程里，动作在渲染进程这边做
   onSayCmd: (cb) => ipcRenderer.on('pet:speakCmd', () => cb()),
   onTypeCmd: (cb) => ipcRenderer.on('pet:typeCmd', () => cb()),
+  // 菜单里的「朗读」：停止（打断）/ 重读上一句
+  onSpeakStop: (cb) => ipcRenderer.on('pet:speakStop', () => cb()),
+  onSpeakReplay: (cb) => ipcRenderer.on('pet:speakReplay', () => cb()),
   // 选项问答 / 审批：主进程收到请求就推过来，用户在气泡上点选后回传
   onAsk: (cb) => ipcRenderer.on('pet:ask', (_e, prompt) => cb(prompt)),
   onAskClear: (cb) => ipcRenderer.on('pet:askClear', () => cb()),
