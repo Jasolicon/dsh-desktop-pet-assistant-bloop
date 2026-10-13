@@ -432,12 +432,29 @@ window.addEventListener('mousemove', (e) => {
   const dx = e.screenX - dragFrom.x;
   const dy = e.screenY - dragFrom.y;
   if (Math.abs(dx) + Math.abs(dy) < 3) return;   // 手抖不算拖动
+  // ⚠️ 已经在录音了却开始移动 → **改判为拖动**（把录音作废）。
+  // 这是"拖不动"最常见的一条：按住稍停一下（≥400ms）就进了"按住说话"，
+  // 这时你再拖它当然不动 —— 它以为你在跟它说话。宁可把录音让位给拖动：
+  // 说话是"按住别动"，你既然动了，那就是想搬家。
+  if (rec) abortRecording();
   dragFrom.moved = true;
   if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }   // 开始拖了就别再录
   dragFrom.x = e.screenX;
   dragFrom.y = e.screenY;
   window.pet.drag(dx, dy);
 });
+
+/** 放弃这次录音（拖动优先于说话）：停掉麦克风、不送去识别。 */
+function abortRecording() {
+  const r = rec;
+  rec = null;
+  if (!r) return;
+  try { r.proc.disconnect(); r.src.disconnect(); } catch { /* 已经断了 */ }
+  try { r.stream.getTracks().forEach((t) => t.stop()); } catch { /* 忽略 */ }
+  try { r.ctx.close(); } catch { /* 忽略 */ }
+  bubble.classList.add('hidden');
+  console.log('[renderer] 录音中检测到拖动 → 改判为拖动');
+}
 
 window.addEventListener('mouseup', () => {
   if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
@@ -460,6 +477,16 @@ window.addEventListener('mouseup', () => {
   dragFrom = null;
   window.pet.holdMouse(false);   // 松手了：还回"按坐标决定穿透"的常态
   petEl.style.cursor = 'grab';
+});
+
+// 窗口失焦时可能收不到 mouseup（比如按住拖到别的窗口上松手）→ 把按下状态收干净，
+// 否则 holdMouse 会一直挂着"强制接收鼠标"，变成"背后点不动"
+window.addEventListener('blur', () => {
+  if (!dragFrom) return;
+  if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
+  dragFrom = null;
+  petEl.classList.remove('press');
+  window.pet.holdMouse(false);
 });
 
 petEl.addEventListener('animationend', (e) => {

@@ -173,13 +173,19 @@ function hoverPoll() {
   }
   const lx = cx - b.x;
   const ly = cy - b.y;
-  const hit = hitRects.some((r) => lx >= r.x && lx < r.x + r.w && ly >= r.y && ly < r.y + r.h);
+  // 边缘给 10px 宽容：抓宠物这种动作手很快，差几个像素就按空会觉得很"涩"
+  const slack = 10;
+  const hit = hitRects.some((r) => lx >= r.x - slack && lx < r.x + r.w + slack
+    && ly >= r.y - slack && ly < r.y + r.h + slack);
   applyHover(hit, `窗内(${Math.round(lx)},${Math.round(ly)})`);
 }
 
 function startHoverPoll() {
   if (cursorTimer) return;
-  cursorTimer = setInterval(hoverPoll, 90);
+  // 间隔决定了"鼠标刚移到宠物身上、还要等多久才能按住它"——也就是用户说的"拖不动"。
+  // GetCursorPos 是极快的调用，40ms 一次完全无所谓；用 90ms 时那种"移过去马上按住"
+  // 的习惯动作会有一成左右的概率按空（实测体感就是"有时候拖不动"）。
+  cursorTimer = setInterval(hoverPoll, 40);
   hoverPoll();
 }
 /** 暂停 = 关掉观察循环（不采样、不判断、不自动开口）。手动点它"说一句"仍然有效。 */
