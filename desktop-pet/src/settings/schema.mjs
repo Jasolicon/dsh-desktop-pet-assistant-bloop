@@ -118,6 +118,8 @@ export const SCHEMA = [
       { key: 'sttLongPressMs', label: '长按判定（毫秒）', type: 'int', min: 150, max: 2000, live: true, help: '按住这么久才开始录音；松手就识别。' },
       { key: 'sttMaxSeconds', label: '单次最长录音（秒）', type: 'int', min: 3, max: 120, live: true },
       { key: 'sttModelDir', label: '模型目录', type: 'string', live: false, help: '留空 = 用 DSH 自带的 SenseVoice 模型（首次会下载约 229MB）。' },
+      // 麦克风：录音是渲染进程用 getUserMedia 做的，所以设备只能由页面自己枚举（type: mic）
+      { key: 'sttDeviceId', label: '麦克风', type: 'mic', live: true, help: '留空 = 系统默认。设备名要授权过一次麦克风才看得到（点「刷新」会先要一次权限）。' },
     ],
   },
   {

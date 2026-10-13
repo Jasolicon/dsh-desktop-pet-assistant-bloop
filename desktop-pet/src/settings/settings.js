@@ -103,6 +103,55 @@ function buildInput(item, value) {
     return wrap;
   }
 
+  // 麦克风：设备列表要**页面自己**枚举（录音在渲染进程用 getUserMedia 做，主进程看不到设备），
+  // 所以这里自成一个控件：先要一次权限（不然标签是空的），再列出来。
+  if (item.type === 'mic') {
+    const box = el('div', 'mic');
+    const select = document.createElement('select');
+    const note = el('div', 'micHint', '正在读设备列表…');
+    const refresh = el('button', null, '刷新');
+    const fill = (devices) => {
+      select.replaceChildren();
+      const auto = document.createElement('option');
+      auto.value = '';
+      auto.textContent = '（系统默认）';
+      select.append(auto);
+      let n = 0;
+      for (const d of devices) {
+        if (d.kind !== 'audioinput') continue;
+        const opt = document.createElement('option');
+        opt.value = d.deviceId;
+        opt.textContent = d.label || `麦克风 ${++n}`;
+        select.append(opt);
+      }
+      select.value = String(value || '');
+      // 存着的设备没了（换机器/拔了）→ 明确说出来，别静默回到默认
+      if (value && select.value !== String(value)) {
+        note.textContent = '配置里那台麦克风现在不在（是拔了还是换了？）—— 现在按系统默认录音。';
+      } else {
+        note.textContent = `共 ${select.options.length - 1} 台可选；留"系统默认"就跟着系统走。`;
+      }
+    };
+    const load = async () => {
+      note.textContent = '正在读设备列表…';
+      try {
+        // 先要一次权限：没授权过的话 enumerateDevices 给的 label 全是空串
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        stream.getTracks().forEach((t) => t.stop());
+        fill(await navigator.mediaDevices.enumerateDevices());
+      } catch (e) {
+        note.textContent = `读不到设备（${e.message || '没有权限？'}）—— 那就仍然用系统默认。`;
+        fill([]);
+      }
+    };
+    refresh.addEventListener('click', () => { void load(); });
+    readers.set(item.key, () => select.value);
+    box.append(select, refresh, note);
+    wrap.append(box);
+    void load();
+    return wrap;
+  }
+
   if (item.type === 'bool') {
     const box = el('label', 'bool');
     const input = document.createElement('input');

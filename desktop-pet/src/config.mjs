@@ -143,6 +143,12 @@ export const DEFAULTS = {
   sttEnabled: true,
   sttLongPressMs: 400,
   sttMaxSeconds: 20,
+  /**
+   * 用哪个麦克风（deviceId）。留空 = 系统默认。
+   * 注意录音是**渲染进程**用 getUserMedia 做的（Chromium 选设备），所以这一项影响的是那边；
+   * 识别本身（stt.mjs）拿到的只是 PCM，与设备无关。
+   */
+  sttDeviceId: '',
   sttNode: '',
   sttSherpaDir: '',
   sttModelDir: '',

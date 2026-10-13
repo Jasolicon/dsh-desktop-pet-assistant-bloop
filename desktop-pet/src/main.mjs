@@ -621,6 +621,36 @@ function createWindow() {
     });
   }
 
+  /**
+   * 开发用：设了 PET_DEBUG_SETTINGS=1 就把设置窗口开起来、读回它画出来的东西。
+   * 为什么需要：那个窗口现在有四种**专用控件**（区域 / key / 规则表 JSON / 麦克风下拉）+
+   * 动态候选项（模型、权限），改坏任何一处都**不会报错**，只会"界面上少一行"。
+   */
+  if (process.env.PET_DEBUG_SETTINGS) {
+    win.webContents.once('did-finish-load', async () => {
+      try {
+        openSettingsWindow();
+        const sw = (BrowserWindow.getAllWindows() || []).find((w) => w.getTitle().includes('设置'));
+        await new Promise((r) => setTimeout(r, 2500));
+        if (!sw) { log('[debug] 设置窗口没开出来'); app.quit(); return; }
+        const seen = await sw.webContents.executeJavaScript(`({
+          分组数: document.querySelectorAll('section.group').length,
+          行数: document.querySelectorAll('.row').length,
+          有区域控件: !!document.querySelector('.row .region'),
+          有key控件: !!document.querySelector('.row .secret'),
+          有规则表: !!document.querySelector('.row .rules textarea'),
+          有麦克风: !!document.querySelector('.row .mic select'),
+          麦克风提示: document.querySelector('.row .micHint')?.textContent || '',
+          下拉数量: document.querySelectorAll('.row select').length,
+        })`);
+        log('[debug] 设置窗口 =', JSON.stringify(seen));
+      } catch (err) {
+        console.error('[pet][debug] 设置窗口自检失败', err);
+      }
+      app.quit();
+    });
+  }
+
   // 初始整窗穿透；渲染进程在鼠标移到宠物身上时打开
   win.setIgnoreMouseEvents(true, { forward: true });
 
@@ -1265,6 +1295,34 @@ function interruptRunning(reason = '用户中断') {
   return { ok: true, id: rec.id, killed };
 }
 
+/**
+ * 设置窗口。建一次、复用（再点"设置…"就把它显到前面）。
+ * ⚠️ 和下面几个开窗口的函数一样，必须在**模块作用域**：createWindow 的自检也要用它
+ * （塞进 registerIpc 里就只有那个函数内部看得见，症状是 "openSettingsWindow is not defined"）。
+ */
+let settingsWin = null;
+function openSettingsWindow() {
+  if (settingsWin && !settingsWin.isDestroyed()) {
+    settingsWin.show();
+    settingsWin.focus();
+    return;
+  }
+  settingsWin = new BrowserWindow({
+    width: 760,
+    height: 780,
+    title: '泡泡 · Bloop 设置',
+    autoHideMenuBar: true,
+    backgroundColor: '#f7f9fc',
+    webPreferences: {
+      preload: join(ROOT, 'src', 'settings-preload.cjs'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+  settingsWin.loadFile(join(ROOT, 'src', 'settings', 'index.html'));
+  settingsWin.on('closed', () => { settingsWin = null; });
+}
+
 function registerIpc() {
   // 麦克风权限：Electron 默认不弹系统提示，得自己放行，否则 getUserMedia 直接失败。
   // 只放行 media，别的（摄像头/地理位置…）一律拒。
@@ -1327,6 +1385,7 @@ function registerIpc() {
     fontFamily: cfg.fontFamily,
     ttsEnabled: cfg.ttsEnabled !== false,
     speakStyle: cfg.speakStyle,
+    sttDeviceId: cfg.sttDeviceId || '',
   }));
 
   ipcMain.handle('pet:status', () => monitor?.snapshot() ?? null);
@@ -1541,32 +1600,6 @@ function registerIpc() {
       busy = false;
     }
   });
-
-/**
- * 设置窗口。建一次、复用（再点"设置…"就把它显到前面）。
- */
-let settingsWin = null;
-function openSettingsWindow() {
-  if (settingsWin && !settingsWin.isDestroyed()) {
-    settingsWin.show();
-    settingsWin.focus();
-    return;
-  }
-  settingsWin = new BrowserWindow({
-    width: 760,
-    height: 780,
-    title: '泡泡 · Bloop 设置',
-    autoHideMenuBar: true,
-    backgroundColor: '#f7f9fc',
-    webPreferences: {
-      preload: join(ROOT, 'src', 'settings-preload.cjs'),
-      contextIsolation: true,
-      nodeIntegration: false,
-    },
-  });
-  settingsWin.loadFile(join(ROOT, 'src', 'settings', 'index.html'));
-  settingsWin.on('closed', () => { settingsWin = null; });
-}
 
 // 设置窗口要的两件事：读当前配置 + schema；把改动写回 config.json。
 // 只接受 schema 里列过的键 —— 配置里还有一堆 `_xxxNote` 和 PowerShell 版专属的键，

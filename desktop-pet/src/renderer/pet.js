@@ -185,6 +185,8 @@ function speakable(text) {
  */
 let ttsEnabled = true;
 let lastSpoken = '';
+/** 指定用哪个麦克风录音（空 = 系统默认）。设备列表在设置窗口里选，这里只负责用。 */
+let micDeviceId = '';
 
 function say(text) {
   const line = speakable(text);
@@ -411,7 +413,10 @@ petEl.addEventListener('animationend', (e) => {
 async function beginRecording() {
   if (rec) return;
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    // 麦克风可以指定（设置窗口里选的那台）；没指定就让系统自己挑
+    const stream = await navigator.mediaDevices.getUserMedia(
+      micDeviceId ? { audio: { deviceId: { exact: micDeviceId } } } : { audio: true },
+    );
     const ctx = new AudioContext();
     const src = ctx.createMediaStreamSource(stream);
     // ScriptProcessorNode 虽然过时，但零依赖、行为可预期；这里每帧只要 4k 样本
@@ -738,6 +743,7 @@ function applyLook(info) {
   // 把状态挂到 <html> 上：一是排查时一眼能看出"朗读到底开没开"（这个开关曾经是摆设），
   // 二是以后要按朗读状态改样式不用再动 JS。
   document.documentElement.dataset.tts = ttsEnabled ? 'on' : 'off';
+  micDeviceId = String(info.sttDeviceId || '');
   petFit();
 }
 
