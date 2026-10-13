@@ -315,7 +315,10 @@ function createTray() {
     log('托盘图标已就位');
   } catch (err) {
     // 没有托盘不该让桌宠起不来（比如某些精简桌面环境）
-    log('托盘没建起来（不影响其它功能）：', err.message);
+    // 但要说出来 —— 否则用户只知道"找不到托盘图标"，不知道是没建起来还是被系统收进折叠区了
+    log('[pet] 托盘没建起来：', err.message);
+    win?.webContents.send('pet:card',
+      `托盘图标没建起来（${err.message}）。\n不影响使用：Ctrl+Alt+B 就能显示/隐藏桌宠。`);
   }
 }
 
@@ -2076,6 +2079,18 @@ app.whenReady().then(() => {
       } catch (err) {
         log(`热键 ${accel} 注册失败：`, err.message);
       }
+    }
+    /**
+     * Ctrl+Alt+B：显示 / 隐藏桌宠 —— 这是**不依赖托盘**的那条退路。
+     * 为什么要它：托盘图标可能（a）没建起来（某些桌面环境），
+     * 或者（b）被 Windows 11 收进"折叠的系统托盘图标"里（新图标默认就是藏着的），
+     * 用户就会说"根本没做成托盘图标、桌宠也没了"。有了这个热键，桌宠在任何情况下都叫得回来。
+     */
+    try {
+      const ok = globalShortcut.register('Control+Alt+B', () => toggleVisible());
+      log(`热键 Control+Alt+B（显示/隐藏桌宠）：${ok ? '已注册' : '被占用'}`);
+    } catch (err) {
+      log('热键 Control+Alt+B 注册失败：', err.message);
     }
 
     // 观察循环：采样 → 本地闸门 →（值了才）叫模型
