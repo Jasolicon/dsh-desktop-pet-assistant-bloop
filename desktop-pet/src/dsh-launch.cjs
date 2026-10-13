@@ -25,8 +25,24 @@ if (!exe) {
   process.exit(2);
 }
 
+const env = { ...process.env, ELECTRON_RUN_AS_NODE: '1' };
+
+// 临时目录也收进"我们能写的地方"：DSH 的某个插件会在 %TEMP% 下 mkdtemp（dsh-spill-local），
+// 而如果 %TEMP% 正好也在被拦的范围内，它同样会 EPERM（实测见过）。
+// 跟着 DSH_HOME 一起走，既省心也干净（tmp 就落在 DSH 自己家旁边）。
+try {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  if (env.DSH_HOME) {
+    const tmp = path.join(env.DSH_HOME, 'tmp');
+    fs.mkdirSync(tmp, { recursive: true });
+    env.TEMP = tmp;
+    env.TMP = tmp;
+  }
+} catch { /* 建不出来就照旧用系统的，不影响主流程 */ }
+
 const child = spawn(exe, args, {
-  env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+  env,
   stdio: 'inherit',          // 原样转发：上层要读 DSH 的 stdout/stderr
   windowsHide: true,
 });

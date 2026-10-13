@@ -40,6 +40,7 @@ import {
 import { contextMemory, observeFile, DEFAULTS as MEMORY_DEFAULTS } from './memory.mjs';
 import { readSamples, taskProfile } from './profile.mjs';
 import { createTaskLog, toRow } from './tasks.mjs';
+import { ensureDshHome } from './dsh-home.mjs';
 import { usableShots } from './shots.mjs';
 import {
   customSection, readPreset, readSystemPrompt, shouldAdoptPreset, systemPromptFile, writeSystemPrompt,
@@ -1994,6 +1995,24 @@ if (noLock) {
 app.whenReady().then(() => {
     log('userData =', app.getPath('userData'));
     log('root =', ROOT);
+    /**
+     * DSH 的家目录搬到可写处，并且**所有子进程都继承**（`process.env` 是最省事的落点：
+     * 后面 spawn 的 DSH 全都自动带上，包括经 node 转一手那条路）。
+     *
+     * 为什么必须做：Electron 拉起来的 DSH 写 `~\.dsh\profiles\*\cordis.yml` 会 EPERM 并当场崩，
+     * 判断/问一句/派活/对话四条路全断（用户机器上也是这个现象）。见 src/dsh-home.mjs。
+     */
+    try {
+      const dh = ensureDshHome({ logger: console });
+      if (dh.home) {
+        process.env.DSH_HOME = dh.home;
+        log('[dsh] 家目录 →', dh.home, dh.seeded ? `（首次：拷了 ${dh.copied.length} 项、junction ${dh.linked.length} 项）` : '（已就绪）');
+      } else {
+        log('[dsh] 保持默认家目录：', dh.why);
+      }
+    } catch (err) {
+      log('[dsh] 搬家的尝试失败（继续用默认家目录）：', err.message);
+    }
     log('dsh  =', JSON.stringify(dshPaths(cfg)));
     // 探测到的 DSH 位置**记进配置**：DSH 装在非默认盘时，它没在跑就只剩注册表那条路
     // （有时也不灵），记下来下次就是"配置里写着"，一眼看得见、也不用再猜。
