@@ -19,6 +19,10 @@ contextBridge.exposeInMainWorld('pet', {
   askImage: (paths, text) => ipcRenderer.invoke('pet:askImage', { paths, text }),
   say: () => ipcRenderer.invoke('pet:say'),
   hover: (hovering) => ipcRenderer.send('pet:hover', !!hovering),
+  // 主进程轮询光标要用它：哪几块该接收鼠标（窗口内坐标，DIP）
+  hitRects: (rects) => ipcRenderer.send('pet:hitRects', rects),
+  // 录音/拖动期间必须**一直**接收鼠标，否则 mouseup 收不到（录制结束不了、拖到一半掉）
+  holdMouse: (on) => ipcRenderer.send('pet:holdMouse', !!on),
   drag: (dx, dy) => ipcRenderer.send('pet:drag', { dx, dy }),
   menu: () => ipcRenderer.send('pet:menu'),
   userAction: () => ipcRenderer.send('pet:userAction'),

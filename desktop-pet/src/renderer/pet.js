@@ -24,7 +24,6 @@ const bar = document.getElementById('bar');
 const input = document.getElementById('task');
 const send = document.getElementById('send');
 const closeBtn = document.getElementById('close');
-const badge = document.getElementById('badge');
 const ask = document.getElementById('ask');
 const askText = document.getElementById('askText');
 const askOpts = document.getElementById('askOpts');
@@ -80,6 +79,7 @@ function petFit() {
     // 窗口高度变了 → 内容整体挪位（底边锚定，宠物自己不动，但气泡/输入条会上下移），
     // 指针底下到底是哪个元素也可能跟着变，所以重判一次穿透
     recheckHover('fit');
+    reportHitRects();   // 框也变了 → 告诉主进程新的可交互矩形
   });
 }
 
@@ -207,15 +207,10 @@ function say(text) {
 }
 
 // ---------------------------------------------------------------------------
-// 观察状态：角标 = 累计"看过了但决定不说"的次数
+// 观察状态：**不再画角标**了（用户嫌右上角那个数字没用）。
+// 数据本身照旧在流（"看它判过什么"那张卡片要用沉默率/省下多少次），只是不上屏。
 // ---------------------------------------------------------------------------
-window.pet.onState((s) => {
-  if (!s) return;
-  const n = s.silentTotal || 0;
-  badge.textContent = n > 99 ? '99+' : String(n);
-  badge.classList.toggle('hidden', n <= 0);
-  badge.title = `看过了但决定不说 ${n} 次 · 本地闸门省下 ${s.skipped || 0} 次模型调用`;
-});
+window.pet.onState(() => { /* 界面上不再显示统计数字 */ });
 
 // 它主动说的一句（自动判断放行后）
 window.pet.onSpeak((text) => {
@@ -375,6 +370,32 @@ window.addEventListener('blur', () => recheckHover('blur'));
 // 每 400ms 按最后已知坐标复判一次，让它能自己恢复。开销就是一次 elementFromPoint。
 setInterval(() => recheckHover('tick'), 400);
 
+/**
+ * 把"哪几块要接收鼠标"上报给主进程（窗口内坐标，DIP）。
+ *
+ * 为什么要上报：**主进程现在自己轮询光标位置**来决定穿透 —— 实测「穿透状态下转发的
+ * mousemove 一次都收不到」（PET_DEBUG_HOVER 量过：光标明明在宠物身上，渲染进程 0 个事件），
+ * 所以"等事件告诉我"这条路在 Windows 上根本不成立，只能改成主进程主动问
+ * "光标在哪 + 在不在这些框里"。上报时机是布局变化时（petFit 每次都调）—— 框没变就不用重报。
+ */
+function reportHitRects() {
+  const stage = document.getElementById('stage');
+  const s = stage.getBoundingClientRect();
+  const rects = [];
+  for (const el of INTERACTIVE) {
+    if (!el || el.classList.contains('hidden')) continue;
+    const r = el.getBoundingClientRect();
+    if (r.width < 1 || r.height < 1) continue;
+    rects.push({
+      x: Math.round(r.left - s.left),
+      y: Math.round(r.top - s.top),
+      w: Math.round(r.width),
+      h: Math.round(r.height),
+    });
+  }
+  window.pet.hitRects(rects);
+}
+
 // ---------------------------------------------------------------------------
 // 2) 交互
 // ---------------------------------------------------------------------------
@@ -388,6 +409,9 @@ petEl.addEventListener('mousedown', (e) => {
   window.pet.userAction();
   dragFrom = { x: e.screenX, y: e.screenY, moved: false };
   petEl.style.cursor = 'grabbing';
+  // 按住期间一直要鼠标：拖动/录音都可能让指针短暂离开宠物的框，
+  // 一旦中途切回穿透，mouseup 就收不到 —— 表现是"拖到一半掉了"或"录音结束不了"
+  window.pet.holdMouse(true);
   // 弹性按压的第一半：按住就压扁（锚在底边中点，见 pet.css）
   petEl.classList.remove('pop');
   petEl.classList.add('press');
@@ -420,7 +444,7 @@ window.addEventListener('mouseup', () => {
     void petEl.offsetWidth;      // 强制重排：不然连点两下，第二次动画不会重播
     petEl.classList.add('pop');
   }
-  if (rec) { finishRecording(); dragFrom = null; petEl.style.cursor = 'grab'; return; }
+  if (rec) { finishRecording(); dragFrom = null; window.pet.holdMouse(false); petEl.style.cursor = 'grab'; return; }
   if (poke) {
     // 正在朗读时点一下 = 打断（而不是再让它说一句）——和 PowerShell 版的"双击打断"同义
     if (window.speechSynthesis && window.speechSynthesis.speaking) {
@@ -430,6 +454,7 @@ window.addEventListener('mouseup', () => {
     }
   }
   dragFrom = null;
+  window.pet.holdMouse(false);   // 松手了：还回"按坐标决定穿透"的常态
   petEl.style.cursor = 'grab';
 });
 

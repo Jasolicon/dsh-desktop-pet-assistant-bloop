@@ -96,6 +96,89 @@ let agentsWin = null;
 let pendingAskChild = null;
 /** 最近一次渲染进程报来的"鼠标在不在宠物上"（真值 = 窗口在接收鼠标）。自检和排查用它。 */
 let lastHover = null;
+/**
+ * 鼠标穿透：**主进程自己轮询光标**，不靠事件转发。
+ *
+ * 为什么（这是实测出来的，不是猜的）：穿透状态下 Electron 转发的 mousemove
+ * **一次都没到过渲染进程** —— 用 SetCursorPos 把光标精确挪到宠物身上，
+ * 渲染进程侧 0 个事件（`PET_DEBUG_HOVER=1` 可复现）。所以"鼠标动了告诉我 → 我再切状态"
+ * 这条路在 Windows 上根本不成立，症状就是用户那句"经常操作不到，鼠标直接透过去了"。
+ *
+ * 现在：每 90ms 问一次光标在哪 + 拿渲染进程上报的"可交互矩形"做命中判定。
+ * GetCursorPos 是个极快的调用，90ms 一次的开销可以忽略。
+ */
+let hitRects = [];          // 窗口内坐标（DIP），由渲染进程上报（布局变化时）
+let cursorTimer = null;
+let holdMouse = false;      // 拖动/录音期间强制接收鼠标（否则中途 mouseup 收不到）
+/** 光标位置（物理像素）。koffi 懒加载，拿不到就退回"只按事件"的老路。 */
+let cursorApi = null;
+
+function loadCursorApi() {
+  if (cursorApi !== null) return cursorApi;
+  if (process.platform !== 'win32') return (cursorApi = false);
+  try {
+    const { createRequire } = require('node:module');
+    const koffi = createRequire(import.meta.url)('koffi');
+    const user32 = koffi.load('user32.dll');
+    const POINT = koffi.struct('POINT', { x: 'int', y: 'int' });
+    cursorApi = { GetCursorPos: user32.func('int __stdcall GetCursorPos(_Out_ POINT *p)'), POINT };
+  } catch (err) {
+    log('[pet] 读不到光标位置（穿透退回按事件判断）：', err.message);
+    cursorApi = false;
+  }
+  return cursorApi;
+}
+
+function cursorPos() {
+  const api = loadCursorApi();
+  if (!api) return null;
+  const pt = {};
+  try {
+    api.GetCursorPos(pt);
+    return Number.isFinite(pt.x) ? { x: pt.x, y: pt.y } : null;
+  } catch {
+    return null;
+  }
+}
+
+/** 统一在这儿切状态（事件那条路和轮询都走它，免得两处判断分叉）。 */
+function applyHover(on, why = '') {
+  const next = !!on;
+  if (next === lastHover) return;
+  lastHover = next;
+  if (process.env.PET_DEBUG_HOVER) log('[debug] 穿透 →', next ? '窗口接收鼠标' : '传给下面的窗口', why);
+  if (win) win.setIgnoreMouseEvents(!next, { forward: true });
+}
+
+/**
+ * 一轮判定：光标在窗口里吗？在的话落在某个可交互矩形里吗？
+ * 注意坐标换算：GetCursorPos 给的是**物理像素**，窗口和矩形是 DIP（200% 缩放下差一倍）。
+ */
+function hoverPoll() {
+  if (!win || win.isDestroyed() || !win.isVisible()) return;
+  if (holdMouse) { applyHover(true, 'hold'); return; }
+  const pos = cursorPos();
+  if (!pos) return;                                   // 取不到光标 → 保持现状（别乱切）
+  const b = win.getBounds();
+  const disp = screen.getDisplayMatching(b);
+  const sf = disp?.scaleFactor || 1;
+  const cx = pos.x / sf;
+  const cy = pos.y / sf;
+  if (cx < b.x || cy < b.y || cx >= b.x + b.width || cy >= b.y + b.height) {
+    applyHover(false, '窗外');
+    return;
+  }
+  const lx = cx - b.x;
+  const ly = cy - b.y;
+  const hit = hitRects.some((r) => lx >= r.x && lx < r.x + r.w && ly >= r.y && ly < r.y + r.h);
+  applyHover(hit, `窗内(${Math.round(lx)},${Math.round(ly)})`);
+}
+
+function startHoverPoll() {
+  if (cursorTimer) return;
+  cursorTimer = setInterval(hoverPoll, 90);
+  hoverPoll();
+}
 /** 暂停 = 关掉观察循环（不采样、不判断、不自动开口）。手动点它"说一句"仍然有效。 */
 let paused = false;
 /** 观察循环这次启动到底开没开（PET_NO_AUTO=1 时不启动，“继续”也不该把它拉起来）。 */
@@ -302,6 +385,9 @@ function createWindow() {
   });
   // 页面就绪后把"哪几格灯亮着"推过去（按钮条的高亮状态）
   win.webContents.on('did-finish-load', () => { pushToolbar(); pushFooter(); });
+
+  // 光标轮询：这条是穿透的**主判据**（见 hoverPoll 的注释：转发的 mousemove 不可靠）
+  startHoverPoll();
 
   // 开发用：设了 PET_DEBUG_CAPTURE=<png 路径> 就把页面渲染结果存下来再退出。
   // 为什么需要它：桌面截图走 BitBlt，**拍不到透明的置顶窗口**（实测：窗口明明在 z=02，
@@ -703,6 +789,9 @@ function createWindow() {
           log('[debug] 渲染进程收到的 mousemove =', JSON.stringify(
             await win.webContents.executeJavaScript('window.__mm || null'),
           ));
+          log('[debug] 主进程手里的可交互矩形 =', JSON.stringify(hitRects),
+            '· 光标 DIP =', JSON.stringify({ x: Math.round(now.x / sf), y: Math.round(now.y / sf) }),
+            '· 窗口 =', JSON.stringify(win.getBounds()));
         }
         const onPet = lastHover;
         win.blur();                             // ← bug 现场：失焦
@@ -723,8 +812,9 @@ function createWindow() {
     });
   }
 
-  // 初始整窗穿透；渲染进程在鼠标移到宠物身上时打开
+  // 初始整窗穿透；之后由 hoverPoll()（主进程轮询光标 + 命中判定）和渲染进程的事件一起管
   win.setIgnoreMouseEvents(true, { forward: true });
+  lastHover = false;
 
   win.on('moved', () => {
     const [nx, ny] = win.getPosition();
@@ -1408,11 +1498,17 @@ function registerIpc() {
 
   // 鼠标在宠物身上 → 关掉穿透；离开 → 打开（forward 保证还能收到 move）
   ipcMain.on('pet:hover', (_e, hovering) => {
-    const on = !!hovering;
-    lastHover = on;
-    if (process.env.PET_DEBUG_HOVER) log('[debug] 穿透 →', on ? '窗口接收鼠标' : '传给下面的窗口');
-    if (win) win.setIgnoreMouseEvents(!on, { forward: true });
+    // 保留这条路（事件到得快、延迟更低），但**不再是唯一判据** ——
+    // 真正的判据是 hoverPoll()：实测转发事件经常压根不来
+    applyHover(!!hovering, 'event');
   });
+
+  // 渲染进程上报的可交互矩形（布局变化时）→ 轮询命中判定用
+  ipcMain.on('pet:hitRects', (_e, rects) => {
+    hitRects = Array.isArray(rects) ? rects.filter((r) => r && r.w > 0 && r.h > 0) : [];
+  });
+  // 拖动/录音期间强制接收鼠标（中途切回穿透会让 mouseup 丢掉）
+  ipcMain.on('pet:holdMouse', (_e, on) => { holdMouse = !!on; });
 
   // 用户刚动过桌宠（点、拖、打字）：把闸门的时间戳往后推，别在人家操作时插话
   ipcMain.on('pet:userAction', () => monitor?.noteUserAction(cfg.userQuietSeconds || 6));
@@ -1991,6 +2087,7 @@ app.whenReady().then(() => {
 
   app.on('will-quit', () => {
     try { globalShortcut.unregisterAll(); } catch { /* 已经退了 */ }
+    if (cursorTimer) clearInterval(cursorTimer);
     if (ledgerTimer) clearInterval(ledgerTimer);
     try { saveLedgerState(); } catch { /* 存不上就算了 */ }
     if (lockHeld) release(lockFile);        // 只清自己那把（别人的锁不能被我删掉）
