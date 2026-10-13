@@ -35,6 +35,7 @@ import {
   addObservation, footerText, formatCard, formatMoney, readLedger, readState, snapshot as ledgerSnapshot,
   spendCapKey, spendCapReason, writeLedger, writeState, findApiKey, DEFAULT_RECHARGE_MIN_DELTA,
 } from './ledger.mjs';
+import { contextMemory, observeFile, DEFAULTS as MEMORY_DEFAULTS } from './memory.mjs';
 
 let win = null;
 let cfg = loadConfig();
@@ -101,6 +102,8 @@ function refreshTray() {
     { label: '打字派活…', click: () => { showPet(); win?.webContents.send('pet:typeCmd'); } },
     { label: '看它判过什么', click: () => { showPet(); win?.webContents.send('pet:showDecisions'); } },
     { label: '账本…（余额 / 今天花了多少）', click: () => { showPet(); void showLedgerCard(); } },
+    { label: '看它的记忆…（这几天都在忙什么）', click: () => { showPet(); showMemoryCard(); } },
+    { label: '清空记忆（从现在重新算）', click: () => clearMemory() },
     {
       label: cfg.region ? `框选监控区域…（现在是 ${describeRegion(cfg.region)}）` : '框选监控区域…',
       click: () => { void pickRegionNow(); },
@@ -276,6 +279,43 @@ function createWindow() {
         log('渲染快照已保存:', process.env.PET_DEBUG_CAPTURE);
       } catch (err) {
         console.error('[pet] capturePage 失败', err);
+      }
+      app.quit();
+    });
+  }
+
+  /**
+   * 开发用：设了 PET_DEBUG_MEMORY=1 就验"记忆这一路"：
+   * 造一份观察日志到一个临时目录 → 压缩 → 断言那段话真的进了判断提示词。
+   * 为什么不在真日志上试：真日志要等窗口换过几次才有料，
+   * 而"记忆有没有接进提示词"是接线问题，跟有没有料无关。
+   */
+  if (process.env.PET_DEBUG_MEMORY) {
+    win.webContents.once('did-finish-load', () => {
+      try {
+        const dir = join(ROOT, 'ud-diag', 'mem');
+        mkdirSync(dir, { recursive: true });
+        const now = new Date();
+        const t = (min) => new Date(now.getTime() - min * 60_000).toISOString();
+        const file = observeFile(now, dir);
+        writeFileSync(file, [
+          { at: t(20), process: '自检', title: '记忆自检 — Code' },
+          { at: t(18), process: '自检', title: '记忆自检 — Code' },
+          { at: t(14), process: '自检', title: '记忆自检 — Chrome' },
+          { at: t(10), process: '自检', title: '记忆自检 — Code' },
+          { at: t(6), process: '自检', title: '记忆自检 — Code' },
+          { at: t(2), process: '自检', title: '记忆自检 — Code' },
+        ].map((e) => `${JSON.stringify(e)}\n`).join(''), 'utf8');
+        cfg = { ...cfg, memoryLogDir: dir };
+        const text = memoryText();
+        log('[debug] 记忆 =', JSON.stringify(text));
+        const prompt = buildLookPrompt({
+          current: { process: '自检', title: 'Code', inWindowS: 12 },
+          screen: { stillSeconds: 3 }, human: { idleSeconds: 1 }, timeline: [], shots: [],
+        });
+        log('[debug] 记忆进提示词了吗 =', prompt.includes('记忆自检'), `（提示词 ${prompt.length} 字）`);
+      } catch (err) {
+        console.error('[pet][debug] 记忆自检失败', err);
       }
       app.quit();
     });
@@ -689,6 +729,27 @@ async function showLedgerCard() {
   win?.webContents.send('pet:card', text);
 }
 
+/**
+ * 「看它的记忆…」：把那段压缩出来的活动汇总直接给人看。
+ * 为什么值得有：记忆是喂给模型的**提示词片段**，看不到就成了"它凭什么这么判断"的黑箱。
+ */
+function showMemoryCard() {
+  const text = memoryText();
+  const head = `记忆：最近 ${Number(cfg.memoryHours) || MEMORY_DEFAULTS.memoryHours} 小时`;
+  win?.webContents.send('pet:card', text
+    ? `${head}\n${text}`
+    : `${head}\n（还没有可汇总的观察：它每 ${Number(cfg.sampleSeconds) || 2} 秒采样一次，\n窗口换过几次、攒够 3 条以上才有得算。也可能是记忆被关掉了）`);
+  log('[记忆]', text ? '有内容' : '空');
+}
+
+/** 「清空记忆」：不删日志，只把"从哪一刻开始算"推到现在（PowerShell 版同一条路）。 */
+function clearMemory() {
+  cfg = { ...cfg, memorySince: new Date().toISOString() };
+  try { saveConfig(cfg); } catch (err) { log('记忆起点存不进去（这次仍然生效）：', err.message); }
+  win?.webContents.send('pet:card', '记忆已清空：从现在重新开始攒（旧的观察日志还在盘上，只是不再算进去）。');
+  log('[记忆] 已从现在重新算');
+}
+
 async function recordCallCost(before) {
   if (before == null) return;
   try {
@@ -774,6 +835,10 @@ function buildLookPrompt(payload) {
     lines.push('- 最近的窗口切换（新→旧）：');
     for (const t of tl.slice(-6).reverse()) lines.push(`    ${t.key} 停留 ${t.seconds}s`);
   }
+  // 长期记忆：把今天（或最近 memoryHours 小时）的观察压成一段，让判断不再只看最近 30 秒。
+  // 和 PowerShell 版一样接在"此刻的观察"后面（advisor-core.ps1 第 139 行那一处）。
+  const memory = memoryText();
+  if (memory) lines.push('', memory);
   // 截图由调用方以 imageBlocks 内联送进模型（常驻会话支持），所以这里只需要说一声
   if ((payload.shots || []).length) lines.push('', '【最新截图】随本条消息一起给你了，直接看。');
   lines.push(
@@ -784,6 +849,24 @@ function buildLookPrompt(payload) {
     '如果没有值得说的，就**只输出 SILENT 这一个词**，不要输出任何其他内容。',
   );
   return lines.join('\n');
+}
+
+/** 现在这份长期记忆（关掉 / 没料 就是空串）。 */
+function memoryText() {
+  if (cfg.memoryEnabled === false) return '';
+  try {
+    return contextMemory({
+      dir: cfg.memoryLogDir ? String(cfg.memoryLogDir) : undefined,
+      hours: Number(cfg.memoryHours) || MEMORY_DEFAULTS.memoryHours,
+      top: Number(cfg.memoryTop) || MEMORY_DEFAULTS.memoryTop,
+      maxChars: Number(cfg.memoryMaxChars) || MEMORY_DEFAULTS.memoryMaxChars,
+      since: cfg.memorySince || null,
+      enabled: true,
+    });
+  } catch (err) {
+    log('[记忆] 读失败：', err.message);
+    return '';
+  }
 }
 
 function registerIpc() {

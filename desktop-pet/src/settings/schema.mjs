@@ -79,6 +79,10 @@ export const SCHEMA = [
       { key: 'judgeMinSeconds', label: '两次判断最小间隔（秒）', type: 'int', min: 5, max: 3600, live: true, help: '本地闸门：值不值得起一次模型调用，由它决定。' },
       { key: 'judgeMinFpDelta', label: '画面差异阈值', type: 'int', min: 0, max: 960, live: true, help: '0..960（8×8 指纹，每格 0..15）。越大越不容易被打扰。' },
       { key: 'silentBackoffMax', label: '沉默退避倍数上限', type: 'int', min: 1, max: 10, live: true, help: '连续"没什么可说"时，间隔最多放宽到这个倍数。' },
+      { key: 'memoryEnabled', label: '长期记忆', type: 'bool', live: true, help: '把观察日志压成一段活动汇总喂给判断——否则它只看得到最近 30 秒。' },
+      { key: 'memoryHours', label: '记忆回看（小时）', type: 'int', min: 1, max: 48, live: true, help: '压缩的时候往回看多久。' },
+      { key: 'memoryTop', label: '记几个窗口', type: 'int', min: 1, max: 20, live: true, help: '按累计停留排前几名写进记忆。' },
+      { key: 'memoryMaxChars', label: '记忆长度上限（字符）', type: 'int', min: 100, max: 4000, live: true, help: '记忆是提示词的一部分，太长会挤掉正文。' },
     ],
   },
   {

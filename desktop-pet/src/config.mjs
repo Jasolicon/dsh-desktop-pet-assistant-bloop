@@ -69,6 +69,17 @@ export const DEFAULTS = {
   balanceBroadcastMinutes: 30,
   /** 每日消费上限（元；0 = 不设）；到线自动暂停 = 不再自己观察花钱。 */
   dailySpendCapYuan: 50,
+  // 长期记忆（见 src/memory.mjs）：把观察日志压成一段活动汇总，接进判断提示词
+  memoryEnabled: true,
+  memoryHours: 4,
+  memoryTop: 5,
+  memoryMaxChars: 700,
+  /** 「清空记忆」= 从现在重新算（存的是时间点，不是删日志）。 */
+  memorySince: null,
+  /** 观察日志的心跳间隔（秒）：窗口一直不换也要每这么久补一笔，否则最后一段没法定长。 */
+  observeHeartbeatSeconds: 120,
+  /** 观察日志目录（记忆的原料）。留空 = 本机默认（logs\）；只有诊断/测试才需要改。 */
+  memoryLogDir: '',
   // 大脑
   advisor: 'pwsh -NoProfile -ExecutionPolicy Bypass -File "{root}\\advisor-dsh.ps1"',
   advisorFast: 'pwsh -NoProfile -ExecutionPolicy Bypass -File "{root}\\advisor-openai.ps1"',

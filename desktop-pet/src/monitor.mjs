@@ -22,6 +22,7 @@ import { grabScreen } from './capture.mjs';
 import { worthAutoJudge, GATE_DEFAULTS } from './gate.mjs';
 import { foregroundWindow } from './win.mjs';
 import { logsDir, runDir } from './dirs.mjs';
+import { observeFile, pruneObserve } from './memory.mjs';
 
 // 目录在运行时取：打包后源码目录只读，要落到 userData（见 dirs.mjs）
 const logFile = () => join(logsDir(), 'decisions.jsonl');
@@ -81,7 +82,7 @@ export function createMonitor({ config = {}, live = null, onDecision, onState, l
   };
 
   function touchWindow(key, now) {
-    if (key === st.currentKey) return;
+    if (key === st.currentKey) return false;
     if (st.currentKey) {
       st.timeline.push({
         at: new Date(st.windowSince).toISOString(),
@@ -92,6 +93,25 @@ export function createMonitor({ config = {}, live = null, onDecision, onState, l
     }
     st.currentKey = key;
     st.windowSince = now;
+    return true;
+  }
+
+  /**
+   * 观察日志（长期记忆的原料，见 src/memory.mjs）。
+   *
+   * 只在窗口**变化**时写一条，外加每 observeHeartbeatSeconds 一条心跳 —— 不是每拍都写。
+   * 为什么：PowerShell 版每 2 秒一条，一天能到几 MB，而压缩只需要"换了没、待了多久"；
+   * 心跳那一笔是给"最后一个窗口待了多久"封顶用的（不然一直没换窗口就没有新的时间点）。
+   */
+  function appendObserve(now, key) {
+    const [process, title] = key.split('|');
+    try {
+      mkdirSync(logsDir(), { recursive: true });
+      appendFileSync(observeFile(new Date(now)), `${JSON.stringify({ at: new Date(now).toISOString(), process, title })}\n`, 'utf8');
+      st.lastObserveAt = now;
+    } catch (err) {
+      logger.error('[pet] 写观察日志失败', err.message);
+    }
   }
 
   function buildPayload(now, idleSeconds) {
@@ -126,7 +146,9 @@ export function createMonitor({ config = {}, live = null, onDecision, onState, l
     try {
       // 1) 前台窗口（进程名 + 标题）
       const win = foregroundWindow();
-      touchWindow(win.key, now);
+      const switched = touchWindow(win.key, now);
+      const heartbeatMs = (Number(C().observeHeartbeatSeconds) > 0 ? Number(C().observeHeartbeatSeconds) : 120) * 1000;
+      if (switched || now - (st.lastObserveAt || 0) >= heartbeatMs) appendObserve(now, win.key);
 
       // 2) 画面指纹（便宜的缩略图）
       // 指纹只要 8×8，所以不编码 JPEG（省掉每拍一次无用的编码）
@@ -271,6 +293,7 @@ export function createMonitor({ config = {}, live = null, onDecision, onState, l
     start() {
       if (st.running) return;
       st.running = true;
+      try { pruneObserve(); } catch { /* 清不了就算了 */ }
       st.lastJudgedAt = 0;   // 启动后第一次采样就该看一眼
       st.timer = setInterval(tick, sampleSecondsNow() * 1000);
       st.timerMs = sampleSecondsNow() * 1000;
