@@ -21,7 +21,7 @@ const DEFAULT_TIMEOUT_MS = 120_000;
  * 跑一个任务。
  * @returns {Promise<{ok: boolean, text: string, why?: string, seconds: number}>}
  */
-export function askDsh(task, config = {}, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
+export function askDsh(task, config = {}, { timeoutMs = DEFAULT_TIMEOUT_MS, onChild = null } = {}) {
   const p = dshPaths(config);
   const started = Date.now();
   const done = (ok, text, why) => ({ ok, text, why, seconds: (Date.now() - started) / 1000 });
@@ -44,6 +44,8 @@ export function askDsh(task, config = {}, { timeoutMs = DEFAULT_TIMEOUT_MS } = {
       env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
       windowsHide: true,
     });
+    // 把子进程交给调用方：中断那条路要能真的杀掉它（不然"中断"只是界面上写着而已）
+    try { onChild?.(child); } catch { /* 回调出错不影响这一轮 */ }
 
     let out = '';
     let err = '';

@@ -38,6 +38,7 @@ import {
 } from './ledger.mjs';
 import { contextMemory, observeFile, DEFAULTS as MEMORY_DEFAULTS } from './memory.mjs';
 import { readSamples, taskProfile } from './profile.mjs';
+import { createTaskLog, toRow } from './tasks.mjs';
 
 let win = null;
 let cfg = loadConfig();
@@ -63,6 +64,15 @@ let chatBusy = false;
  */
 let ledger = { lastBalance: null, lastCallCost: null, warned: false, capTripKey: '', footer: '', lastAnnounceAt: Date.now() };
 let ledgerTimer = null;
+/**
+ * 派出去的活的记录（"它派出去的活"那个窗口的数据层，见 src/tasks.mjs）。
+ * 模块级就建：IPC 处理函数要用它，而它自己只是读一个小 JSON，不碰 Electron。
+ */
+const tasks = createTaskLog({ logger: console });
+/** 「它派出去的活」窗口（建一次、复用）。 */
+let agentsWin = null;
+/** 一次性调用（headless）正在跑的那个子进程：中断时要真的杀掉它。 */
+let pendingAskChild = null;
 /** 暂停 = 关掉观察循环（不采样、不判断、不自动开口）。手动点它"说一句"仍然有效。 */
 let paused = false;
 /** 观察循环这次启动到底开没开（PET_NO_AUTO=1 时不启动，“继续”也不该把它拉起来）。 */
@@ -106,6 +116,7 @@ function refreshTray() {
     { label: '账本…（余额 / 今天花了多少）', click: () => { showPet(); void showLedgerCard(); } },
     { label: '看它的记忆…（这几天都在忙什么）', click: () => { showPet(); showMemoryCard(); } },
     { label: '清空记忆（从现在重新算）', click: () => clearMemory() },
+    { label: '它派出去的活…（看记录 / 中断 / 派活）', click: () => openAgentsWindow() },
     { label: '用哪个模型', submenu: modelSubmenu() },
     { label: '干活时的权限', submenu: accessSubmenu() },
     {
@@ -214,7 +225,9 @@ async function ask(text, { imagePaths = [] } = {}) {
       session = null;
     }
   }
-  return askDsh(text, cfg);
+  // 记下这个子进程：中断（"它派出去的活"窗口里那个按钮）要能真的杀掉它
+  return askDsh(text, cfg, { onChild: (child) => { pendingAskChild = child; } })
+    .finally(() => { pendingAskChild = null; });
 }
 
 function createWindow() {
@@ -499,6 +512,40 @@ function createWindow() {
         log('[debug] 当前档 =', JSON.stringify({ name: now?.profile?.name ?? null, sample: now?.profile?.sampleSeconds ?? null }));
       } catch (err) {
         console.error('[pet][debug] 任务档自检失败', err);
+      }
+      app.quit();
+    });
+  }
+
+  /**
+   * 开发用：设了 PET_DEBUG_AGENTS=1 就把"它派出去的活"那个窗口开起来、
+   * 塞两条**假记录**（一条在跑、一条完成），再把页面里真正画出来的行读回来。
+   * 为什么用假记录：真派活要花模型的钱，而这里要验的是"表和 IPC 通不通"，
+   * 跟有没有真跑过活无关（真跑的记录由 tasks.add/update 那条路写）。
+   */
+  if (process.env.PET_DEBUG_AGENTS) {
+    win.webContents.once('did-finish-load', async () => {
+      try {
+        const a = tasks.add({ kind: 'task', text: '把桌面那个临时文件删掉（自检用的假记录）' });
+        const b = tasks.add({ kind: 'window', text: '试着跑一遍测试（自检）' });
+        tasks.update(b.id, { status: 'done', result: '测试全过了', endedAt: new Date().toISOString() });
+        openAgentsWindow();
+        await new Promise((r) => setTimeout(r, 1500));
+        const seen = await agentsWin.webContents.executeJavaScript(`({
+          行数: document.querySelectorAll('#rows tr').length,
+          状态列: [...document.querySelectorAll('#rows td.mark')].map((td) => td.textContent),
+          中断可点: !document.getElementById('stop').disabled,
+          派活可点: !document.getElementById('send').disabled,
+          第一条结论: document.querySelector('#rows td.result')?.textContent || '',
+        })`);
+        log('[debug] 派活窗口 =', JSON.stringify(seen));
+        log('[debug] 记录里在跑的条数 =', tasks.running().length);
+        // 收尾：把自检的假记录清掉，别留在用户的表里
+        tasks.clear();
+        pushTasks();
+        void a;
+      } catch (err) {
+        console.error('[pet][debug] 派活窗口自检失败', err);
       }
       app.quit();
     });
@@ -975,6 +1022,80 @@ function memoryText() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// 「它派出去的活」窗口（对应 PowerShell 版的 agents-window.ps1）
+//
+// 为什么做成窗口而不是右键菜单里再来几条：这本质是一张表（状态 / 任务 / 时间 / 耗时 / 结论），
+// 子菜单只能点一下、看不到状态，也没法派活和中断。
+// ⚠️ 这几个函数必须在**模块作用域**（不能塞进 registerIpc 里）：createWindow 的自检
+// 和 window 的推送都要用它们，塞进去就只有 registerIpc 内部看得见（实测踩过）。
+// ---------------------------------------------------------------------------
+function taskRows() {
+  const now = Date.now();
+  return tasks.list().map((t) => toRow(t, now));
+}
+
+/** 把表推给窗口（没开着就什么也不做）。 */
+function pushTasks() {
+  if (!agentsWin || agentsWin.isDestroyed()) return;
+  try { agentsWin.webContents.send('tasks:update', taskRows()); } catch { /* 窗口正在关 */ }
+}
+
+function openAgentsWindow() {
+  if (agentsWin && !agentsWin.isDestroyed()) {
+    agentsWin.show();
+    agentsWin.focus();
+    pushTasks();
+    return;
+  }
+  agentsWin = new BrowserWindow({
+    width: 720,
+    height: 520,
+    title: '它派出去的活 · 泡泡',
+    autoHideMenuBar: true,
+    backgroundColor: '#f7f9fc',
+    webPreferences: {
+      preload: join(ROOT, 'src', 'agents', 'agents-preload.cjs'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+  agentsWin.loadFile(join(ROOT, 'src', 'agents', 'index.html'));
+  agentsWin.webContents.once('did-finish-load', pushTasks);
+  agentsWin.on('closed', () => { agentsWin = null; });
+}
+
+/**
+ * 中断正在跑的那一条。
+ *
+ * 怎么中断：常驻会话是"一轮一个 prompt"，所以**停掉会话**就等于中断这一轮
+ * （进程被杀，那一轮不会有结论）。下一次调用会自动重建会话。
+ * 会话已经不存在（走的是一次性调用）时，杀正在跑的那个子进程。
+ */
+function interruptRunning(reason = '用户中断') {
+  const running = tasks.running();
+  if (!running.length) return { ok: false, why: '现在没有在跑的活' };
+  const rec = running[0];
+  let killed = false;
+  if (session) {
+    try { session.stop(); killed = true; } catch { /* 已经退了 */ }
+    session = null;
+  }
+  if (pendingAskChild) {
+    try { pendingAskChild.kill(); killed = true; } catch { /* 已经退了 */ }
+    pendingAskChild = null;
+  }
+  tasks.update(rec.id, {
+    status: 'stopped',
+    note: killed ? reason : `${reason}（没找到可中断的进程，可能刚好跑完）`,
+    endedAt: new Date().toISOString(),
+  });
+  busy = false;          // 中断之后必须放开：不然新的派活会被"上一个任务还在跑"挡住
+  pushTasks();
+  log('[tasks] 中断：', rec.id, killed ? '已停掉会话' : '没找到进程');
+  return { ok: true, id: rec.id, killed };
+}
+
 function registerIpc() {
   // 麦克风权限：Electron 默认不弹系统提示，得自己放行，否则 getUserMedia 直接失败。
   // 只放行 media，别的（摄像头/地理位置…）一律拒。
@@ -1156,14 +1277,53 @@ function registerIpc() {
 
       const doing = routed?.text || text;
       log('task:', doing.slice(0, 80));
+      const rec = tasks.add({ kind: 'task', text: doing });
+      pushTasks();
       // 记下调用前的余额：跑完再读一次，差值就是"这一次大概花了多少"
       const before = await balanceBeforeCall();
       const r = await ask(doing);
       void recordCallCost(before);
       log('task done:', r.ok, r.seconds.toFixed(1) + 's', r.why || '');
+      tasks.update(rec.id, {
+        status: r.ok ? 'done' : 'failed',
+        result: r.ok ? r.text : '',
+        error: r.ok ? '' : (r.why || ''),
+        endedAt: new Date().toISOString(),
+      });
+      pushTasks();
       return { ...r, kind: 'task', routed: routed?.text || null };
     } finally {
       busy = false;
+    }
+  });
+
+  // 「它派出去的活」窗口那三条：拿表、派活、中断
+  ipcMain.handle('tasks:list', () => taskRows());
+  ipcMain.handle('tasks:interrupt', () => interruptRunning());
+  ipcMain.handle('tasks:dispatch', async (_e, text) => {
+    const t = String(text || '').trim();
+    if (!t) return { ok: false, why: '空任务' };
+    if (busy) return { ok: false, why: '上一个活还在跑（可以先中断它）' };
+    // 和「打字派活」走**同一条路**：不然两处的行为会分叉（PS 版在这上面踩过：
+    // 四个入口改了三个，剩下那个还按老逻辑走）
+    monitor?.noteUserAction(cfg.userQuietSeconds || 6);
+    busy = true;
+    const rec = tasks.add({ kind: 'window', text: t });
+    pushTasks();
+    try {
+      const before = await balanceBeforeCall();
+      const r = await ask(t);
+      void recordCallCost(before);
+      tasks.update(rec.id, {
+        status: r.ok ? 'done' : 'failed',
+        result: r.ok ? r.text : '',
+        error: r.ok ? '' : (r.why || ''),
+        endedAt: new Date().toISOString(),
+      });
+      return { ok: r.ok, text: r.text, why: r.why, seconds: r.seconds };
+    } finally {
+      busy = false;
+      pushTasks();
     }
   });
 
@@ -1327,6 +1487,7 @@ ipcMain.handle('settings:clearRegion', () => clearRegionNow());
       { type: 'separator' },
       { label: '看它判过什么', click: () => win.webContents.send('pet:showDecisions') },
       { label: '账本…（余额 / 今天花了多少）', click: () => { void showLedgerCard(); } },
+      { label: '它派出去的活…（看记录 / 中断 / 派活）', click: () => openAgentsWindow() },
       // 这两项决定"花谁的钱"和"它派出去的活能碰什么"，所以放在顶层（PS 版收在「设置」下）
       { label: '用哪个模型', submenu: modelSubmenu() },
       { label: '干活时的权限', submenu: accessSubmenu() },
@@ -1441,6 +1602,11 @@ app.whenReady().then(() => {
       setPaused(true);
     }
     startLedger();
+
+    // 派活记录对账：还挂着"在跑"的其实是上一轮的残留（常驻会话已经不在了）。
+    // 不做这一步，表里会永远有一条在跑 —— 用户以为它卡住了（PS 版踩过同样的坑）。
+    const fixed = tasks.resetStale();
+    if (fixed) log(`[tasks] 清理了 ${fixed} 条上次重启遗留的"在跑"记录`);
 
     // 预热常驻会话（约 4.5 秒，后台进行）：这样第一次判断不用再付进程启动的钱。
     // 起不来就退化成一次性调用，桌宠照常能用 —— 只是慢一点。

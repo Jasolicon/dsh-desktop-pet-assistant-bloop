@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>它派出去的活</title>
+    <link rel="stylesheet" href="agents.css" />
+  </head>
+  <body>
+    <header>
+      <h1>它派出去的活</h1>
+      <div class="meta">这里只记你自己让它做的事（自动判断那些不算）。留最近 20 条。</div>
+    </header>
+
+    <main>
+      <table id="table">
+        <thead>
+          <tr><th>状态</th><th>任务</th><th>开始</th><th>耗时</th><th>结论</th></tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+      <div id="empty" class="empty">还没有派过活。下面写一句试试。</div>
+    </main>
+
+    <footer>
+      <input id="task" type="text" placeholder="派一句活给它：回车就去做（和桌宠上那个输入框同一条路）" autocomplete="off" spellcheck="false" />
+      <button id="send" type="button" class="primary">派活</button>
+      <button id="stop" type="button">中断在跑的那条</button>
+      <span id="status"></span>
+    </footer>
+
+    <script src="agents.js"></script>
+  </body>
+</html>
