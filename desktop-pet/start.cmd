@@ -16,10 +16,13 @@ if not exist "%EXE%" (
   exit /b 1
 )
 echo Starting the pet... log: %LOG%
+rem Stamp each run: without it there is no way to tell a fresh log from a stale one
+rem (that bit us: a pasted log turned out to be from hours earlier, before a fix).
+echo ===== run %DATE% %TIME% ===== > "%LOG%"
 rem If the log below says the lock file / userData cannot be written (EPERM),
 rem this shell is running in a restricted context (sandbox). Uncomment the next
 rem line to keep Electron's user data inside the repo, which is writable:
-"%EXE%" --no-sandbox . > "%LOG%" 2>&1
+"%EXE%" --no-sandbox . >> "%LOG%" 2>&1
 echo.
 echo ===== the pet exited, code %ERRORLEVEL%; log tail: =====
 type "%LOG%"
