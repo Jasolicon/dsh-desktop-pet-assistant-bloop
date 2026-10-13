@@ -22,6 +22,7 @@ import { request } from 'node:http';
 import { join } from 'node:path';
 import { dshPaths } from './paths.mjs';
 import { preparePatch } from './agents.mjs';
+import { dshCommand } from './dsh-spawn.mjs';
 import { runDir } from './dirs.mjs';
 
 /** 从服务输出里把带 token 的地址捞出来（纯函数，便于单测）。 */
@@ -116,8 +117,9 @@ export async function startWebUi(config = {}, { logger = console, waitMs = 45_00
   args.push('--port', String(plan.port), '--no-open');
 
   logger.log?.('[pet] 起对话服务：', plan.exe, args.join(' '));
-  const child = spawn(plan.exe, args, {
-    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+  // 经 node 转一手（Electron 直拉时 DSH 写 ~\.dsh 会 EPERM）——见 src/dsh-spawn.mjs
+  const cmd = dshCommand(config, plan.exe, args);
+  const child = spawn(cmd.cmd, cmd.argv, {
     windowsHide: true,
     stdio: ['ignore', 'pipe', 'pipe'],
   });

@@ -13,6 +13,7 @@
 import { spawn } from 'node:child_process';
 import { dshPaths } from './paths.mjs';
 import { preparePatch } from './agents.mjs';
+import { dshCommand } from './dsh-spawn.mjs';
 
 /** 一次任务最长跑多久（毫秒）。超时就收工并如实说明。 */
 const DEFAULT_TIMEOUT_MS = 120_000;
@@ -40,8 +41,9 @@ export function askDsh(task, config = {}, { timeoutMs = DEFAULT_TIMEOUT_MS, onCh
   if (patch.file) args.push('--patch', patch.file);
   args.push('--json', task);
   return new Promise((resolvePromise) => {
-    const child = spawn(p.exe, args, {
-      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+    // 经 node 转一手（Electron 直拉时 DSH 写 ~\.dsh 会 EPERM）——见 src/dsh-spawn.mjs
+    const cmd = dshCommand(config, p.exe, args);
+    const child = spawn(cmd.cmd, cmd.argv, {
       windowsHide: true,
     });
     // 把子进程交给调用方：中断那条路要能真的杀掉它（不然"中断"只是界面上写着而已）

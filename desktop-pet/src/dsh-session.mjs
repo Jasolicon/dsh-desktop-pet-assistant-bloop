@@ -28,6 +28,7 @@ import { readFileSync } from 'node:fs';
 import { extname } from 'node:path';
 import { dshPaths } from './paths.mjs';
 import { preparePatch } from './agents.mjs';
+import { dshCommand } from './dsh-spawn.mjs';
 
 const MIME = {
   '.png': 'image/png',
@@ -84,8 +85,11 @@ export class DshSession {
     const args = ['--expose-internals', p.cli, '--profile', 'sdk'];
     if (patch.file) args.push('--patch', patch.file);
 
-    this.proc = spawn(p.exe, args, {
-      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+    // ⚠️ 不直接 spawn：经 node 转一手（Electron 直拉时 DSH 写 ~\.dsh 会 EPERM，
+    // 父进程换成普通 node 就正常）。见 src/dsh-spawn.mjs 的头注释。
+    const cmd = dshCommand(this.config, p.exe, args);
+    this.logger.log?.(`[pet] DSH 启动方式：${cmd.via}`);
+    this.proc = spawn(cmd.cmd, cmd.argv, {
       windowsHide: true,
       stdio: ['pipe', 'pipe', 'pipe'],
     });
