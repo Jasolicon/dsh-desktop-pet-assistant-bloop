@@ -253,6 +253,34 @@ DSH 的权限审批、`ask_user_question` 提问、计划评议会走 `pet-respo
 
 ## 状态与沉默
 
+## 和 PowerShell 版的观感对齐（量出来的，不是估的）
+
+重写最容易出的问题不是"功能少了"，而是"看着不像同一只"。所以下面这些尺寸都**对着
+`desktop-guide/run/pet-preview-*.png`（PS 版自己渲染出来的预览）量过**：
+
+| 项 | PS 版 | 这里 |
+|---|---|---|
+| 角色槽位 | 150×146 逻辑 px | 150×146 CSS px（`#pet`） |
+| 窗口宽 | 320（角色居中、按钮条 220 居中） | 默认 `petWidth: 320` |
+| 按钮 | 40×26，间距 5 | 40×26，间距 5 |
+| 气泡内边距 | BubblePadX/Y = 13 | `padding: 12px 26px 12px 13px`（右边多留一截给 × ） |
+| 字号 | `fontSize` 还要再乘一次 `uiScale`（那边 README 第 5 节） | 迁移时换算成 CSS px（`tools/migrate-config.mjs`，本机 6 → 16） |
+| 空闲动作 | `bob = sin(tick/12)*3`（±3px 上下浮） | CSS `bob` 动画（±4px，2.4s） |
+
+> 字号这一条最容易踩：把老配置的 `fontSize: 6` 原样抄过来，在这个 200% 缩放的屏幕上
+> 就成了 6px 的蝇头小字（因为 PS 那边会再乘 `uiScale`）。迁移工具现在会向系统问 DPI、
+> 换算一次并夹进 schema 的范围；换算完是个能看的字号。
+
+想看自己的观感对不对，两条命令：
+
+```powershell
+$env:PET_DEBUG_CAPTURE = "$PWD\debug-render.png"   # 窗口渲染结果存图
+npm run start:no-sandbox
+
+$env:PET_DEBUG_TOOLBAR = '1'                       # 按钮条/按压/浮动/字号的自动自检
+npm run start:no-sandbox
+```
+
 光晕颜色就是状态：`idle` 灰蓝 / `thinking` 琥珀 / `speaking` 蓝 / `silent` 灰。
 角色图本身不变色 —— 图片改不了色，这是 PowerShell 版踩过的坑。
 
