@@ -182,6 +182,8 @@ export function createMonitor({ config = {}, live = null, onDecision, onState, l
     if (st.busy || !st.running) return;
     const now = Date.now();
     try {
+      // 待机期间：除了自愈探测什么都不做（不抓屏、不判断、不打扰）
+      if (st.standby) { await probeStandby(now); return; }
       // 1) 前台窗口（进程名 + 标题）
       const win = foregroundWindow();
       const switched = touchWindow(win.key, now);
@@ -273,6 +275,39 @@ export function createMonitor({ config = {}, live = null, onDecision, onState, l
     }
   }
 
+  /**
+   * 待机自愈探测：系统通知漏发时（锁屏/睡眠事件没来、或者显示器关了又开）
+   * 桌宠不能**一直**以为自己在待机 —— 那样它手里一张截图都没有，等于哑了。
+   *
+   * 三条都成立才算真的醒了（缺一条都不醒，免得待机里被误唤醒）：
+   *   ① 距上次键鼠输入小于 standbyProbeIdleSeconds（人在动）
+   *   ② 抓得到屏（OpenInputDesktop 那一层的意思：桌面可读）
+   *   ③ 到了探测间隔（默认 30 秒，别每拍都试 —— 待机时抓屏本身是浪费）
+   *
+   * 这是 PowerShell 版 standbyProbeSeconds / standbyProbeIdleSeconds 那两条的等价物。
+   */
+  async function probeStandby(now) {
+    const everySeconds = Number(C().standbyProbeSeconds) > 0 ? Number(C().standbyProbeSeconds) : 30;
+    if (now - (st.lastProbeAt || 0) < everySeconds * 1000) return;
+    st.lastProbeAt = now;
+    const idleSeconds = Math.round(powerMonitor.getSystemIdleTime());
+    const idleLimit = Number(C().standbyProbeIdleSeconds) > 0 ? Number(C().standbyProbeIdleSeconds) : 60;
+    if (idleSeconds >= idleLimit) return;              // 人不在，继续待机
+    const shot = await grabScreen({ width: 160, height: 90, region: st.region, jpeg: false });
+    if (!shot) return;                                  // 还是抓不到：屏幕大概真黑着
+    // 真醒了：把过期的观测全部作废（截图环 + 指纹 + 停留时长），再让闸门立刻看一眼
+    st.standby = false;
+    st.captureFails = 0;
+    clearShots();
+    st.lastFp = '';
+    st.lastJudgedFp = '';
+    st.stillSince = now;
+    st.windowSince = now;
+    st.lastJudgedAt = 0;
+    logger.log?.('[pet] 待机自愈：探测到人在动且抓得到屏，退出待机');
+    onState?.(snapshot());
+  }
+
   function snapshot() {
     return {
       running: st.running,
@@ -347,7 +382,19 @@ export function createMonitor({ config = {}, live = null, onDecision, onState, l
       if (st.timer) clearInterval(st.timer);
       st.timer = null;
     },
-    setStandby(v) { st.standby = !!v; },
+    /**
+     * 进/出待机。**进待机时就把截图环丢掉**：那些图是睡觉前拍的，醒来之后它们只剩害处
+     * （提示词里的"画面静止 8 小时"这种东西项目里踩过一次）。
+     */
+    setStandby(v) {
+      const next = !!v;
+      if (next === st.standby) return;
+      st.standby = next;
+      if (next) clearShots();
+      else { st.lastFp = ''; st.lastJudgedFp = ''; st.stillSince = Date.now(); st.windowSince = Date.now(); st.lastJudgedAt = 0; }
+      logger.log?.(next ? '[pet] 进入待机（不采样、不判断）' : '[pet] 退出待机（重新看一眼）');
+      onState?.(snapshot());
+    },
     /** 换监控区域：立刻生效（抓屏下一次就用新的），并让闸门重新看一次。 */
     setRegion(region) {
       st.region = region || null;
@@ -362,6 +409,10 @@ export function createMonitor({ config = {}, live = null, onDecision, onState, l
     wake() {
       st.standby = false;
       st.captureFails = 0;
+      clearShots();
+      st.lastFp = '';
+      st.lastJudgedFp = '';
+      st.stillSince = Date.now();
       st.lastJudgedAt = 0;
       st.lastJudgedFp = '';
       void tick();

@@ -61,6 +61,9 @@ export const SCHEMA = [
       { key: 'taskRules', label: '任务规则表', type: 'rules', live: true, help: '不同应用不同的"多久看一眼、怎么看"：顺序即优先级，进程名或窗口标题**子串**命中即算。hint 会提前写进提示词。' },
       { key: 'screenshotMaxWidth', label: '截图最大宽度', type: 'int', min: 320, max: 3840, live: true, help: '给模型看的那张图的宽度上限；框选区域比它还窄时按原生分辨率给，不放大。' },
       { key: 'jpegQuality', label: '截图 JPEG 质量', type: 'int', min: 10, max: 100, live: true, help: '越低越省 token，越高越清楚。' },
+      { key: 'shotStaleSeconds', label: '截图太旧就当没有（秒）', type: 'int', min: 5, max: 600, live: true, help: '模型看不见图有多旧，太旧的图会让它照着窗口标题脑补。超龄的一张都不发，并明说看不到画面。' },
+      { key: 'standbyProbeSeconds', label: '待机自愈探测（秒）', type: 'int', min: 5, max: 600, live: true, help: '待机期间每隔这么久试一次"人是不是回来了"——防的是系统通知漏发后它一直以为在待机。' },
+      { key: 'standbyProbeIdleSeconds', label: '探测时"人在动"的判据（秒）', type: 'int', min: 5, max: 3600, live: true, help: '距上次键鼠输入小于这么多秒才算人在动；不到这条不唤醒（免得在待机里被误唤醒）。' },
     ],
   },
   {

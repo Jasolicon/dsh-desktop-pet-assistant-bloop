@@ -88,6 +88,15 @@ export const DEFAULTS = {
   screenshotMaxWidth: 1024,
   jpegQuality: 60,
   captureFailLimit: 3,
+  /**
+   * 截图太旧就当没有（秒）：模型看不见图有多旧，会照着窗口标题脑补操作步骤。
+   * 超过这个岁数的一张都不发，而且提示词里明说"看不到画面"。
+   */
+  shotStaleSeconds: 30,
+  /** 待机自愈探测：每隔这么多秒试一次"人是不是回来了"（系统通知漏发时的兜底）。 */
+  standbyProbeSeconds: 30,
+  /** 探测时"人在动"的判据：距上次键鼠输入小于这么多秒。 */
+  standbyProbeIdleSeconds: 60,
   // 对话窗口：用 DSH 自己的 Web 界面（见 src/webui.mjs）
   webPort: 4319,
   chatWidth: 560,

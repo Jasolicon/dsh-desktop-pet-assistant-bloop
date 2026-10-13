@@ -39,6 +39,7 @@ import {
 import { contextMemory, observeFile, DEFAULTS as MEMORY_DEFAULTS } from './memory.mjs';
 import { readSamples, taskProfile } from './profile.mjs';
 import { createTaskLog, toRow } from './tasks.mjs';
+import { usableShots } from './shots.mjs';
 
 let win = null;
 let cfg = loadConfig();
@@ -551,6 +552,29 @@ function createWindow() {
     });
   }
 
+  /**
+   * 开发用：设了 PET_DEBUG_STANDBY=1 就验"待机自愈探测"：
+   * 先**假装**收到一次待机信号（系统通知漏发时就是这种状态），
+   * 然后看它会不会自己发现"人在动、也抓得到屏"而退出待机。
+   * 不做这个探测的话，通知漏一次它就永远哑着（PowerShell 版为此专门加了一段）。
+   */
+  if (process.env.PET_DEBUG_STANDBY) {
+    win.webContents.once('did-finish-load', async () => {
+      try {
+        // 探测间隔调小，好让自检在十几秒内跑完（真实默认是 30 秒）
+        cfg = { ...cfg, standbyProbeSeconds: 3, standbyProbeIdleSeconds: 3600 };
+        monitor?.setStandby(true);
+        log('[debug] 已假装进入待机，等自愈探测…');
+        await new Promise((r) => setTimeout(r, 9000));
+        const snap = monitor?.snapshot?.();
+        log('[debug] 9 秒后：standby =', snap?.standby, '（期望 false = 自己醒了）');
+      } catch (err) {
+        console.error('[pet][debug] 待机自检失败', err);
+      }
+      app.quit();
+    });
+  }
+
   // 初始整窗穿透；渲染进程在鼠标移到宠物身上时打开
   win.setIgnoreMouseEvents(true, { forward: true });
 
@@ -992,8 +1016,20 @@ function buildLookPrompt(payload) {
   if (prof?.hint) {
     lines.push('', `【这一类任务（${prof.name}）】`, prof.hint);
   }
-  // 截图由调用方以 imageBlocks 内联送进模型（常驻会话支持），所以这里只需要说一声
-  if ((payload.shots || []).length) lines.push('', '【最新截图】随本条消息一起给你了，直接看。');
+  // 截图由调用方以 imageBlocks 内联送进模型（常驻会话支持），所以这里只需要说一声。
+  // ⚠️ 太旧的图**不发**、而且必须明说"看不到画面"：模型不知道图有多旧，
+  // 它会照着窗口标题脑补出一整套操作步骤（看着专业，其实全是猜的；PS 版为此定了 shotStaleSeconds）。
+  const fresh = freshShotPaths(payload);
+  if (fresh.length) {
+    lines.push('', '【最新截图】随本条消息一起给你了，直接看。');
+  } else if (payload.taskProfile?.matched || payload.current) {
+    lines.push(
+      '',
+      '【看不到画面】这次没有可用的截图（可能刚待机醒来、或者抓屏失败）。',
+      '**不要**照窗口标题去猜界面里有什么、更不要给出具体操作步骤；',
+      '要么只说你能确定的（比如"这个窗口你开了很久"），要么直接 SILENT。',
+    );
+  }
   lines.push(
     '',
     '【怎么回答】',
@@ -1002,6 +1038,21 @@ function buildLookPrompt(payload) {
     '如果没有值得说的，就**只输出 SILENT 这一个词**，不要输出任何其他内容。',
   );
   return lines.join('\n');
+}
+
+/**
+ * 这一轮真正该发出去的截图路径（太旧的丢掉）。
+ * shots 与 shotTimes 是**同步**推进去的（monitor.pushShot 一次写两个），所以按下标配对就行。
+ * 抽出来是为了"发图"和"提示词里说不说看得到"用的是**同一个判据** ——
+ * 分两处判就会出现"提示词说看不到、图却发过去了"这种自相矛盾。
+ */
+function freshShotPaths(payload) {
+  const times = payload?.shotTimes || [];
+  const shots = payload?.shots || [];
+  const check = usableShots(times, { staleSeconds: Number(cfg.shotStaleSeconds) || 30 });
+  if (!check.usable.length) return [];
+  const keep = new Set(check.usable);
+  return shots.filter((_, i) => keep.has(times[i]));
 }
 
 /** 现在这份长期记忆（关掉 / 没料 就是空串）。 */
@@ -1575,7 +1626,7 @@ app.whenReady().then(() => {
       },
       onState: (s) => win?.webContents.send('pet:state', s),
       onDecision: async (payload) => {
-        const r = await ask(buildLookPrompt(payload), { imagePaths: payload.shots || [] });
+        const r = await ask(buildLookPrompt(payload), { imagePaths: freshShotPaths(payload) });
         // 失败就当"没说"：宁可少说一句，也不要在出错时打扰用户
         if (!r.ok) {
           log('判断失败，按沉默处理：', r.why);
