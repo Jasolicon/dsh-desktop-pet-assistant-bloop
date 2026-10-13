@@ -66,6 +66,43 @@ function buildInput(item, value) {
     return wrap;
   }
 
+  // 任务规则表：一个 JSON 文本框 + 校验。为什么不做成"表格编辑器"：
+  // 那要一套增删行/下拉/逐格校验的 UI，而规则本来就该写在配置里（PS 版的专用页也是同一件事）。
+  // 这里给的是"看得见、改得动、存不进去会说为什么"。
+  if (item.type === 'rules') {
+    const box = el('div', 'rules');
+    const area = document.createElement('textarea');
+    area.rows = 8;
+    area.spellcheck = false;
+    area.value = JSON.stringify(value || [], null, 2);
+    const note = el('div', 'rulesHint', '顺序即优先级；进程名 / 标题子串命中即算；hint 会写进提示词。');
+    const check = () => {
+      try {
+        const parsed = JSON.parse(area.value);
+        if (!Array.isArray(parsed)) throw new Error('必须是一个数组（规则列表）');
+        area.classList.remove('bad');
+        note.textContent = `共 ${parsed.length} 条：${parsed.map((r) => r.name || '(无名)').join(' / ')}`;
+      } catch (e) {
+        area.classList.add('bad');
+        note.textContent = `JSON 有问题：${e.message}`;
+      }
+    };
+    area.addEventListener('input', check);
+    check();
+    // 解析不了就**原样保留**，别把好配置写成坏的
+    readers.set(item.key, () => {
+      try {
+        const parsed = JSON.parse(area.value);
+        return Array.isArray(parsed) ? parsed : value;
+      } catch {
+        return value;
+      }
+    });
+    box.append(area, note);
+    wrap.append(box);
+    return wrap;
+  }
+
   if (item.type === 'bool') {
     const box = el('label', 'bool');
     const input = document.createElement('input');

@@ -45,7 +45,11 @@ export const SCHEMA = [
       // 值由主进程框选后写回（见 src/region-picker.mjs）。别把它改成 string —— 手写坐标没人对得上。
       { key: 'region', label: '监控区域', type: 'region', live: true, help: '只截图这一块：省 token，也更私密。区域外的变化不会叫醒模型。' },
       { key: 'sampleSeconds', label: '采样间隔（秒）', type: 'int', min: 1, max: 60, live: true, help: '采样只算 160px 缩略图的指纹，闸门放行时才抓高质量截图。' },
+      { key: 'minSampleSeconds', label: '采样率下限（秒）', type: 'number', min: 0.2, max: 10, live: true, help: '学习出来的采样率会被夹在 [下限, 上限] 里 —— 免得学出 0.05 秒把机器烧了。' },
+      { key: 'maxSampleSeconds', label: '采样率上限（秒）', type: 'number', min: 1, max: 600, live: true },
       { key: 'autoMinutes', label: '自动看一眼（分钟）', type: 'int', min: 1, max: 60, live: true, help: '非损友模式下"多久自动判断一次"。' },
+      // 规则表：type: rules 是专用控件（一个 JSON 文本框 + 校验），见 settings.js
+      { key: 'taskRules', label: '任务规则表', type: 'rules', live: true, help: '不同应用不同的"多久看一眼、怎么看"：顺序即优先级，进程名或窗口标题**子串**命中即算。hint 会提前写进提示词。' },
       { key: 'screenshotMaxWidth', label: '截图最大宽度', type: 'int', min: 320, max: 3840, live: true, help: '给模型看的那张图的宽度上限；框选区域比它还窄时按原生分辨率给，不放大。' },
       { key: 'jpegQuality', label: '截图 JPEG 质量', type: 'int', min: 10, max: 100, live: true, help: '越低越省 token，越高越清楚。' },
     ],

@@ -147,6 +147,7 @@
 | 气泡 × / Esc 收起 + 全局热键 | `renderer/` + `main.mjs` | Ctrl+Alt+G / Ctrl+Alt+T（占用时静默降级） |
 | **账本（余额 / 充值播报 / 今天花了多少 / 消费上限）** | `src/ledger.mjs` + 气泡页脚 | 口径照 `ledger.ps1`；13 项单测钉住日期（本地时区）、今日花费、上限 key、金额格式；`PET_DEBUG_LEDGER=1` 端到端自检（真接口查到 ¥75.69 并显示在页脚） |
 | **长期记忆** | `src/memory.mjs` + `monitor.mjs` 的观察日志 | 口径照 `memory.ps1`（确定性压缩、不调模型），接进 `buildLookPrompt`；8 项单测；`PET_DEBUG_MEMORY=1` 验"那段话真的进了提示词"。原料改为"窗口变化 + 心跳"，不再每 2 秒一条 |
+| **任务规则表（每个应用不同的采样节奏）** | `src/profile.mjs` + `monitor.mjs` 的换档 | 口径照 `Get-TaskProfile`（子串匹配、顺序即优先级、学习表只覆盖采样率）；hint 接进提示词；9 项单测；`PET_DEBUG_PROFILE=1` 验四档匹配，真跑一轮确认节拍真的换了（桌面档 → 每 10s 采样、判断间隔 300s） |
 
 **常驻会话带来的一个额外好处**：`session/prompt` 的 `contentBlocks` **支持内联图片**
 （TypeScript 版那边 headless CLI 没有附件入口，只能让模型用 `read_image` 读路径、多花一轮）。

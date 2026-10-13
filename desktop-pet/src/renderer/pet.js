@@ -226,7 +226,8 @@ async function showDecisionsCard() {
   if (!rows || rows.length === 0) { showBubble('还没有判断记录。', 6000); return; }
   const rate = stats?.silentRate == null ? '—' : `${stats.silentRate}%`;
   const head = `判断 ${stats.spoke + stats.silent} 次 · 说了 ${stats.spoke} / 没说 ${stats.silent} · 沉默率 ${rate}`;
-  const sub = `本地闸门省下 ${stats.skipped} 次模型调用`;
+  const sub = `本地闸门省下 ${stats.skipped} 次模型调用`
+    + (stats.profile ? ` · 当前档：${stats.profile}（每 ${stats.sampleSeconds}s 采样）` : '');
   const lines = rows.map((r) => {
     const t = String(r.at || '').slice(11, 16);
     if (r.kind === 'skip') return `${t} 没问 · ${r.reason || ''}`;

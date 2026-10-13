@@ -23,6 +23,7 @@ import { worthAutoJudge, GATE_DEFAULTS } from './gate.mjs';
 import { foregroundWindow } from './win.mjs';
 import { logsDir, runDir } from './dirs.mjs';
 import { observeFile, pruneObserve } from './memory.mjs';
+import { readSamples, taskProfile } from './profile.mjs';
 
 // 目录在运行时取：打包后源码目录只读，要落到 userData（见 dirs.mjs）
 const logFile = () => join(logsDir(), 'decisions.jsonl');
@@ -79,6 +80,8 @@ export function createMonitor({ config = {}, live = null, onDecision, onState, l
     // 监控区域（config.json 的 region；null = 整屏）。运行时可以改 —— 用户框选完立刻生效，
     // 不用重开桌宠（PowerShell 版这块踩过：改了 cfg 但抓屏 runspace 还抓着老区域）
     region: config.region || null,
+    // 当前任务档（由 taskRules + 学习表算出来）：决定"多久看一眼"和提示词里的 hint
+    profile: null,
   };
 
   function touchWindow(key, now) {
@@ -114,6 +117,33 @@ export function createMonitor({ config = {}, live = null, onDecision, onState, l
     }
   }
 
+  /**
+   * 换任务档 → 换采样节奏。
+   *
+   * ⚠️ 这里**每次采样都调**，不是"档名变了才调"。PowerShell 版在这上面踩过：
+   * 同一条规则下的两个进程（balatro → hearthstone 都命中「卡牌/回合制游戏」）档名一样，
+   * 于是学习值（比如 0.42s）会被下一个进程继续沿用 —— 而后者本该是规则里的 0.6s。
+   * 判据得是**采样率本身变没变**，不是档名。
+   */
+  function syncProfile(win) {
+    const [process, title] = win.key.split('|');
+    const prof = taskProfile(C(), { process, title, learned: readSamples() });
+    const changed = !st.profile || st.profile.sampleSeconds !== prof.sampleSeconds || st.profile.name !== prof.name;
+    st.profile = prof;
+    if (!changed) return;
+    logger.log?.(`[pet] 任务档：${prof.name}（每 ${prof.sampleSeconds}s 采样，判断间隔 ${prof.judgeMinSeconds}s）`);
+    if (st.running) restartTimer(prof.sampleSeconds * 1000);
+  }
+
+  /** 重建采样定时器（只在周期真的变了的时候调，见 syncProfile）。 */
+  function restartTimer(ms) {
+    if (!(ms > 0)) return;
+    if (st.timerMs === ms) return;
+    st.timerMs = ms;
+    if (st.timer) clearInterval(st.timer);
+    st.timer = setInterval(tick, ms);
+  }
+
   function buildPayload(now, idleSeconds) {
     const [process, title] = st.currentKey.split('|');
     return {
@@ -128,6 +158,14 @@ export function createMonitor({ config = {}, live = null, onDecision, onState, l
       },
       shots: st.shots.map((s) => s.path),
       shotTimes: st.shots.map((s) => s.at),
+      // 当前这一档（名字 + hint）：hint 会被主进程写进判断提示词（"这类任务该怎么帮"）
+      taskProfile: st.profile ? {
+        name: st.profile.name,
+        hint: st.profile.hint,
+        sampleSeconds: st.profile.sampleSeconds,
+        matched: st.profile.matched,
+        learned: st.profile.learned,
+      } : null,
     };
   }
 
@@ -149,6 +187,9 @@ export function createMonitor({ config = {}, live = null, onDecision, onState, l
       const switched = touchWindow(win.key, now);
       const heartbeatMs = (Number(C().observeHeartbeatSeconds) > 0 ? Number(C().observeHeartbeatSeconds) : 120) * 1000;
       if (switched || now - (st.lastObserveAt || 0) >= heartbeatMs) appendObserve(now, win.key);
+
+      // 任务档：换档 = 换采样节奏（每次采样都算一遍，见下面 reload 的注释）
+      syncProfile(win);
 
       // 2) 画面指纹（便宜的缩略图）
       // 指纹只要 8×8，所以不编码 JPEG（省掉每拍一次无用的编码）
@@ -183,7 +224,8 @@ export function createMonitor({ config = {}, live = null, onDecision, onState, l
         lastJudgedAt: st.lastJudgedAt,
         silentStreak: st.silentStreak,
         idleSeconds,
-        config: gateCfgNow(),
+        // 这一档自己带了 judgeMinSeconds 就用它的（比如游戏档 20 秒、看片档 180 秒）
+        config: { ...gateCfgNow(), judgeMinSeconds: st.profile?.judgeMinSeconds ?? gateCfgNow().judgeMinSeconds },
       });
       if (why) {
         st.skipped += 1;
@@ -326,17 +368,13 @@ export function createMonitor({ config = {}, live = null, onDecision, onState, l
       onState?.(snapshot());
     },
     /**
-     * 配置改完叫一声：采样间隔是 setInterval 的周期，改它必须重建定时器才真生效
-     * （闸门那几个参数不用，它们每拍现读，见上面 C()）。
+     * 配置改完叫一声：规则表/采样间隔都可能变了 → 把当前档丢掉、下次采样重算一遍
+     * （换档会自己重建定时器，见 syncProfile）。
      */
     reload() {
       if (!st.running) return;
-      const want = sampleSecondsNow() * 1000;
-      if (st.timerMs === want) return;
-      st.timerMs = want;
-      if (st.timer) clearInterval(st.timer);
-      st.timer = setInterval(tick, want);
-      logger.log?.(`[pet] 采样间隔改为 ${want / 1000}s`);
+      st.profile = null;
+      if (st.currentKey) syncProfile({ key: st.currentKey });
     },
     /** 用户刚动过桌宠：把闸门的时间戳往后推，别在人家操作时插话 */
     noteUserAction(quietSeconds = 6) {

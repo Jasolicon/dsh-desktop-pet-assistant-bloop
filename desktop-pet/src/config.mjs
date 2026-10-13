@@ -53,6 +53,38 @@ export const DEFAULTS = {
   region: null,
   // 采集
   sampleSeconds: 2,
+  /** 学习出来的采样率允许范围（夹住，免得学出 0.05 秒把机器烧了）。 */
+  minSampleSeconds: 0.3,
+  maxSampleSeconds: 60,
+  /**
+   * 任务规则表：不同的应用不同的"多久看一眼、怎么看"。顺序即优先级，
+   * 进程名或窗口标题**子串**命中即算（见 src/profile.mjs）。
+   * 这几条是从 desktop-guide/config.json 原样搬过来的（那是用户自己调过的）。
+   */
+  taskRules: [
+    {
+      name: '卡牌/回合制游戏',
+      process: ['balatro', 'slay', 'sts', 'hearthstone', 'legends of runeterra', 'mtga', 'yugioh'],
+      sampleSeconds: 0.6,
+      judgeMinSeconds: 20,
+      hint: '这是卡牌/回合制游戏。优先判断：当前手牌能凑出的牌型/连招、这一回合的最优出牌顺序、以及资源（费用、血量、手牌数）的风险；其次才是泛泛的『要不要小心』。不要复述界面上已有的数字。',
+    },
+    {
+      name: '视频/播放',
+      process: ['vlc', 'potplayer', 'mpv', 'mpc-hc', 'bilibili', 'youtube', 'iqiyi', 'netflix'],
+      title: [' - VLC', 'YouTube', '哔哩哔哩'],
+      sampleSeconds: 8,
+      judgeMinSeconds: 180,
+      hint: '这是视频/音频播放场景。除非画面里出现可证明的问题（报错、卡住、下错片源），否则保持沉默 —— 看片时被打断的代价很高。',
+    },
+    {
+      name: '桌面/空闲',
+      process: ['explorer', 'progman', 'workerw', 'searchhost'],
+      sampleSeconds: 10,
+      judgeMinSeconds: 300,
+      hint: '',
+    },
+  ],
   screenshotMaxWidth: 1024,
   jpegQuality: 60,
   captureFailLimit: 3,

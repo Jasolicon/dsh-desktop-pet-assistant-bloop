@@ -36,6 +36,7 @@ import {
   spendCapKey, spendCapReason, writeLedger, writeState, findApiKey, DEFAULT_RECHARGE_MIN_DELTA,
 } from './ledger.mjs';
 import { contextMemory, observeFile, DEFAULTS as MEMORY_DEFAULTS } from './memory.mjs';
+import { readSamples, taskProfile } from './profile.mjs';
 
 let win = null;
 let cfg = loadConfig();
@@ -467,6 +468,39 @@ function createWindow() {
     });
   }
 
+  /**
+   * 开发用：设了 PET_DEBUG_PROFILE=1 就把任务档算几遍并打出来 ——
+   * 真的前台窗口 + 几个典型场景（打牌 / 看片 / 桌面）。匹配错了不会有任何报错，
+   * 只会在用的时候表现为"它突然变得很吵"或"看片时一直在说话"，所以让它自己报数。
+   */
+  if (process.env.PET_DEBUG_PROFILE) {
+    win.webContents.once('did-finish-load', () => {
+      try {
+        const learned = readSamples();
+        const cases = [
+          { label: '规则表准备好了吗', process: '', title: '' },
+          { label: '默认（没命中）', process: 'code.exe', title: 'main.mjs' },
+          { label: '卡牌', process: 'Balatro.exe', title: 'Balatro' },
+          { label: '看片（标题命中）', process: 'msedge.exe', title: '某个视频 - 哔哩哔哩' },
+          { label: '桌面', process: 'explorer.exe', title: '' },
+        ];
+        for (const c of cases) {
+          const p = taskProfile(cfg, { process: c.process, title: c.title, learned });
+          log(`[debug] 任务档 ${c.label} →`, JSON.stringify({
+            name: p.name, sample: p.sampleSeconds, judge: p.judgeMinSeconds, matched: p.matched, learned: p.learned,
+            hint: p.hint ? p.hint.slice(0, 18) + '…' : '',
+          }));
+        }
+        // 真的前台窗口也来一遍（这台机器上此刻是什么就是什么）
+        const now = monitor?.snapshot?.();
+        log('[debug] 当前档 =', JSON.stringify({ name: now?.profile?.name ?? null, sample: now?.profile?.sampleSeconds ?? null }));
+      } catch (err) {
+        console.error('[pet][debug] 任务档自检失败', err);
+      }
+      app.quit();
+    });
+  }
+
   // 初始整窗穿透；渲染进程在鼠标移到宠物身上时打开
   win.setIgnoreMouseEvents(true, { forward: true });
 
@@ -839,6 +873,12 @@ function buildLookPrompt(payload) {
   // 和 PowerShell 版一样接在"此刻的观察"后面（advisor-core.ps1 第 139 行那一处）。
   const memory = memoryText();
   if (memory) lines.push('', memory);
+  // 这一档的提示（taskRules 里的 hint）：告诉模型"这类任务优先看什么"。
+  // 它是**提前**写进提示词的，不是事后解释 —— 和 PS 版的 Get-TaskProfile 同一处用途。
+  const prof = payload.taskProfile || null;
+  if (prof?.hint) {
+    lines.push('', `【这一类任务（${prof.name}）】`, prof.hint);
+  }
   // 截图由调用方以 imageBlocks 内联送进模型（常驻会话支持），所以这里只需要说一声
   if ((payload.shots || []).length) lines.push('', '【最新截图】随本条消息一起给你了，直接看。');
   lines.push(
@@ -1012,6 +1052,9 @@ function registerIpc() {
           spoke,
           silent,
           skipped,
+          // 当前这一档（"打游戏时 0.6 秒看一眼"这种东西看不见就说不清它为什么变得勤快/懒了）
+          profile: monitor?.snapshot?.().profile?.name || null,
+          sampleSeconds: monitor?.snapshot?.().profile?.sampleSeconds ?? null,
           // 沉默率只算"问到模型"的那些
           silentRate: answered ? Math.round((100 * silent) / answered) : null,
         },
