@@ -88,6 +88,8 @@ section.group > h2 {
 .row .region { display: flex; align-items: center; gap: 8px; }
 .row .regionText { color: var(--dim); font-size: 12px; }
 .row .region button:disabled { opacity: 0.5; cursor: default; }
+.row .secret { display: flex; align-items: center; gap: 8px; }
+.row .secret input { flex: 1; }
 .row .key { color: #98a2b3; font-size: 11px; font-family: ui-monospace, Consolas, monospace; }
 
 footer {

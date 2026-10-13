@@ -221,6 +221,7 @@ export function createMonitor({ config = {}, live = null, onDecision, onState, l
       lastJudgedAt: st.lastJudgedAt,
       shots: st.shots.length,
       region: st.region,
+      standby: st.standby,
     };
   }
 

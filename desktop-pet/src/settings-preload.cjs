@@ -7,4 +7,6 @@ contextBridge.exposeInMainWorld('settings', {
   // 「监控区域」那一行：框选是动作、不是打字，所以走两个专用通道
   pickRegion: () => ipcRenderer.invoke('settings:pickRegion'),
   clearRegion: () => ipcRenderer.invoke('settings:clearRegion'),
+  // DeepSeek key 写的是 run\deepseek.key 文件（不是 config.json）
+  setKey: (value) => ipcRenderer.invoke('settings:setKey', value),
 });

@@ -82,6 +82,17 @@ html, body {
 
 #bubbleText { white-space: pre-wrap; word-break: break-word; }
 
+/* 页脚：比正文小一号、更淡，还带一条分隔线 —— 它是"顺便看一眼"的信息，不抢正文 */
+#bubbleFooter {
+  margin-top: 6px;
+  padding-top: 5px;
+  border-top: 1px solid rgba(30, 40, 60, 0.12);
+  color: #6a7280;
+  font-size: calc(var(--bubble-size) * 0.78);
+  line-height: 1.35;
+  white-space: normal;
+}
+
 #bubbleClose {
   position: absolute;
   top: 2px;

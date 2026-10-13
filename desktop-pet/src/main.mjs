@@ -13,7 +13,7 @@
  */
 import { app, BrowserWindow, globalShortcut, ipcMain, Menu, nativeImage, powerMonitor, screen, shell, Tray } from 'electron';
 import { session as electronSession } from 'electron';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { ROOT, dshPaths, petImage } from './paths.mjs';
 import { acquire, lockPath, release } from './lock.mjs';
@@ -31,6 +31,10 @@ import { pickRegion } from './region-picker.mjs';
 import { describeRegion } from './region.mjs';
 import { startWebUi, stopWebUi } from './webui.mjs';
 import { autostartCommand, disable as disableAutostart, enable as enableAutostart, isEnabled as autostartOn } from './autostart.mjs';
+import {
+  addObservation, footerText, formatCard, formatMoney, readLedger, readState, snapshot as ledgerSnapshot,
+  spendCapKey, spendCapReason, writeLedger, writeState, findApiKey, DEFAULT_RECHARGE_MIN_DELTA,
+} from './ledger.mjs';
 
 let win = null;
 let cfg = loadConfig();
@@ -48,6 +52,14 @@ let tray = null;
 let chatWin = null;
 /** 对话窗口开着时正忙（正在起 DSH Web 服务）：防连点开两次 */
 let chatBusy = false;
+/**
+ * 账本状态（见 src/ledger.mjs）：
+ *   lastBalance  上一拍看到的余额（充值判据 = 它变大）
+ *   lastCallCost 上一次我们自己的调用花了多少（余额差）
+ *   capTripKey   "哪一天|哪个上限" —— 到线只播报一次，跨天/调大上限会重新武装
+ */
+let ledger = { lastBalance: null, lastCallCost: null, warned: false, capTripKey: '', footer: '', lastAnnounceAt: Date.now() };
+let ledgerTimer = null;
 /** 暂停 = 关掉观察循环（不采样、不判断、不自动开口）。手动点它"说一句"仍然有效。 */
 let paused = false;
 /** 观察循环这次启动到底开没开（PET_NO_AUTO=1 时不启动，“继续”也不该把它拉起来）。 */
@@ -88,6 +100,7 @@ function refreshTray() {
     { label: '对话', click: () => { showPet(); void toggleChatWindow(); } },
     { label: '打字派活…', click: () => { showPet(); win?.webContents.send('pet:typeCmd'); } },
     { label: '看它判过什么', click: () => { showPet(); win?.webContents.send('pet:showDecisions'); } },
+    { label: '账本…（余额 / 今天花了多少）', click: () => { showPet(); void showLedgerCard(); } },
     {
       label: cfg.region ? `框选监控区域…（现在是 ${describeRegion(cfg.region)}）` : '框选监控区域…',
       click: () => { void pickRegionNow(); },
@@ -243,7 +256,7 @@ function createWindow() {
     if (level >= 2) console.error('[renderer]', message);
   });
   // 页面就绪后把"哪几格灯亮着"推过去（按钮条的高亮状态）
-  win.webContents.on('did-finish-load', pushToolbar);
+  win.webContents.on('did-finish-load', () => { pushToolbar(); pushFooter(); });
 
   // 开发用：设了 PET_DEBUG_CAPTURE=<png 路径> 就把页面渲染结果存下来再退出。
   // 为什么需要它：桌面截图走 BitBlt，**拍不到透明的置顶窗口**（实测：窗口明明在 z=02，
@@ -377,6 +390,38 @@ function createWindow() {
         log('[debug] 窗口高度 =', win.getBounds().height, '（渲染进程算出来的需要值 =', out?.需要的高度, '）');
       } catch (err) {
         console.error('[pet][debug] 按钮条自检失败', err);
+      }
+      app.quit();
+    });
+  }
+
+  // 开发用：设了 PET_DEBUG_LEDGER=1 就把账本那条线整条跑一遍并打出来：
+  // 读余额（真调接口）→ 页脚 → 记观测 → 充值判据 → 消费上限判据 → 卡片。
+  // 这一段全是"数字对不对"的问题，光看代码看不出来，所以让它自己报数。
+  if (process.env.PET_DEBUG_LEDGER) {
+    win.webContents.once('did-finish-load', async () => {
+      try {
+        const led = await updateLedger({ quiet: true });
+        log('[debug] 账本 =', JSON.stringify({
+          source: led?.source, balance: led?.balance, currency: led?.currency,
+          todayUsage: led?.todayUsage, dayStart: led?.dayStart, stale: led?.staleSeconds, reason: led?.reason,
+        }));
+        log('[debug] 页脚 =', JSON.stringify(ledger.footer));
+        const capYuan = Number(cfg.dailySpendCapYuan) || 0;
+        log('[debug] 上限判据 =', JSON.stringify(spendCapReason({
+          todayUsage: led?.todayUsage || 0, capYuan, alreadyTripped: ledger.capTripKey === spendCapKey(led?.day || '', capYuan),
+        })));
+        // 卡片走的是真通道（渲染进程收到 pet:card 会画到气泡上）
+        win.webContents.send('pet:card', formatCard(led, { lastCallCost: ledger.lastCallCost, capYuan }));
+        await new Promise((r) => setTimeout(r, 700));
+        const seen = await win.webContents.executeJavaScript(`({
+          有气泡: !document.getElementById('bubble').classList.contains('hidden'),
+          页脚可见: !document.getElementById('bubbleFooter').classList.contains('hidden'),
+          页脚文字: document.getElementById('bubbleFooter').textContent,
+        })`);
+        log('[debug] 页面里看到的 =', JSON.stringify(seen));
+      } catch (err) {
+        console.error('[pet][debug] 账本自检失败', err);
       }
       app.quit();
     });
@@ -517,6 +562,144 @@ function setStyle(style) {
   try { saveConfig(cfg); } catch (err) { log('风格存不进去（这次仍然生效）：', err.message); }
   win?.webContents.send('pet:settingsChanged', cfg);
   log('说话风格：', style);
+}
+
+// ---------------------------------------------------------------------------
+// 账本：查余额 / 充值播报 / 今天花了多少 / 消费上限（口径见 src/ledger.mjs）
+//
+// 和 PowerShell 版同一个策略：余额来源只有"自己查"和"自己的记账本"两条，
+// 都没有就明说缺什么。充值判据是**余额变大** —— 比读任何别人的记账字段都直接。
+// ---------------------------------------------------------------------------
+function pushFooter() {
+  win?.webContents.send('pet:footer', ledger.footer || '');
+}
+
+/** 把账本状态落盘（余额基线 + 上限触发记录 + 暂停状态）。 */
+function saveLedgerState() {
+  writeState({ lastBalance: ledger.lastBalance, capTripKey: ledger.capTripKey, paused, at: new Date().toISOString() });
+}
+
+/**
+ * 读一眼账本：记观测、比充值、更新页脚。返回这一份 snapshot（没有就 null）。
+ * @param {{quiet?: boolean}} opts quiet = 只做基线，不播报（启动时那一拍用）
+ */
+async function updateLedger({ quiet = false } = {}) {
+  if (cfg.ledgerEnabled === false) return null;
+  let led = null;
+  try {
+    led = await ledgerSnapshot(cfg);
+  } catch (err) {
+    log('[账本] 读失败：', err.message);
+    return null;
+  }
+  if (!led || led.source === 'none') {
+    // 没有任何余额来源：只在第一次明说一遍，别每 20 秒念叨一次
+    if (!ledger.warned) {
+      ledger.warned = true;
+      log('[账本]', led?.reason || '没有余额来源');
+    }
+    if (ledger.footer !== '') { ledger.footer = ''; pushFooter(); }
+    return led;
+  }
+
+  // 只记**实时**查到的那份：本地那份本来就是从记账本里读出来的，再记一遍没意义
+  if (led.source === 'api') {
+    try { writeLedger(addObservation(readLedger(), { balance: led.balance, currency: led.currency })); } catch (err) { log('[账本] 记观测失败：', err.message); }
+  }
+  const prev = ledger.lastBalance ?? readState()?.lastBalance ?? null;
+  ledger.lastBalance = led.balance;
+
+  if (prev != null) {
+    const delta = led.balance - prev;
+    const thr = Number(cfg.rechargeMinDelta) > 0 ? Number(cfg.rechargeMinDelta) : DEFAULT_RECHARGE_MIN_DELTA;
+    if (delta >= thr) {
+      const msg = `充值到账 ${formatMoney(delta, led.currency)}，余额 ${formatMoney(led.balance, led.currency)}`;
+      log('[账本]', msg);
+      if (!quiet) {
+        showPet();
+        win?.webContents.send('pet:speak', msg);
+      }
+    }
+  }
+  ledger.footer = footerText(led, { lastCallCost: ledger.lastCallCost, capYuan: Number(cfg.dailySpendCapYuan) || 0 });
+  pushFooter();
+  saveLedgerState();
+  return led;
+}
+
+/**
+ * 消费上限：到线自动暂停（停掉采样/自动判断 = 不再花新钱）。
+ *
+ * 「哪一天 + 哪个上限」当 key：跨天、或用户把上限调大，key 就变了 → 重新武装。
+ * 不这么做的话，用户把上限从 50 改成 100 之后就再也不管了。
+ */
+function checkSpendCap(led) {
+  if (!led || led.source === 'none' || paused) return;
+  const cap = Number(cfg.dailySpendCapYuan) || 0;
+  const key = spendCapKey(led.day, cap);
+  const reason = spendCapReason({ todayUsage: led.todayUsage, capYuan: cap, alreadyTripped: ledger.capTripKey === key });
+  if (!reason) return;
+  ledger.capTripKey = key;
+  log('[账本]', reason, `key=${key}`);
+  setPaused(true);          // 真停：不采样、不判断、不自动开口
+  saveLedgerState();
+  win?.webContents.send('pet:speak', `（${reason}。我先停下来，不再自己观察。\n想继续：托盘右键「继续」，或把上限调大）`);
+}
+
+/** 账本轮询：20 秒一次、一次 HTTP（或读一个本地小 JSON），开销可以忽略。 */
+async function ledgerTick() {
+  if (monitor?.snapshot?.().standby) return;      // 待机时不用播报（本来就没人看）
+  const led = await updateLedger();
+  const mins = Number(cfg.balanceBroadcastMinutes) || 0;
+  if (mins > 0 && led && led.source !== 'none' && Date.now() - ledger.lastAnnounceAt >= mins * 60_000) {
+    ledger.lastAnnounceAt = Date.now();
+    let msg = `余额 ${formatMoney(led.balance, led.currency)}`;
+    if (led.todayUsage > 0) msg += ` · 今天 ${formatMoney(led.todayUsage, led.currency)}`;
+    win?.webContents.send('pet:speak', msg);
+  }
+  checkSpendCap(led);
+}
+
+function startLedger() {
+  if (cfg.ledgerEnabled === false) {
+    log('[账本] 已关（ledgerEnabled = false）');
+    return;
+  }
+  const every = Math.max(5, Number(cfg.ledgerWatchSeconds) || 20);
+  ledgerTimer = setInterval(() => { void ledgerTick(); }, every * 1000);
+  // 先读一次做基线：不然启动后第一拍会把"历史上那次充值"当成刚发生
+  void updateLedger({ quiet: true });
+  log(`[账本] 每 ${every} 秒看一次；充值阈值 ${Number(cfg.rechargeMinDelta) || DEFAULT_RECHARGE_MIN_DELTA} 元`);
+}
+
+/** 派活前先记下余额：跑完再读一次，差值就是"这次调用花了多少"。 */
+async function balanceBeforeCall() {
+  try {
+    const led = await ledgerSnapshot(cfg);
+    return led && led.source !== 'none' ? led.balance : null;
+  } catch {
+    return null;
+  }
+}
+
+/** 「账本…」那张卡片：先刷新一次（别拿几十分钟前的旧数），再画到气泡上。 */
+async function showLedgerCard() {
+  const led = await updateLedger({ quiet: true });
+  const text = formatCard(led, { lastCallCost: ledger.lastCallCost, capYuan: Number(cfg.dailySpendCapYuan) || 0 });
+  win?.webContents.send('pet:card', text);
+}
+
+async function recordCallCost(before) {
+  if (before == null) return;
+  try {
+    const led = await ledgerSnapshot(cfg);
+    if (!led || led.source === 'none') return;
+    const delta = before - led.balance;
+    // 这期间用户自己也可能在用 DSH，那个消耗会一起算进来 —— 所以卡片上写"上一次调用"而不是"这次花的"
+    if (delta >= 0) ledger.lastCallCost = Math.round(delta * 10000) / 10000;
+    ledger.footer = footerText(led, { lastCallCost: ledger.lastCallCost, capYuan: Number(cfg.dailySpendCapYuan) || 0 });
+    pushFooter();
+  } catch { /* 记不上就算了，不该影响派活本身 */ }
 }
 
 // ---------------------------------------------------------------------------
@@ -781,7 +964,10 @@ function registerIpc() {
 
       const doing = routed?.text || text;
       log('task:', doing.slice(0, 80));
+      // 记下调用前的余额：跑完再读一次，差值就是"这一次大概花了多少"
+      const before = await balanceBeforeCall();
       const r = await ask(doing);
+      void recordCallCost(before);
       log('task done:', r.ok, r.seconds.toFixed(1) + 's', r.why || '');
       return { ...r, kind: 'task', routed: routed?.text || null };
     } finally {
@@ -836,7 +1022,40 @@ ipcMain.handle('settings:get', () => ({
   schema: SCHEMA,
   path: CONFIG_PATH,
   version: app.getVersion(),
+  keyInfo: keyInfo(),
 }));
+
+/** DeepSeek key 现在有没有、从哪来（给设置窗口显示用）。 */
+function keyInfo() {
+  const { key, from } = findApiKey({ env: process.env });
+  return { has: !!key, from: from || '' };
+}
+
+/**
+ * 设置窗口里保存/清除 DeepSeek key。
+ * 写的是 `run\deepseek.key`（**不是 config.json**）：key 不该混在配置里到处跟着走，
+ * 而且 run\ 已经在 .gitignore 里（PowerShell 版也放在同一个文件，两边互相认）。
+ */
+ipcMain.handle('settings:setKey', (_e, value) => {
+  const file = join(runDir(), 'deepseek.key');
+  try {
+    const v = String(value || '').trim();
+    if (!v) {
+      if (existsSync(file)) rmSync(file, { force: true });
+    } else {
+      mkdirSync(runDir(), { recursive: true });
+      // 不带换行（有些客户端会把换行也当 key 的一部分）
+      writeFileSync(file, v, 'utf8');
+    }
+    // 清掉"没有来源"的告警标记，并立刻重读一次：改了 key 就该当场看到余额
+    ledger.warned = false;
+    ledger.lastBalance = null;      // 换 key 等于换账户：旧基线不能拿来比"充值"
+    void updateLedger({ quiet: true });
+    return { ok: true, has: keyInfo().has, from: keyInfo().from };
+  } catch (err) {
+    return { ok: false, why: String((err && err.message) || err) };
+  }
+});
 
 ipcMain.handle('settings:save', (_e, values) => {
   const allowed = new Set(SCHEMA.flatMap((g) => (g.items || []).map((i) => i.key)));
@@ -855,6 +1074,7 @@ ipcMain.handle('settings:save', (_e, values) => {
       pushToolbar();                                        // 区域/按钮条的灯
       monitor?.reload();                                    // 采样间隔这类"定时器周期"要重建才生效
       win?.webContents.send('pet:settingsChanged', cfg);    // 渲染进程按需重读（例如字号）
+      void updateLedger({ quiet: true });                   // 上限/轮询间隔改了：页脚立刻跟着变
     }
     return { ok: true, changed };
   } catch (err) {
@@ -882,6 +1102,7 @@ ipcMain.handle('settings:clearRegion', () => clearRegionNow());
       { label: '打字派活（和说话同一条路）', click: () => { showPet(); win.webContents.send('pet:typeCmd'); } },
       { type: 'separator' },
       { label: '看它判过什么', click: () => win.webContents.send('pet:showDecisions') },
+      { label: '账本…（余额 / 今天花了多少）', click: () => { void showLedgerCard(); } },
       {
         label: cfg.region ? `框选监控区域…（现在是 ${describeRegion(cfg.region)}）` : '框选监控区域…',
         click: () => { void pickRegionNow(); },
@@ -982,6 +1203,18 @@ app.whenReady().then(() => {
     if (autoEnabled) monitor.start();
     else log('PET_NO_AUTO=1：观察循环未启动');
 
+    // 账本：先还原"上一次是到上限停的 / 上次是暂停着关的"，再开始轮询。
+    // 为什么要还原：暂停的语义是"别自己观察、别花钱"，重启就悄悄恢复观察会很意外
+    //（PowerShell 版也这么做，只是它记在 run\pet.json 里）。
+    const st = readState();
+    if (st?.capTripKey) ledger.capTripKey = String(st.capTripKey);
+    if (st?.lastBalance != null) ledger.lastBalance = Number(st.lastBalance);
+    if (st?.paused && autoEnabled) {
+      log('[账本] 上次是暂停着关的（多半是到过消费上限）→ 起来仍然是暂停');
+      setPaused(true);
+    }
+    startLedger();
+
     // 预热常驻会话（约 4.5 秒，后台进行）：这样第一次判断不用再付进程启动的钱。
     // 起不来就退化成一次性调用，桌宠照常能用 —— 只是慢一点。
     subagents = createSubagentTracker();
@@ -1029,6 +1262,8 @@ app.whenReady().then(() => {
 
   app.on('will-quit', () => {
     try { globalShortcut.unregisterAll(); } catch { /* 已经退了 */ }
+    if (ledgerTimer) clearInterval(ledgerTimer);
+    try { saveLedgerState(); } catch { /* 存不上就算了 */ }
     if (lockHeld) release(lockFile);        // 只清自己那把（别人的锁不能被我删掉）
     tray?.destroy();
     askWatcher?.stop();

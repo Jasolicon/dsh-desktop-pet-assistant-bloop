@@ -39,6 +39,10 @@ contextBridge.exposeInMainWorld('pet', {
   // 菜单里的「朗读」：停止（打断）/ 重读上一句
   onSpeakStop: (cb) => ipcRenderer.on('pet:speakStop', () => cb()),
   onSpeakReplay: (cb) => ipcRenderer.on('pet:speakReplay', () => cb()),
+  // 气泡页脚（余额 / 上次调用 / 今天）：主进程算好推过来，渲染进程只负责显示
+  onFooter: (cb) => ipcRenderer.on('pet:footer', (_e, text) => cb(text)),
+  // 通用"卡片"（账本那种长文本）：只显示、不朗读
+  onCard: (cb) => ipcRenderer.on('pet:card', (_e, text) => cb(text)),
   // 选项问答 / 审批：主进程收到请求就推过来，用户在气泡上点选后回传
   onAsk: (cb) => ipcRenderer.on('pet:ask', (_e, prompt) => cb(prompt)),
   onAskClear: (cb) => ipcRenderer.on('pet:askClear', () => cb()),

@@ -42,6 +42,30 @@ function buildInput(item, value) {
     return wrap;
   }
 
+  // API key：写的是 run\deepseek.key 文件（不是 config.json），所以不注册 reader ——
+  // 它有自己的"保存"按钮，走 settings:key 那条通道。
+  if (item.type === 'secret') {
+    const box = el('div', 'secret');
+    const input = document.createElement('input');
+    input.type = 'password';
+    input.placeholder = value?.has ? `已配置（来源：${value.from}）` : '粘贴 key…';
+    const save = el('button', null, '保存 key');
+    const clear = el('button', null, '清除');
+    save.addEventListener('click', async () => {
+      const r = await window.settings.setKey(input.value.trim());
+      say(r.ok ? '已保存 key，账本会立刻重新读一次' : `保存失败：${r.why}`, r.ok ? 'ok' : 'bad');
+      if (r.ok) { input.value = ''; input.placeholder = r.has ? '已配置' : '粘贴 key…'; }
+    });
+    clear.addEventListener('click', async () => {
+      const r = await window.settings.setKey('');
+      say(r.ok ? '已清除 key（账本会退回"没有余额来源"，明说缺什么）' : `失败：${r.why}`, r.ok ? 'ok' : 'bad');
+      if (r.ok) input.placeholder = '粘贴 key…';
+    });
+    box.append(input, save, clear);
+    wrap.append(box);
+    return wrap;
+  }
+
   if (item.type === 'bool') {
     const box = el('label', 'bool');
     const input = document.createElement('input');
@@ -96,7 +120,8 @@ function buildGroup(group, config) {
     if (item.live) label.append(el('span', 'live', '立即生效'));
     left.append(label, el('div', 'key', item.key));
     if (item.help) left.append(el('div', 'help', item.help));
-    row.append(left, buildInput(item, config[item.key]));
+    // secret 那类的"当前值"是 {has, from}，在主进程给出的 keyInfo 里，不在 config 里
+    row.append(left, buildInput(item, item.type === 'secret' ? config.__keyInfo : config[item.key]));
     section.append(row);
   }
   return section;
@@ -113,7 +138,8 @@ async function load() {
   versionEl.textContent = 'v' + info.version;
   groupsEl.textContent = '';
   readers.clear();
-  for (const group of info.schema || []) groupsEl.append(buildGroup(group, info.config || {}));
+  const view = { ...(info.config || {}), __keyInfo: info.keyInfo || { has: false, from: '' } };
+  for (const group of info.schema || []) groupsEl.append(buildGroup(group, view));
   say('改完点「保存」；标了「立即生效」的当场生效，其余要重开桌宠。');
 }
 

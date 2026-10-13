@@ -60,6 +60,15 @@ export const DEFAULTS = {
   webPort: 4319,
   chatWidth: 560,
   chatHeight: 800,
+  // 账本（见 src/ledger.mjs）：查余额、记充值、算今天花了多少、到上限自动停
+  ledgerEnabled: true,
+  ledgerWatchSeconds: 20,
+  /** 余额变大多少才算"充值到账"：避开观测抖动，也免得几分钱的修正被当成充值。 */
+  rechargeMinDelta: 0.5,
+  /** 定时播报余额（分钟；0 = 不播）。余额/上次调用/今天另外**一直**显示在气泡页脚那行小字里。 */
+  balanceBroadcastMinutes: 30,
+  /** 每日消费上限（元；0 = 不设）；到线自动暂停 = 不再自己观察花钱。 */
+  dailySpendCapYuan: 50,
   // 大脑
   advisor: 'pwsh -NoProfile -ExecutionPolicy Bypass -File "{root}\\advisor-dsh.ps1"',
   advisorFast: 'pwsh -NoProfile -ExecutionPolicy Bypass -File "{root}\\advisor-openai.ps1"',

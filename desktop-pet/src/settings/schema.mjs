@@ -61,6 +61,19 @@ export const SCHEMA = [
     ],
   },
   {
+    title: '账本（余额 / 消费上限）',
+    items: [
+      // 余额靠一个 DeepSeek API key（公开余额接口）。type: secret 是**专用控件**：
+      // 它写的是 run\deepseek.key 文件，不是 config.json —— key 不该混在配置里到处跟着走。
+      { key: 'deepseekKey', label: 'DeepSeek API key', type: 'secret', live: true, help: '填了才能在气泡页脚看到余额。也可以设环境变量 DEEPSEEK_API_KEY（那个优先级更高）。' },
+      { key: 'ledgerEnabled', label: '启用账本', type: 'bool', live: true, help: '关掉就不查余额、不播报充值、页脚也不显示（省一次 HTTP）。' },
+      { key: 'ledgerWatchSeconds', label: '轮询间隔（秒）', type: 'int', min: 5, max: 3600, live: true, help: '每这么久查一次余额；一次 HTTP，开销可忽略。' },
+      { key: 'rechargeMinDelta', label: '充值播报阈值（元）', type: 'number', min: 0, max: 1000, live: true, help: '余额**变大**超过这个数才算"充值到账"——避开观测抖动和几分钱的修正。' },
+      { key: 'balanceBroadcastMinutes', label: '定时播报余额（分钟）', type: 'int', min: 0, max: 1440, live: true, help: '0 = 不主动播报（页脚仍然一直显示）。' },
+      { key: 'dailySpendCapYuan', label: '每日消费上限（元）', type: 'number', min: 0, max: 10000, live: true, help: '今天花到这就**自动暂停**（不再自己观察花钱）。0 = 不设上限；调大上限会重新武装。' },
+    ],
+  },
+  {
     title: '判断与闸门',
     items: [
       { key: 'judgeMinSeconds', label: '两次判断最小间隔（秒）', type: 'int', min: 5, max: 3600, live: true, help: '本地闸门：值不值得起一次模型调用，由它决定。' },

@@ -18,6 +18,7 @@
 const petEl = document.getElementById('pet');
 const bubble = document.getElementById('bubble');
 const bubbleText = document.getElementById('bubbleText');
+const bubbleFooter = document.getElementById('bubbleFooter');
 const bubbleClose = document.getElementById('bubbleClose');
 const bar = document.getElementById('bar');
 const input = document.getElementById('task');
@@ -107,6 +108,7 @@ function showBubble(text, ms = 12000, owner = null) {
   bubbleOwner = owner;
   bubbleText.textContent = text;
   bubble.classList.remove('hidden');
+  renderFooter();
   petFit();
   clearTimeout(showBubble.timer);
   if (ms > 0) {
@@ -123,6 +125,30 @@ function hideBubble() {
   bubbleOwner = null;
   petFit();
 }
+
+// ---------------------------------------------------------------------------
+// 气泡页脚（余额 / 上次调用 / 今天）—— 内容由主进程算好推过来（见 src/ledger.mjs）。
+// 没有余额来源时那边推空串，这里就整行收起来、不占高度（PowerShell 版同一条规矩）。
+// ---------------------------------------------------------------------------
+let footer = '';
+function renderFooter() {
+  const show = !!footer && !bubble.classList.contains('hidden');
+  bubbleFooter.textContent = show ? footer : '';
+  bubbleFooter.classList.toggle('hidden', !show);
+}
+
+window.pet.onFooter((text) => {
+  footer = String(text || '');
+  renderFooter();
+  petFit();     // 页脚多一行，窗口要跟着长
+});
+
+/** 「账本…」这类卡片：长文本、只显示不朗读（念一串数字没有意义） */
+window.pet.onCard((text) => {
+  if (!text) return;
+  setState('speaking');
+  showBubble(text, 25000);
+});
 
 /** 气泡右上角那个 ×：收起（PowerShell 版同一件事：CollapseRequested）。 */
 bubbleClose.addEventListener('click', (e) => {
