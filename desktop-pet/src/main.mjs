@@ -284,13 +284,15 @@ function refreshTray() {
 
 function showPet() {
   if (!win) return;
+  log('[pet] 显示桌宠（之前 visible =', win.isVisible(), '）');
   if (!win.isVisible()) win.show();
   win.focus();
 }
 
 function toggleVisible() {
   if (!win) return;
-  if (win.isVisible()) win.hide(); else showPet();
+  // 记一行"谁把它藏起来了" —— "进程还在、桌宠没了"这种报修，全靠这行才能定位
+  if (win.isVisible()) { log('[pet] 隐藏桌宠（托盘左键）'); win.hide(); } else showPet();
 }
 
 function setPaused(v) {
@@ -355,9 +357,21 @@ function createWindow() {
   const [w, h] = [Math.max(cfg.petWidth || 320, toolsW), 480];
   const x = typeof cfg.x === 'number' ? cfg.x : Math.round(workArea.x + (workArea.width - w) / 2);
   // 位置优先按"底边"还原（窗口高度会随内容变，只认 y 会让桌宠上下飘，见 config.mjs 的 bottom）
-  const y = typeof cfg.bottom === 'number'
+  const wantY = typeof cfg.bottom === 'number'
     ? Math.round(cfg.bottom - h)
     : (typeof cfg.y === 'number' ? cfg.y : Math.round(workArea.y + workArea.height - h - 8));
+  /**
+   * 还原位置前先确认它**还在屏幕上**。
+   * 为什么：拖动没有边界限制，位置又会写进配置 —— 一旦被拖到屏幕外（或多显示器拔掉一块），
+   * 重启之后它就永远"不见了"（进程还活着、窗口在可视区之外，用户只能说"桌宠没了"）。
+   * 找不到就落回默认（屏幕底部居中），保证**永远能回来**。
+   */
+  const onScreen = screen.getAllDisplays().some((d) => {
+    const a = d.workArea;
+    return x + w > a.x + 40 && x < a.x + a.width - 40 && wantY + h > a.y + 40 && wantY < a.y + a.height - 20;
+  });
+  const y = onScreen ? wantY : Math.round(workArea.y + workArea.height - h - 8);
+  if (!onScreen) log('[pet] 上次记的位置不在任何一块屏幕上（可能被拖出去了）→ 回到默认位置');
 
   win = new BrowserWindow({
     width: w,
@@ -1560,7 +1574,14 @@ function registerIpc() {
   ipcMain.on('pet:drag', (_e, { dx, dy }) => {
     if (!win) return;
     const [x, y] = win.getPosition();
-    win.setPosition(Math.round(x + dx), Math.round(y + dy));
+    // 拖到哪儿都得**留一块在屏幕上**：不留边界的话可以把它拖出可视区，
+    // 然后表现就是"进程还在、桌宠没了"（而且位置会写进配置，重启也不回来）。
+    const [w, h] = win.getSize();
+    const a = screen.getDisplayNearestPoint({ x: Math.round(x + w / 2), y: Math.round(y + h / 2) }).workArea;
+    const keep = 60;   // 至少留 60px 露在屏幕里（够抓住它继续拖）
+    const nx = Math.min(Math.max(Math.round(x + dx), a.x - w + keep), a.x + a.width - keep);
+    const ny = Math.min(Math.max(Math.round(y + dy), a.y), a.y + a.height - keep);
+    win.setPosition(nx, ny);
   });
 
   /**
