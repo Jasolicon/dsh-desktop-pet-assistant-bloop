@@ -123,6 +123,13 @@ export const DEFAULTS = {
   dshExe: '',
   dshCli: '',
   profile: 'headless',
+  /**
+   * 用哪个模型 / 干活时给多大权限 —— 留空 = 用 agents.json 里的 mainAgent.model / workAgent.access。
+   * 值写的是 agents.json 里的**名字**（例如 "DeepSeek V4 Pro" / "只读"），不是 provider/model 那些字段：
+   * 名字是给人看的，改 agents.json 里的实际配置时这两项不用跟着动。
+   */
+  mainAgentModel: '',
+  workAgentAccess: '',
   // 语音
   sttEnabled: true,
   sttLongPressMs: 400,

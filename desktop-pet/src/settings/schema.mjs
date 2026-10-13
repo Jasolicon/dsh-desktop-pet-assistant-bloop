@@ -39,6 +39,15 @@ export const SCHEMA = [
     ],
   },
   {
+    title: '模型与权限',
+    items: [
+      // 这两项的候选项来自 agents.json（由主进程在 settings:get 里注入，见 main.mjs）——
+      // 写死在这里的话，agents.json 一改就和界面不一致了。
+      { key: 'mainAgentModel', label: '用哪个模型', type: 'string', live: true, help: '留空 = 用 agents.json 的 mainAgent.model。改完常驻会话会按新模型重建。' },
+      { key: 'workAgentAccess', label: '干活时的权限', type: 'string', live: true, help: '留空 = 用 agents.json 的 workAgent.access。「完全访问」意味着它派出去的活不再问你。' },
+    ],
+  },
+  {
     title: '采集与节奏',
     items: [
       // region 是"专用控件"（type: region）：它不是一个能打字的框，而是"框选 / 取消"两个动作，

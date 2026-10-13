@@ -30,6 +30,7 @@ import { createSubagentTracker, describeSubagents } from './subagents.mjs';
 import { pickRegion } from './region-picker.mjs';
 import { describeRegion } from './region.mjs';
 import { startWebUi, stopWebUi } from './webui.mjs';
+import { loadAgents, defaultAgentsFile } from './agents.mjs';
 import { autostartCommand, disable as disableAutostart, enable as enableAutostart, isEnabled as autostartOn } from './autostart.mjs';
 import {
   addObservation, footerText, formatCard, formatMoney, readLedger, readState, snapshot as ledgerSnapshot,
@@ -105,6 +106,8 @@ function refreshTray() {
     { label: '账本…（余额 / 今天花了多少）', click: () => { showPet(); void showLedgerCard(); } },
     { label: '看它的记忆…（这几天都在忙什么）', click: () => { showPet(); showMemoryCard(); } },
     { label: '清空记忆（从现在重新算）', click: () => clearMemory() },
+    { label: '用哪个模型', submenu: modelSubmenu() },
+    { label: '干活时的权限', submenu: accessSubmenu() },
     {
       label: cfg.region ? `框选监控区域…（现在是 ${describeRegion(cfg.region)}）` : '框选监控区域…',
       click: () => { void pickRegionNow(); },
@@ -639,6 +642,69 @@ function setStyle(style) {
 }
 
 // ---------------------------------------------------------------------------
+// 「用哪个模型 / 干活时给多大权限」—— 读 agents.json 的选项表，选中项记进 config.json
+//
+// 为什么要在菜单里给：这两个直接决定"花谁的钱"和"它派出去的活能碰什么"，
+// 而它们原来写死在 agents.json 里，用户想换一次得去改那个文件（还得知道改哪个字段）。
+// ---------------------------------------------------------------------------
+function agentChoices() {
+  try {
+    const a = loadAgents(defaultAgentsFile());
+    return {
+      models: Array.isArray(a?.models) ? a.models : [],
+      access: Array.isArray(a?.access) ? a.access : [],
+      currentModel: cfg.mainAgentModel || a?.mainAgent?.model || '',
+      currentAccess: cfg.workAgentAccess || a?.workAgent?.access || '',
+      file: defaultAgentsFile(),
+    };
+  } catch (err) {
+    log('[agent] 读 agents.json 失败：', err.message);
+    return { models: [], access: [], currentModel: '', currentAccess: '', file: defaultAgentsFile() };
+  }
+}
+
+/** 换模型：常驻会话是按模型 initialize 出来的，所以得**丢掉重建**（下次调用才会用新的）。 */
+function setModel(name) {
+  cfg = { ...cfg, mainAgentModel: name };
+  try { saveConfig(cfg); } catch (err) { log('模型存不进去（这次仍然生效）：', err.message); }
+  try { session?.stop(); } catch { /* 已经退了 */ }
+  session = null;
+  log('[agent] 模型 →', name, '（常驻会话会按新模型重建）');
+}
+
+/** 换权限：下一次 preparePatch 就生效（新的会话/一次性调用都会带上）。 */
+function setAccess(name) {
+  cfg = { ...cfg, workAgentAccess: name };
+  try { saveConfig(cfg); } catch (err) { log('权限存不进去（这次仍然生效）：', err.message); }
+  if (session) { try { session.stop(); } catch { /* 忽略 */ } session = null; }
+  log('[agent] 干活权限 →', name, '（常驻会话会按新权限重建）');
+}
+
+/** 模型子菜单（每一项是个单选项）。 */
+function modelSubmenu() {
+  const c = agentChoices();
+  if (!c.models.length) return [{ label: '（agents.json 里没有可选模型）', enabled: false }];
+  return c.models.map((m) => ({
+    label: `${m.name}${m.model ? `（${m.provider}/${m.model}${m.effort ? ` · ${m.effort}` : ''}）` : ''}`,
+    type: 'radio',
+    checked: c.currentModel === m.name,
+    click: () => setModel(m.name),
+  }));
+}
+
+/** 权限子菜单。「完全访问」那条要提醒一句 —— 那意味着它干活时不再问你。 */
+function accessSubmenu() {
+  const c = agentChoices();
+  if (!c.access.length) return [{ label: '（agents.json 里没有可选权限）', enabled: false }];
+  return c.access.map((a) => ({
+    label: `${a.name}${a.sandbox === 'danger-full-access' ? '（不再问你）' : ''}`,
+    type: 'radio',
+    checked: c.currentAccess === a.name,
+    click: () => setAccess(a.name),
+  }));
+}
+
+// ---------------------------------------------------------------------------
 // 账本：查余额 / 充值播报 / 今天花了多少 / 消费上限（口径见 src/ledger.mjs）
 //
 // 和 PowerShell 版同一个策略：余额来源只有"自己查"和"自己的记账本"两条，
@@ -1145,11 +1211,43 @@ function openSettingsWindow() {
 // 监视循环拿到的就是新值（它持有的是同一个对象引用）。
 ipcMain.handle('settings:get', () => ({
   config: cfg,
-  schema: SCHEMA,
+  schema: schemaForUi(),
   path: CONFIG_PATH,
   version: app.getVersion(),
   keyInfo: keyInfo(),
 }));
+
+/**
+ * 给设置窗口的 schema：候选**动态**的那两项在这里补上选择题。
+ * 为什么不在 schema.mjs 里写死：候选项来自 agents.json（模型名、权限档），
+ * 写死就会和那个文件漂移 —— 那时界面上列的是"曾经存在过"的模型。
+ */
+function schemaForUi() {
+  const c = agentChoices();
+  const choicesFor = (key) => {
+    if (key === 'mainAgentModel') {
+      return [
+        // 留空那条必须列出来：否则 cfg 是空串时下拉框里没有匹配项，显示成"什么都没选"，很让人困惑
+        { value: '', text: `（用 agents.json 的默认：${c.currentModel || '—'}）` },
+        ...c.models.map((m) => ({ value: m.name, text: `${m.name}（${m.provider}/${m.model}${m.effort ? ` · ${m.effort}` : ''}）` })),
+      ];
+    }
+    if (key === 'workAgentAccess') {
+      return [
+        { value: '', text: `（用 agents.json 的默认：${c.currentAccess || '—'}）` },
+        ...c.access.map((a) => ({ value: a.name, text: a.name })),
+      ];
+    }
+    return null;
+  };
+  return SCHEMA.map((g) => ({
+    ...g,
+    items: (g.items || []).map((it) => {
+      const choices = choicesFor(it.key);
+      return choices && choices.length ? { ...it, type: 'choice', choices } : it;
+    }),
+  }));
+}
 
 /** DeepSeek key 现在有没有、从哪来（给设置窗口显示用）。 */
 function keyInfo() {
@@ -1229,6 +1327,9 @@ ipcMain.handle('settings:clearRegion', () => clearRegionNow());
       { type: 'separator' },
       { label: '看它判过什么', click: () => win.webContents.send('pet:showDecisions') },
       { label: '账本…（余额 / 今天花了多少）', click: () => { void showLedgerCard(); } },
+      // 这两项决定"花谁的钱"和"它派出去的活能碰什么"，所以放在顶层（PS 版收在「设置」下）
+      { label: '用哪个模型', submenu: modelSubmenu() },
+      { label: '干活时的权限', submenu: accessSubmenu() },
       {
         label: cfg.region ? `框选监控区域…（现在是 ${describeRegion(cfg.region)}）` : '框选监控区域…',
         click: () => { void pickRegionNow(); },

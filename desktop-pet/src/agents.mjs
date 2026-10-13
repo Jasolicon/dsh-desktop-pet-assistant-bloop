@@ -109,8 +109,12 @@ export function preparePatch(config = {}, { modelName = '', accessName = '', id 
   }
   if (!cfg) return { file: null, why: `没找到 agent 配置：${file}` };
 
-  const model = pickModel(cfg, modelName || config.petTaskModel || cfg.mainAgent?.model || '');
-  const access = pickAccess(cfg, accessName || cfg.workAgent?.access || '');
+  // 选谁：
+  //   模型：显式传参 → config.mainAgentModel（右键菜单里选的）→ agents.json 的 mainAgent.model → 列表第一个
+  //   权限：显式传参 → config.workAgentAccess → agents.json 的 workAgent.access → 中间那档
+  // `petTaskModel` 是 PowerShell 版的老键（语音派活用它挑模型），这里留着兼容。
+  const model = pickModel(cfg, modelName || config.mainAgentModel || config.petTaskModel || cfg.mainAgent?.model || '');
+  const access = pickAccess(cfg, accessName || config.workAgentAccess || cfg.workAgent?.access || '');
   const yaml = buildPatch({ model, access, accessList: cfg.access || [] });
   const patchFile = writePatch(yaml, id);
   return {

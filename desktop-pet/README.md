@@ -329,6 +329,22 @@ DSH 的权限审批、`ask_user_question` 提问、计划评议会走 `pet-respo
 托盘图标用的是本项目自绘的 `assets/pet.png`（缩到 32×32），所以不引入任何第三方素材。
 鼠标悬停能看到状态：`泡泡 · Bloop —— 在看着 / 已暂停（桌宠已隐藏）`。
 
+### 用哪个模型 / 干活时给多大权限
+
+右键菜单（和托盘菜单）里两条，候选项直接读 `agents.json`：
+
+| 菜单 | 写进 config.json | 留空时 |
+|---|---|---|
+| 用哪个模型 | `mainAgentModel`（`agents.json` 里的名字，例如 `DeepSeek V4 Pro`） | `agents.json` 的 `mainAgent.model` |
+| 干活时的权限 | `workAgentAccess`（例如 `只读` / `完全访问`） | `agents.json` 的 `workAgent.access` |
+
+它们生成的是同一份 `--patch`（注进 `provider/model` 和 `permission.presets`），所以判断、派活、
+对话窗口三条路用的是同一个选择。**换完会丢掉常驻会话**（它是按模型 + 权限 initialize 出来的）——
+下一次调用才用新的，别以为"改了没生效"。
+
+> 权限那一条会提醒你：选到 `完全访问`（`danger-full-access` + `approval: never`）意味着
+> 它派出去的活**不再问你**。
+
 **暂停的边界**（刻意划清，免得两头不讨好）：
 
 - 暂停**只停它自己的主动性** —— 观察循环停下，不再自己找话。
