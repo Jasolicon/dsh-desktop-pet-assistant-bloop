@@ -14,6 +14,7 @@
 import { app, BrowserWindow, globalShortcut, ipcMain, Menu, nativeImage, powerMonitor, screen, shell, Tray } from 'electron';
 import { session as electronSession } from 'electron';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { join, resolve } from 'node:path';
 import { ROOT, dshPaths, findDshRoot, petImage } from './paths.mjs';
 import { acquire, lockPath, release } from './lock.mjs';
@@ -117,7 +118,8 @@ function loadCursorApi() {
   if (cursorApi !== null) return cursorApi;
   if (process.platform !== 'win32') return (cursorApi = false);
   try {
-    const { createRequire } = require('node:module');
+    // ⚠️ 这里是 ESM（.mjs）：**没有 require** —— 之前写成 `require('node:module')` 直接抛
+    // "require is not defined"，被 catch 吞掉、只留下一行日志，症状就是"穿透轮询静默地没生效"
     const koffi = createRequire(import.meta.url)('koffi');
     const user32 = koffi.load('user32.dll');
     const POINT = koffi.struct('POINT', { x: 'int', y: 'int' });

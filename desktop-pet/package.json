@@ -7,8 +7,8 @@
   "type": "module",
   "main": "src/main.mjs",
   "scripts": {
-    "start": "electron .",
-    "start:no-sandbox": "electron --no-sandbox .",
+    "start": "electron --no-sandbox .",
+    "start:sandbox": "electron .",
     "probe": "electron --no-sandbox tools/probe.cjs",
     "test": "node --test",
     "migrate-config": "node tools/migrate-config.mjs",
