@@ -543,7 +543,14 @@ async function finishRecording() {
 
   setState('thinking');
   showBubble('听清楚了，正在认字…', 0);
-  const res = await window.pet.voice(samples, rate);
+  // 链路那头（识别 / 判定）出任何问题都别让它变成一个未处理的拒绝 ——
+  // 那是"长按松开就崩"最像的成因：mouseup 处理器里的 await 抛了，后面全乱
+  let res;
+  try {
+    res = await window.pet.voice(samples, rate);
+  } catch (err) {
+    res = { ok: false, why: `没接住：${err.message || err}` };
+  }
   if (!res.ok) {
     setState('silent');
     showBubble(res.why ? `（没接住：${res.why}）` : '（没听清）', 8000);

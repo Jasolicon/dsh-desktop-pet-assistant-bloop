@@ -1629,9 +1629,16 @@ function registerIpc() {
   /** 语音输入：渲染进程录好的 PCM 拿过来识别。 */
   ipcMain.handle('pet:transcribe', async (_e, { samples, sampleRate }) => {
     monitor?.noteUserAction(cfg.userQuietSeconds || 6);
-    const r = await transcribe(samples, sampleRate, cfg);
-    log('识别：', r.ok ? JSON.stringify(r.text) : r.why, `(${r.seconds.toFixed(1)}s)`);
-    return r;
+    // 整段包起来：识别这条路要 spawn node + 加载模型，任何一步抛出都会变成
+    // "invoke 被拒" → 渲染进程那边是未处理的 Promise 拒绝（长按松开"崩溃"的观感就来自这类）
+    try {
+      const r = await transcribe(samples, sampleRate, cfg);
+      log('识别：', r.ok ? JSON.stringify(r.text) : r.why, `(${r.seconds.toFixed(1)}s)`);
+      return r;
+    } catch (err) {
+      log('识别这一步炸了：', err && (err.stack || err.message));
+      return { ok: false, why: `识别出错：${(err && err.message) || err}`, text: '', seconds: 0 };
+    }
   });
 
   /**
@@ -1645,6 +1652,7 @@ function registerIpc() {
    */
   ipcMain.handle('pet:voice', async (_e, { samples, sampleRate }) => {
     monitor?.noteUserAction(cfg.userQuietSeconds || 6);
+    try {
     const stt = await transcribe(samples, sampleRate, cfg);
     log('识别：', stt.ok ? JSON.stringify(stt.text) : stt.why, `(${stt.seconds.toFixed(1)}s)`);
     if (!stt.ok || !stt.text) return { ok: false, why: stt.why || '没听清', transcript: '' };
@@ -1659,6 +1667,10 @@ function registerIpc() {
       sttSeconds: stt.seconds,
       routeSeconds: r.seconds,
     };
+    } catch (err) {
+      log('语音这条路炸了：', err && (err.stack || err.message));
+      return { ok: false, why: `语音出错：${(err && err.message) || err}`, transcript: '' };
+    }
   });
 
   /**
