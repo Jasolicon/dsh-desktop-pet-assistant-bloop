@@ -5,6 +5,12 @@
 
 ## 怎么跑
 
+> **它自己找得到 DSH 吗**：解析链是「配置里的 `dshRoot` → 环境变量 `DG_DSH_ROOT`/`DSH_ROOT` →
+> PATH 上的 `dsh` → **正在运行的 DSH 进程** → **注册表里的安装信息** → 常见安装位置」。
+> 中间那条"注册表"是给"DSH 装在非默认盘、又没在跑、也不在 PATH 上"这种情况兜底的
+> （这台机器就是：装在 D 盘）。第一次探测到之后会**写回 `config.json` 的 `dshRoot`**，
+> 于是下次是"配置里写着"，一眼看得见、也不用再猜。
+
 ```bash
 cd desktop-pet
 npm install          # 会下载 Electron（约 100–200MB，只此一次）
@@ -362,6 +368,28 @@ Electron **拿不到"显示器电源关掉"那个通知**（PowerShell 版是 `R
 它们生成的是同一份 `--patch`（注进 `provider/model` 和 `permission.presets`），所以判断、派活、
 对话窗口三条路用的是同一个选择。**换完会丢掉常驻会话**（它是按模型 + 权限 initialize 出来的）——
 下一次调用才用新的，别以为"改了没生效"。
+
+#### 其实有**两条**常驻会话（照 PS 的分工，别合并回一条）
+
+| 会话 | 谁在用 | 装备 | 为什么 |
+|---|---|---|---|
+| **judge** | 自动判断、"现在说一句" | `agents.json` 的 `mainAgent`：只读 + **按行关掉用不到的工具** + `effort: low` | 它只做"要不要开口"这一个判断，只用得着 `read_image` |
+| **work** | 派活 / 语音派活 / 看图片 | `workAgent.access`（有手有脚），工具一个不关 | 关了工具它就没手没脚，派出去的活干不了 |
+
+合并成一条会两头不讨好。**实测**（同一份 prompt，看会话事件里的 `request/header`）：
+
+```
+judge  request/header  2893 字符      ← 关了 16 行工具插件
+work   request/header 19918 字符      ← 24 个工具的 schema 全在
+```
+
+也就是每轮自动判断省掉 ≈17k 字符 ≈ 5k token（每 10 秒一轮就是真金白银）。
+关的是「行」，不是服务本身：关掉 `tool-subagent` 不等于关掉 subagent 服务。
+要关哪几行写在 `agents.json` 的 `mainAgent.disableTools` 里（值就是 `--dump-config` 里的行 id）。
+
+> ⚠️ 踩过的坑：`DshSession` 的构造参数是 **`patchId`**。传成 `id` 不会报错，
+> 但两条会话会静默共用同一份 patch —— 表现就是"工具精简配了、其实没生效"
+> （实测看到两条 `request/header` 一字不差才发现）。
 
 > 权限那一条会提醒你：选到 `完全访问`（`danger-full-access` + `approval: never`）意味着
 > 它派出去的活**不再问你**。

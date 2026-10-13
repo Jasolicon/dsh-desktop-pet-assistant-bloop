@@ -59,3 +59,25 @@ test('源码里不再出现本机盘符或用户名（防回归）', () => {
 test('petImage 在没有自绘素材时也不抛（返回空串或兜底）', () => {
   assert.equal(typeof petImage({}), 'string');
 });
+
+test('parseDeepSeekInstallRoots：从注册表输出里认出安装位置（DSH 没在跑时的唯一线索）', async () => {
+  const { parseDeepSeekInstallRoots } = await import('../src/paths.mjs');
+  const text = [
+    'HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\abc',
+    '    DisplayName    REG_SZ    7-Zip',
+    '    InstallLocation    REG_SZ    C:\\Program Files\\7-Zip',
+    '',
+    'HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\DeepSeekHarness',
+    '    DisplayName    REG_SZ    DeepSeek Harness 0.2.0-rc.2',
+    '    InstallLocation    REG_SZ    D:\\DeepSeekHarness',
+    '    DisplayIcon    REG_SZ    D:\\DeepSeekHarness\\DeepSeek Harness.exe,0',
+    '',
+    'HKEY_LOCAL_MACHINE\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\other',
+    '    DisplayName    REG_SZ    Something DeepSeek-ish',
+    '    DisplayIcon    REG_SZ    E:\\Tools\\DSH\\app.exe,0',
+  ].join('\r\n');
+  const roots = parseDeepSeekInstallRoots(text);
+  assert.deepEqual(roots, ['D:\\DeepSeekHarness', 'E:\\Tools\\DSH']);
+  assert.deepEqual(parseDeepSeekInstallRoots(''), []);
+  assert.deepEqual(parseDeepSeekInstallRoots('HKEY_X\r\n    DisplayName    REG_SZ    Chrome'), []);
+});

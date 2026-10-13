@@ -15,7 +15,7 @@ import { app, BrowserWindow, globalShortcut, ipcMain, Menu, nativeImage, powerMo
 import { session as electronSession } from 'electron';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { ROOT, dshPaths, petImage } from './paths.mjs';
+import { ROOT, dshPaths, findDshRoot, petImage } from './paths.mjs';
 import { acquire, lockPath, release } from './lock.mjs';
 import { SCHEMA } from './settings/schema.mjs';
 import { CONFIG_PATH, loadConfig, saveConfig } from './config.mjs';
@@ -45,8 +45,25 @@ let win = null;
 let cfg = loadConfig();
 let busy = false;
 let monitor = null;
-/** 常驻 DSH 会话：一次 initialize（约 4.5s），之后每轮秒级。见 dsh-session.mjs。 */
-let session = null;
+/**
+ * 常驻 DSH 会话：一次 initialize（约 4.5s），之后每轮秒级。见 dsh-session.mjs。
+ *
+ * 为什么是**两条**（照 PS 的分工，别合并回一条）：
+ *   · judge：观察判断那一路。只读权限 + 按行关掉用不到的工具（省每轮 ≈19.7k 字符的 schema），
+ *     effort 也压到 low —— 它只做"要不要开口"这一个判断
+ *   · work：干活的（派活 / 语音派活 / 看图片）。要有手有脚，所以不关工具、权限是 workAgent 那档
+ * 合并成一条会两头不讨好：关了工具就没手没脚，不关就每轮白付那 19.7k 字符。
+ */
+const sessions = { judge: null, work: null };
+
+/** 按用途取会话（warm/drop 都走这里，免得两处各写一份）。 */
+function sessionOf(purpose) {
+  return sessions[purpose === 'work' ? 'work' : 'judge'];
+}
+
+function setSession(purpose, s) {
+  sessions[purpose === 'work' ? 'work' : 'judge'] = s;
+}
 /** 选项问答/审批应答的文件桥（与 pet-responder 对接）。 */
 let askWatcher = null;
 /** 子 agent 观察：它在跑的子任务（数据来自常驻会话的事件流）。 */
@@ -214,20 +231,22 @@ process.on('unhandledRejection', (err) => { console.error('[pet] 未处理的 Pr
  * 问一轮。优先走常驻会话（秒级）；起不来或出错就退回一次性调用（慢但可靠）。
  * 这条降级路径很重要：常驻会话挂了不该让桌宠整个哑掉。
  */
-async function ask(text, { imagePaths = [] } = {}) {
-  if (session) {
+async function ask(text, { imagePaths = [], purpose = 'judge' } = {}) {
+  const live = sessionOf(purpose);
+  if (live) {
     try {
-      const r = await session.prompt(text, { imagePaths });
+      const r = await live.prompt(text, { imagePaths });
       if (r.ok) return r;
       log('常驻会话这一轮没成：', r.why);
       return r;   // 会话在，只是这一轮没结论 —— 那是判断结果，不回退
     } catch (err) {
       log('常驻会话出错，退回一次性调用：', err.message);
-      session = null;
+      setSession(purpose, null);
     }
   }
   // 记下这个子进程：中断（"它派出去的活"窗口里那个按钮）要能真的杀掉它
-  return askDsh(text, cfg, { onChild: (child) => { pendingAskChild = child; } })
+  // patchId 跟着用途走：判断那一路用 judge 的 patch（只读 + 关工具），干活那一路用 work 的
+  return askDsh(text, cfg, { patchId: purpose === 'work' ? 'work' : 'judge', onChild: (child) => { pendingAskChild = child; } })
     .finally(() => { pendingAskChild = null; });
 }
 
@@ -738,8 +757,7 @@ function agentChoices() {
 function setModel(name) {
   cfg = { ...cfg, mainAgentModel: name };
   try { saveConfig(cfg); } catch (err) { log('模型存不进去（这次仍然生效）：', err.message); }
-  try { session?.stop(); } catch { /* 已经退了 */ }
-  session = null;
+  dropSessions();
   log('[agent] 模型 →', name, '（常驻会话会按新模型重建）');
 }
 
@@ -747,8 +765,18 @@ function setModel(name) {
 function setAccess(name) {
   cfg = { ...cfg, workAgentAccess: name };
   try { saveConfig(cfg); } catch (err) { log('权限存不进去（这次仍然生效）：', err.message); }
-  if (session) { try { session.stop(); } catch { /* 忽略 */ } session = null; }
+  dropSessions();
   log('[agent] 干活权限 →', name, '（常驻会话会按新权限重建）');
+}
+
+/** 丢掉两条常驻会话（换模型/换权限之后必须丢：它们是按配置 initialize 出来的）。 */
+function dropSessions() {
+  for (const purpose of ['judge', 'work']) {
+    const s = sessionOf(purpose);
+    if (!s) continue;
+    try { s.stop(); } catch { /* 已经退了 */ }
+    setSession(purpose, null);
+  }
 }
 
 /** 模型子菜单（每一项是个单选项）。 */
@@ -1128,9 +1156,12 @@ function interruptRunning(reason = '用户中断') {
   if (!running.length) return { ok: false, why: '现在没有在跑的活' };
   const rec = running[0];
   let killed = false;
-  if (session) {
-    try { session.stop(); killed = true; } catch { /* 已经退了 */ }
-    session = null;
+  // 中断找的是**干活那条**会话（派出去的活跑在它上面）；
+  // judge 那条顺手一起停 —— 反正下次调用会自动重建，留着反而多占一个进程。
+  for (const [purpose, s] of Object.entries(sessions)) {
+    if (!s) continue;
+    try { s.stop(); if (purpose === 'work') killed = true; } catch { /* 已经退了 */ }
+    setSession(purpose, null);
   }
   if (pendingAskChild) {
     try { pendingAskChild.kill(); killed = true; } catch { /* 已经退了 */ }
@@ -1332,7 +1363,8 @@ function registerIpc() {
       pushTasks();
       // 记下调用前的余额：跑完再读一次，差值就是"这一次大概花了多少"
       const before = await balanceBeforeCall();
-      const r = await ask(doing);
+      // 派活走**干活那条**会话（有手有脚）；判断/聊天走 judge 那条（只读 + 关掉了用不到的工具）
+      const r = await ask(doing, { purpose: 'work' });
       void recordCallCost(before);
       log('task done:', r.ok, r.seconds.toFixed(1) + 's', r.why || '');
       tasks.update(rec.id, {
@@ -1366,7 +1398,7 @@ function registerIpc() {
     pushTasks();
     try {
       const before = await balanceBeforeCall();
-      const r = await ask(prompt, { imagePaths: images });
+      const r = await ask(prompt, { imagePaths: images, purpose: 'work' });
       void recordCallCost(before);
       tasks.update(rec.id, {
         status: r.ok ? 'done' : 'failed',
@@ -1396,7 +1428,7 @@ function registerIpc() {
     pushTasks();
     try {
       const before = await balanceBeforeCall();
-      const r = await ask(t);
+      const r = await ask(t, { purpose: 'work' });
       void recordCallCost(before);
       tasks.update(rec.id, {
         status: r.ok ? 'done' : 'failed',
@@ -1631,6 +1663,15 @@ app.whenReady().then(() => {
     log('userData =', app.getPath('userData'));
     log('root =', ROOT);
     log('dsh  =', JSON.stringify(dshPaths(cfg)));
+    // 探测到的 DSH 位置**记进配置**：DSH 装在非默认盘时，它没在跑就只剩注册表那条路
+    // （有时也不灵），记下来下次就是"配置里写着"，一眼看得见、也不用再猜。
+    if (!cfg.dshRoot) {
+      const found = findDshRoot('');
+      if (found) {
+        cfg = { ...cfg, dshRoot: found };
+        try { saveConfig(cfg); log('已把 DSH 位置记进配置：', found); } catch { /* 存不上也不影响这次运行 */ }
+      }
+    }
     createWindow();
     registerIpc();
     createTray();
@@ -1692,31 +1733,36 @@ app.whenReady().then(() => {
     const fixed = tasks.resetStale();
     if (fixed) log(`[tasks] 清理了 ${fixed} 条上次重启遗留的"在跑"记录`);
 
-    // 预热常驻会话（约 4.5 秒，后台进行）：这样第一次判断不用再付进程启动的钱。
-    // 起不来就退化成一次性调用，桌宠照常能用 —— 只是慢一点。
+    // 预热两条常驻会话（各约 4.5 秒，后台并行）：这样第一次判断/第一次派活
+    // 都不用再付进程启动的钱。起不来就退化成一次性调用，桌宠照常能用 —— 只是慢一点。
     subagents = createSubagentTracker();
-    session = new DshSession({
-      config: cfg,
-      // 会话事件里挑 agent-start / agent-end（其余在跟踪器里就被丢掉了）
-      onEvent: (ev) => {
-        const before = subagents.count();
-        subagents.observe(ev);
-        const after = subagents.count();
-        if (before === after) return;
-        // 数量变了才动界面：从 0 → N、N → 0 各说一次，中间抖动不刷屏
-        if (before === 0 && after > 0) {
-          const line = describeSubagents(subagents.list());
-          log('子 agent：', line);
-          win?.webContents.send('pet:subagents', line);
-        } else if (after === 0) {
-          win?.webContents.send('pet:subagents', '');
-        }
-      },
-    });
-    session.start().catch((err) => {
-      log('常驻会话起不来，退回一次性调用：', err.message);
-      session = null;
-    });
+    // 子 agent 的观察挂在**干活那条**会话上：派出去的活跑在它上面，
+    // 它内部的 subagent 事件才会出现在它的流里（judge 那条只看得见图，不会开子任务）。
+    const onSessionEvent = (ev) => {
+      const before = subagents.count();
+      subagents.observe(ev);
+      const after = subagents.count();
+      if (before === after) return;
+      // 数量变了才动界面：从 0 → N、N → 0 各说一次，中间抖动不刷屏
+      if (before === 0 && after > 0) {
+        const line = describeSubagents(subagents.list());
+        log('子 agent：', line);
+        win?.webContents.send('pet:subagents', line);
+      } else if (after === 0) {
+        win?.webContents.send('pet:subagents', '');
+      }
+    };
+    // ⚠️ 参数名是 patchId（不是 id）—— 传错的话两条会话会静默共用同一份 patch，
+    // 表现就是"工具精简看着配了、其实没生效"（实测踩过一次：两条请求头一字不差）
+    setSession('judge', new DshSession({ config: cfg, patchId: 'judge' }));
+    setSession('work', new DshSession({ config: cfg, patchId: 'work', onEvent: onSessionEvent }));
+    for (const purpose of ['judge', 'work']) {
+      const s = sessionOf(purpose);
+      s.start().catch((err) => {
+        log(`常驻会话（${purpose}）起不来，退回一次性调用：`, err.message);
+        setSession(purpose, null);
+      });
+    }
 
     // 选项问答 / 审批应答：盯 run/ask 目录，把按钮画到气泡上
     askWatcher = createAskWatcher({
@@ -1744,7 +1790,7 @@ app.whenReady().then(() => {
     if (lockHeld) release(lockFile);        // 只清自己那把（别人的锁不能被我删掉）
     tray?.destroy();
     askWatcher?.stop();
-    session?.stop();
+    dropSessions();
     // 对话窗口和它背后的 DSH Web 服务：服务是我们起的就收掉（用户自己起的那个不动）。
     // 窗口先关 —— 服务一停，那个页面就只剩"打不开"的错误页。
     try { if (chatWin && !chatWin.isDestroyed()) chatWin.destroy(); } catch { /* 已经关了 */ }

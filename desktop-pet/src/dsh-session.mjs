@@ -46,9 +46,11 @@ function eventText(ev) {
 }
 
 export class DshSession {
-  constructor({ config = {}, logger = console, sessionId = '', onEvent = null } = {}) {
+  constructor({ config = {}, logger = console, sessionId = '', onEvent = null, patchId = 'session' } = {}) {
     this.config = config;
     this.logger = logger;
+    /** 用哪份 --patch（main.mjs 按用途分开：judge = 只读 + 关工具；work = 有手有脚）。 */
+    this.patchId = patchId;
     /** 每个会话事件都过一遍这里（子 agent 观察用）。别在里面做重活。 */
     this.onEvent = onEvent;
     this.proc = null;
@@ -78,7 +80,7 @@ export class DshSession {
     const p = dshPaths(this.config);
     if (!p.exe || !p.cli) throw new Error('找不到 DSH（设 DG_DSH_ROOT）');
 
-    const patch = preparePatch(this.config, { id: 'session' });
+    const patch = preparePatch(this.config, { id: this.patchId });
     const args = ['--expose-internals', p.cli, '--profile', 'sdk'];
     if (patch.file) args.push('--patch', patch.file);
 

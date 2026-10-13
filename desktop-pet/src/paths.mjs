@@ -41,6 +41,52 @@ export function expandTokens(value, dshRoot = '') {
 const firstExisting = (candidates) => candidates.find((c) => c && existsSync(c)) || '';
 
 /**
+ * 从「卸载信息」注册表里解析安装位置（纯函数，好单测）。
+ *
+ * 为什么要有这条：DSH 装在非默认盘时（不在 Program Files 那一套默认位置），**它没在跑 + 不在 PATH 上**
+ * 就整条链都探不到 —— 表现是桌宠说"没找到 DSH"，功能全哑。而安装信息一直在注册表里：
+ *   DisplayName     = "DeepSeek Harness <版本>"
+ *   InstallLocation = 安装的根本目录
+ *   DisplayIcon     = "<那个目录>\DeepSeek Harness.exe,0"
+ * reg 的输出是"键 → 值"的分块文本，这里按块扫：认 DisplayName 带 DeepSeek 的那一块，
+ * 取 InstallLocation（没有就退而取 DisplayIcon 的目录）。
+ */
+export function parseDeepSeekInstallRoots(text) {
+  const out = [];
+  const blocks = String(text || '').split(/\r?\n(?=HKEY_)/i);
+  for (const block of blocks) {
+    if (!/DisplayName\s+REG_SZ\s+.*DeepSeek/i.test(block)) continue;
+    let loc = /InstallLocation\s+REG_SZ\s+(.+)/i.exec(block);
+    if (loc && loc[1].trim()) { out.push(loc[1].trim()); continue; }
+    const icon = /DisplayIcon\s+REG_SZ\s+(.+)/i.exec(block);
+    if (icon && icon[1].trim()) out.push(dirname(icon[1].trim().replace(/,\d+$/, '')));
+  }
+  return out;
+}
+
+/** 注册表里找 DSH 的安装根（找不到返回空串）。 */
+function registryDshRoot() {
+  if (process.platform !== 'win32') return '';
+  const keys = [
+    'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall',
+    'HKLM\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall',
+    'HKLM\\Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall',
+  ];
+  // ⚠️ reg query **一次只能给一个键**（给多个会直接报错，被 catch 吞掉 → 表现是"这条探测从不生效"）
+  for (const key of keys) {
+    try {
+      const out = execFileSync('reg.exe', ['query', key, '/s'], {
+        encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000, maxBuffer: 16 * 1024 * 1024,
+      });
+      for (const root of parseDeepSeekInstallRoots(out)) {
+        if (root && existsSync(join(root, 'resources'))) return root;
+      }
+    } catch { /* 这个键没有就试下一个 */ }
+  }
+  return '';
+}
+
+/**
  * DSH 安装根目录。
  * 刻意**不写任何盘符**：这台机器装在 D 盘是这台机器的事，不该进代码。
  */
@@ -87,6 +133,11 @@ export function findDshRoot(configured = '') {
       }
     } catch { /* 没在跑或取不到，往下走 */ }
   }
+
+  // 注册表里的安装信息：**它没在跑的时候这是唯一还记得它在哪的地方**（DSH 装在非默认盘时
+  // 上面几条全探不到；见 parseDeepSeekInstallRoots 的注释）
+  const fromRegistry = registryDshRoot();
+  if (fromRegistry) return fromRegistry;
 
   return firstExisting([
     join(process.env.ProgramFiles || '', 'DeepSeek Harness'),

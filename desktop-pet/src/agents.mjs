@@ -51,7 +51,7 @@ export function pickAccess(cfg, name = '') {
  * 生成 patch 的 YAML 文本。
  * @returns {string} 空串表示没有可写的内容（那就别传 --patch）
  */
-export function buildPatch({ model, access, accessList = [] } = {}) {
+export function buildPatch({ model, access, accessList = [], disableRows = [] } = {}) {
   const lines = [];
 
   if (model?.provider && model?.model) {
@@ -77,6 +77,21 @@ export function buildPatch({ model, access, accessList = [] } = {}) {
       lines.push(`        description: "${a.note || ''}"`);
     }
     lines.push(`    defaultPreset: ${access.sandbox}`);
+  }
+
+  /*
+    按行 id 关掉整行插件（patch 层的官方写法 `disabled: true`）。
+
+    为什么值得做：观察判断用的主 agent 其实**只用 read_image**，却挂着 24 个工具的 schema
+    ≈ 19.7k 字符/轮（≈5k token）—— 每 10 秒一轮自动判断就等于每轮白付这笔钱。
+    注意只关「行」，不关服务：关掉 tool-subagent 不等于关掉 subagent 服务本身。
+    （PS 版实测出这个数字，这里照抄同一套：见 agents.json 的 mainAgent.disableTools）
+  */
+  for (const row of Array.isArray(disableRows) ? disableRows : []) {
+    const id = String(row || '').trim();
+    if (!id) continue;
+    lines.push(`- id: ${id}`);
+    lines.push('  disabled: true');
   }
 
   return lines.length ? `${lines.join('\n')}\n` : '';
@@ -109,20 +124,42 @@ export function preparePatch(config = {}, { modelName = '', accessName = '', id 
   }
   if (!cfg) return { file: null, why: `没找到 agent 配置：${file}` };
 
-  // 选谁：
-  //   模型：显式传参 → config.mainAgentModel（右键菜单里选的）→ agents.json 的 mainAgent.model → 列表第一个
-  //   权限：显式传参 → config.workAgentAccess → agents.json 的 workAgent.access → 中间那档
-  // `petTaskModel` 是 PowerShell 版的老键（语音派活用它挑模型），这里留着兼容。
-  const model = pickModel(cfg, modelName || config.mainAgentModel || config.petTaskModel || cfg.mainAgent?.model || '');
-  const access = pickAccess(cfg, accessName || config.workAgentAccess || cfg.workAgent?.access || '');
-  const yaml = buildPatch({ model, access, accessList: cfg.access || [] });
+  const { model, access, disableRows } = resolveAgents(cfg, config, { modelName, accessName, id });
+  const yaml = buildPatch({ model, access, accessList: cfg.access || [], disableRows });
   const patchFile = writePatch(yaml, id);
   return {
     file: patchFile,
     why: patchFile ? null : 'patch 内容为空（agents.json 里没有可用的模型/权限）',
     model,
     access,
+    disableRows: disableRows.length,
     profile: cfg.profile || 'headless',
     agentsFile: file,
   };
 }
+
+/**
+ * 「用哪档装备」的**唯一**一处判断（patch 和界面都读它，免得两处漂）。
+ *
+ * - id='judge'：观察判断那一路。照 PS 的 advisor-core：用 mainAgent 的模型 + 权限
+ *   （只读、只看得见图），并且**按行关掉用不到的工具**（省每轮 ~19.7k 字符的 schema）；
+ *   mainAgent.effort 可以覆盖模型自带的 effort —— 观测只做"要不要开口"这一个判断，
+ *   实测 high 会多一轮思考、慢 3 秒左右。
+ * - 其它（干活那一路）：workAgent 的权限（它要真能写文件、跑命令），**不关**工具。
+ *   这两条必须分开：同一条会话既当观察者又当干活的，一关工具就没手没脚。
+ */
+export function resolveAgents(cfg = {}, config = {}, { modelName = '', accessName = '', id = 'judge' } = {}) {
+  const isJudge = id === 'judge';
+  const wantModel = modelName || config.mainAgentModel || config.petTaskModel || (isJudge ? cfg.mainAgent?.model : '') || cfg.mainAgent?.model || '';
+  let model = pickModel(cfg, wantModel);
+  if (isJudge && cfg.mainAgent?.effort && model) {
+    model = { ...model, effort: String(cfg.mainAgent.effort) };
+  }
+  const wantAccess = accessName ||
+    (isJudge ? (cfg.mainAgent?.access || config.workAgentAccess) : config.workAgentAccess) ||
+    cfg.workAgent?.access || '';
+  const access = pickAccess(cfg, wantAccess);
+  const disableRows = isJudge && Array.isArray(cfg.mainAgent?.disableTools) ? cfg.mainAgent.disableTools : [];
+  return { model, access, disableRows };
+}
+

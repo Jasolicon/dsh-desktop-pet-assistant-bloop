@@ -13,7 +13,7 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildPatch, pickModel, pickAccess, loadAgents, preparePatch } from '../src/agents.mjs';
+import { buildPatch, pickModel, pickAccess, loadAgents, preparePatch, resolveAgents } from '../src/agents.mjs';
 
 const MODEL = { name: 'M', provider: 'deepseek-account', model: 'deepseek-flash', effort: 'high' };
 const ACCESS = [
@@ -68,4 +68,57 @@ test('preparePatch 能读真实 agents.json 并落盘', () => {
   assert.ok(r.file, r.why || '没生成 patch');
   assert.ok(r.model, '没选出模型');
   assert.ok(r.access, '没选出权限档');
+});
+
+// ---------------------------------------------------------------------------
+// 工具精简（disableRows）与「主 agent / 干活 agent」的分工
+//
+// 这一组最重要的是**别把两条会话合并回一条**：关了工具就没手没脚，
+// 不关就每轮白付 ≈19.7k 字符的 schema。实测量到的差别：judge 的请求头 2893 字符、
+// work 19918 字符（省 ≈17k 字符 ≈ 5k token 每轮）。
+// ---------------------------------------------------------------------------
+const AGENTS_CFG = {
+  models: [{ name: 'A', provider: 'deepseek-account', model: 'deepseek-flash', effort: 'high' }],
+  access: [
+    { name: '只读', sandbox: 'read-only', approval: 'ask' },
+    { name: '完全访问', sandbox: 'danger-full-access', approval: 'never' },
+  ],
+  mainAgent: { model: 'A', access: '只读', effort: 'low', disableTools: ['tool-pwsh', 'tool-web'] },
+  workAgent: { access: '完全访问' },
+};
+
+test('buildPatch：按 id 关掉整行（官方写法是 disabled: true）', () => {
+  const yaml = buildPatch({ model: MODEL, access: ACCESS[0], accessList: ACCESS, disableRows: ['tool-pwsh', 'tool-web'] });
+  assert.match(yaml, /- id: tool-pwsh\n  disabled: true/);
+  assert.match(yaml, /- id: tool-web\n  disabled: true/);
+  assert.equal((yaml.match(/disabled: true/g) || []).length, 2);
+  // 空串 / 重复 / 非数组都不该写进 patch（写进去是无效行，还会把 patch 撑长）
+  const lazy = buildPatch({ model: MODEL, access: ACCESS[0], accessList: ACCESS, disableRows: ['', null, undefined] });
+  assert.equal((lazy.match(/disabled: true/g) || []).length, 0);
+});
+
+test('分档：judge 用 mainAgent（只读 + 关工具 + effort low），work 用 workAgent（有手有脚）', () => {
+  const judge = resolveAgents(AGENTS_CFG, {}, { id: 'judge' });
+  assert.equal(judge.access.name, '只读');
+  assert.deepEqual(judge.disableRows, ['tool-pwsh', 'tool-web']);
+  assert.equal(judge.model.effort, 'low', 'mainAgent.effort 该盖过模型自带的 high（观测只要 low）');
+
+  const work = resolveAgents(AGENTS_CFG, {}, { id: 'work' });
+  assert.equal(work.access.name, '完全访问');
+  assert.deepEqual(work.disableRows, [], '干活那条一个工具都不能关');
+  assert.equal(work.model.effort, 'high', '干活那条不该被 mainAgent.effort 影响');
+});
+
+test('分档：菜单里选的模型/权限对两条都生效（用户改的就是这个）', () => {
+  const judge = resolveAgents(AGENTS_CFG, { mainAgentModel: 'A', workAgentAccess: '只读' }, { id: 'judge' });
+  assert.equal(judge.model.name, 'A');
+  const work = resolveAgents(AGENTS_CFG, { workAgentAccess: '只读' }, { id: 'work' });
+  assert.equal(work.access.name, '只读', '用户显式选的权限要盖过 agents.json');
+});
+
+test('resolveAgents 缺 agents.json 的字段时不炸（返回空/回落）', () => {
+  const r = resolveAgents({ models: [], access: [] }, {}, { id: 'judge' });
+  assert.equal(r.model, null);
+  assert.equal(r.access, null);
+  assert.deepEqual(r.disableRows, []);
 });

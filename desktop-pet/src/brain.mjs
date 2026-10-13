@@ -21,7 +21,7 @@ const DEFAULT_TIMEOUT_MS = 120_000;
  * 跑一个任务。
  * @returns {Promise<{ok: boolean, text: string, why?: string, seconds: number}>}
  */
-export function askDsh(task, config = {}, { timeoutMs = DEFAULT_TIMEOUT_MS, onChild = null } = {}) {
+export function askDsh(task, config = {}, { timeoutMs = DEFAULT_TIMEOUT_MS, onChild = null, patchId = 'pet' } = {}) {
   const p = dshPaths(config);
   const started = Date.now();
   const done = (ok, text, why) => ({ ok, text, why, seconds: (Date.now() - started) / 1000 });
@@ -32,7 +32,7 @@ export function askDsh(task, config = {}, { timeoutMs = DEFAULT_TIMEOUT_MS, onCh
 
   // 模型/权限靠 --patch 注入（见 agents.mjs）：不注入的话 headless profile 会去要
   // DEEPSEEK_API_KEY，而我们想用的是用户在 DSH 里已登录的账号。
-  const patch = preparePatch(config, { id: 'pet' });
+  const patch = preparePatch(config, { id: patchId });
 
   // 和 dsh-agents.ps1 保持同一套参数：直接用 exe + cli.js（绕开 cmd 的引号问题），
   // ELECTRON_RUN_AS_NODE=1 让它按普通 node 跑。
