@@ -77,6 +77,9 @@ function petFit() {
       lastFit = again;
       window.pet.fit(again);
     }
+    // 窗口高度变了 → 内容整体挪位（底边锚定，宠物自己不动，但气泡/输入条会上下移），
+    // 指针底下到底是哪个元素也可能跟着变，所以重判一次穿透
+    recheckHover('fit');
   });
 }
 
@@ -332,17 +335,45 @@ askInput.addEventListener('keydown', (e) => {
 // ---------------------------------------------------------------------------
 const INTERACTIVE = [petEl, bubble, bar, ask, tools];   // ask / tools 也要拦鼠标，否则按钮点不到
 let hovering = false;
-function updateHover(target) {
+/** 指针最后落在窗口里的位置（客户端坐标）。用来在**没有新 mousemove**时也能重新判断。 */
+let lastPoint = null;
+
+function updateHover(target, why = '') {
   const on = INTERACTIVE.some((el) => !el.classList.contains('hidden') && (el === target || el.contains(target)));
   if (on !== hovering) {
     hovering = on;
     window.pet.hover(on);
+    console.log(`[renderer] 穿透 ${on ? '关（要接收鼠标）' : '开（传给下面的窗口）'} · ${why}`);
   }
 }
+
+/**
+ * 按"指针现在在哪"重新判断一次。
+ *
+ * ⚠️ 为什么需要它（这是个真踩过的 bug）：原来 `blur` 时直接当成"不在宠物上" ——
+ * 你去点了一下别的窗口、再回来**不移动鼠标直接点宠物**，那一下就会**穿过去**落到下面的窗口上
+ * （用户原话："经常操作不到，鼠标直接透过去了"）。窗口失焦并不能说明指针不在它上面。
+ * 现在一律用 elementFromPoint 按**实际坐标**问一次，谁在上面就是谁。
+ */
+function recheckHover(why = '') {
+  if (!lastPoint) return;
+  const el = document.elementFromPoint(lastPoint.x, lastPoint.y);
+  updateHover(el || document.body, why);
+}
+
 // 窗口在穿透状态下仍然会转发 mousemove（forward: true），所以这里收得到
-document.addEventListener('mousemove', (e) => updateHover(e.target));
-document.addEventListener('mouseleave', () => updateHover(document.body));
-window.addEventListener('blur', () => updateHover(document.body));
+document.addEventListener('mousemove', (e) => {
+  lastPoint = { x: e.clientX, y: e.clientY };
+  // 排查用：穿透状态下转发过来的 move 到底有没有来、target 是谁（见 PET_DEBUG_HOVER）
+  window.__mm = { count: (window.__mm?.count || 0) + 1, x: e.clientX, y: e.clientY, target: e.target?.id || e.target?.tagName || '?' };
+  updateHover(e.target, 'move');
+});
+// 真正离开窗口（不是失焦）：指针确实不在窗口里了
+document.addEventListener('mouseleave', () => { lastPoint = null; updateHover(document.body, 'leave'); });
+window.addEventListener('blur', () => recheckHover('blur'));
+// 兜底：指针**停在原地不动**时也可能丢状态（角色在轻微上下浮，边缘处会闪），
+// 每 400ms 按最后已知坐标复判一次，让它能自己恢复。开销就是一次 elementFromPoint。
+setInterval(() => recheckHover('tick'), 400);
 
 // ---------------------------------------------------------------------------
 // 2) 交互
@@ -745,6 +776,7 @@ function applyLook(info) {
   document.documentElement.dataset.tts = ttsEnabled ? 'on' : 'off';
   micDeviceId = String(info.sttDeviceId || '');
   petFit();
+  recheckHover('look');   // 字号/按钮条一变，元素框就变了 → 按当前坐标重判一次
 }
 
 window.pet.onSettingsChanged((next) => {

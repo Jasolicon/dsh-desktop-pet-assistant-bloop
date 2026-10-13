@@ -94,6 +94,8 @@ const tasks = createTaskLog({ logger: console });
 let agentsWin = null;
 /** 一次性调用（headless）正在跑的那个子进程：中断时要真的杀掉它。 */
 let pendingAskChild = null;
+/** 最近一次渲染进程报来的"鼠标在不在宠物上"（真值 = 窗口在接收鼠标）。自检和排查用它。 */
+let lastHover = null;
 /** 暂停 = 关掉观察循环（不采样、不判断、不自动开口）。手动点它"说一句"仍然有效。 */
 let paused = false;
 /** 观察循环这次启动到底开没开（PET_NO_AUTO=1 时不启动，“继续”也不该把它拉起来）。 */
@@ -646,6 +648,76 @@ function createWindow() {
         log('[debug] 设置窗口 =', JSON.stringify(seen));
       } catch (err) {
         console.error('[pet][debug] 设置窗口自检失败', err);
+      }
+      app.quit();
+    });
+  }
+
+  /**
+   * 开发用：设了 PET_DEBUG_HOVER=1 就把"鼠标穿透"这条线端到端走一遍 ——
+   * 用 koffi **真的把光标挪到宠物身上**，再看窗口有没有切成接收鼠标；
+   * 然后**故意触发一次失焦**（就是那个 bug 的现场：点过别的窗口再回来点宠物），
+   * 看它还会不会错误地切回穿透。
+   *
+   * 为什么要用真光标：这条链是"渲染进程判断 → IPC → 主进程切 setIgnoreMouseEvents"，
+   * 光看代码看不出时序问题，而它出错的表现恰恰是"点不到"（用户报的就是这个）。
+   */
+  if (process.env.PET_DEBUG_HOVER) {
+    win.webContents.once('did-finish-load', async () => {
+      try {
+        log('[debug] 自检时窗口 =', JSON.stringify(win.getBounds()));
+        const { createRequire } = await import('node:module');
+        const koffi = createRequire(import.meta.url)('koffi');
+        const user32 = koffi.load('user32.dll');
+        const SetCursorPos = user32.func('int __stdcall SetCursorPos(int x, int y)');
+        // koffi 的出参结构体要显式声明（写成 `int*` + 一个普通对象会报
+        // "Unexpected Object value, expected int *" —— 实测踩到）
+        const POINT = koffi.struct('POINT', { x: 'int', y: 'int' });
+        const GetCursorPos = user32.func('int __stdcall GetCursorPos(_Out_ POINT *p)');
+
+        // ⚠️ 先等窗口高度落定（渲染进程会按内容把窗口调矮，底边锚定 → 窗口的 y 也会变）。
+        // 不等就量，量到的是"480 高、y=412"那版的坐标，算出来的目标点会落到屏幕外
+        // （实测：光标被系统夹到屏幕底部 1799，宠物根本没被碰到）
+        await new Promise((r) => setTimeout(r, 1500));
+        const rects = await win.webContents.executeJavaScript(`(() => {
+          const r = (el) => { const b = el.getBoundingClientRect(); return { x: b.x, y: b.y, w: b.width, h: b.height }; };
+          return { pet: r(document.getElementById('pet')), tools: r(document.getElementById('tools')), stage: r(document.getElementById('stage')) };
+        })()`);
+        const [wx, wy] = win.getPosition();   // 落定之后再读窗口位置
+        // ⚠️ SetCursorPos 收的是**物理像素**，而窗口坐标是 DIP —— 200% 缩放下不乘这个系数，
+        // 光标会被挪到窗口左上方一半的位置（实测：三次读数全是 null，因为压根没进窗口）
+        const sf = screen.getPrimaryDisplay().scaleFactor || 1;
+        const phys = (x, y) => ({ x: Math.round(x * sf), y: Math.round(y * sf) });
+        const petCenter = phys(wx + rects.pet.x + rects.pet.w / 2, wy + rects.pet.y + rects.pet.h / 2);
+        const emptySpot = phys(wx + rects.stage.x + 4, wy + 4);   // 左上角那片透明的
+        let before = { x: petCenter.x, y: petCenter.y };
+        try { before = { ...(GetCursorPos({}) || {}) }; } catch { /* 拿不到就用宠物中心兜底 */ }
+
+        const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+        // 直接看主进程记的那份状态（IPC 处理里记的 lastHover）
+        SetCursorPos(petCenter.x, petCenter.y); await wait(700);
+        {
+          const now = {}; GetCursorPos(now);
+          log('[debug] 窗口', JSON.stringify({ wx, wy }), '· 宠物中心（物理）', JSON.stringify(petCenter),
+            '· 光标现在', JSON.stringify({ x: now.x, y: now.y }));
+          log('[debug] 渲染进程收到的 mousemove =', JSON.stringify(
+            await win.webContents.executeJavaScript('window.__mm || null'),
+          ));
+        }
+        const onPet = lastHover;
+        win.blur();                             // ← bug 现场：失焦
+        await wait(700);
+        const afterBlur = lastHover;
+        SetCursorPos(emptySpot.x, emptySpot.y); await wait(700);
+        const onEmpty = lastHover;
+        SetCursorPos(before.x || petCenter.x, before.y || petCenter.y); await wait(200);
+
+        log('[debug] 穿透自检 =', JSON.stringify({
+          光标挪到宠物上: onPet, 失焦之后: afterBlur, 挪到透明区: onEmpty,
+          '期望（true=窗口接收鼠标）': { 宠物上: true, 失焦后: true, 透明区: false },
+        }));
+      } catch (err) {
+        console.error('[pet][debug] 穿透自检失败', err);
       }
       app.quit();
     });
@@ -1336,7 +1408,10 @@ function registerIpc() {
 
   // 鼠标在宠物身上 → 关掉穿透；离开 → 打开（forward 保证还能收到 move）
   ipcMain.on('pet:hover', (_e, hovering) => {
-    if (win) win.setIgnoreMouseEvents(!hovering, { forward: true });
+    const on = !!hovering;
+    lastHover = on;
+    if (process.env.PET_DEBUG_HOVER) log('[debug] 穿透 →', on ? '窗口接收鼠标' : '传给下面的窗口');
+    if (win) win.setIgnoreMouseEvents(!on, { forward: true });
   });
 
   // 用户刚动过桌宠（点、拖、打字）：把闸门的时间戳往后推，别在人家操作时插话
