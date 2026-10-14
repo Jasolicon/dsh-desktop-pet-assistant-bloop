@@ -5,9 +5,13 @@
 /**
  * stt.mjs —— 语音输入：一段 16 位 PCM → 文字
  *
- * 识别器直接复用 desktop-guide/stt-sensevoice.cjs（同一份代码，同一个许可）：
- * 它是"借 DSH 自带的 sherpa-onnx + SenseVoice 模型"，而模型有 228MB，
- * 两边各存一份没有意义。所以默认指向那边，路径可配置（sttRunner / sttModelDir）。
+ * 识别器是 stt-sensevoice.cjs：借 DSH 自带的 sherpa-onnx + SenseVoice 模型。
+ * 它需要三样东西都在本机：识别器脚本、sherpa 的 JS 包装层（在 .stt\sherpa 下）、
+ * 模型（在 .stt\model 下，约 240MB）。一次性的准备工作是 `npm run stt:install`。
+ *
+ * 路径优先用**本仓库里的**（独立克隆下来就能用），找不到再回落到同族的 PowerShell 版目录
+ * （老机器上那份已经装好了，没必要为了用语音再下一次 240MB）。
+ * 两条都能被配置覆盖：sttRunner / sttModelDir。
  *
  * 注意必须用**普通 node** 跑那个 .cjs —— Electron 的 RUN_AS_NODE 禁止原生外部缓冲区，
  * sherpa.readWave 会直接抛 "External buffers are not allowed"（desktop-guide 实测踩过）。
@@ -21,9 +25,13 @@ import { runDir } from './dirs.mjs';
 
 /** 默认的识别器与模型位置（可被 config.sttRunner / config.sttModelDir 覆盖）。 */
 export function defaultRunner() {
+  const local = resolve(ROOT, 'stt-sensevoice.cjs');
+  if (existsSync(local)) return local;
   return resolve(ROOT, '..', 'desktop-guide', 'stt-sensevoice.cjs');
 }
 export function defaultModelDir() {
+  const local = resolve(ROOT, '.stt', 'model');
+  if (existsSync(local)) return local;
   return resolve(ROOT, '..', 'desktop-guide', '.stt', 'model');
 }
 
@@ -70,8 +78,12 @@ export function transcribe(samples, sampleRate, config = {}, { timeoutMs = 60_00
   const node = nodePath(config);
 
   if (!node) return Promise.resolve(done(false, '', '找不到 node.exe（设 DG_NODE）'));
-  if (!existsSync(runner)) return Promise.resolve(done(false, '', `找不到识别器：${runner}`));
-  if (!existsSync(modelDir)) return Promise.resolve(done(false, '', `找不到模型目录：${modelDir}`));
+  if (!existsSync(runner)) {
+    return Promise.resolve(done(false, '', `找不到识别器：${runner}（跑一次 npm run stt:install）`));
+  }
+  if (!existsSync(modelDir)) {
+    return Promise.resolve(done(false, '', `找不到模型目录：${modelDir}（跑一次 npm run stt:install）`));
+  }
   if (!samples || !samples.length) return Promise.resolve(done(false, '', '没录到声音'));
 
   const dir = join(runDir(), 'stt');

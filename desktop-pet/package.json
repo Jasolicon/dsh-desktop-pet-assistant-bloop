@@ -11,6 +11,7 @@
     "start:sandbox": "electron .",
     "probe": "electron --no-sandbox tools/probe.cjs",
     "test": "node --test",
+    "stt:install": "node tools/install-stt.mjs",
     "migrate-config": "node tools/migrate-config.mjs",
     "dist": "electron-builder --win nsis",
     "pack": "electron-builder --win dir"

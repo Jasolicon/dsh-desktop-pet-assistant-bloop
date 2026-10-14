@@ -20,15 +20,27 @@
  * 只在第一次做（留一个 .seeded 标记）。之后 DSH 就往新家里读写，我们这边可写，
  * 而且**登录、历史会话都还在**。
  */
-import { cpSync, existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { runDir } from './dirs.mjs';
 
-/** 要拷过去的（都是小东西：登录 + 观察/会话状态）。 */
-export const SEED_ITEMS = ['.credentials.yaml', '.anonymous-user-id', 'profiles', 'sessions', 'storages', 'llm-deepseek'];
-/** 用 junction 指回原处的（大块缓存/运行时，搬过去纯属浪费时间）。 */
-export const LINK_ITEMS = ['dsh-runtimes', 'dsh-orb', 'dsh_orb', 'attachments', 'cache', 'whale-audio', 'whale-bubble-imgs', 'whale-roles'];
+/**
+ * 要**拷**过去的：凡是 DSH 会**写**的都必须拷（或建空的真目录）。
+ * ⚠️ 这一条踩过：`attachments` 一开始做成 junction，结果 DSH 往里 chmod/write 时
+ * 报 `EPERM: chmod '...\run\dsh-home\attachments\v1\tmp'` —— junction 只是把我们指回
+ * 那个**本来就被拦**的原目录，等于白躲。
+ */
+export const SEED_ITEMS = [
+  '.credentials.yaml', '.anonymous-user-id',       // 登录（几 KB）
+  'profiles', 'storages', 'llm-deepseek',          // 配置与状态（几 MB）
+  'sessions', 'attachments', 'cache',              // 会话历史 / 附件 / 缓存：DSH 会写
+];
+/**
+ * 用 junction 指回原处的：**只读的大块资源**（一个字节都不改，搬过去纯属浪费时间）。
+ * 判断标准就一条：DSH 会不会往里写？会 → 拷；不会 → junction。
+ */
+export const LINK_ITEMS = ['dsh-runtimes', 'dsh-orb', 'dsh_orb', 'whale-audio', 'whale-bubble-imgs', 'whale-roles'];
 
 export const dshHomeDir = () => join(runDir(), 'dsh-home');
 export const legacyDshHome = () => join(process.env.USERPROFILE || process.env.HOME || '', '.dsh');
@@ -53,7 +65,27 @@ export function ensureDshHome({ logger = console, home = dshHomeDir(), legacy = 
   }
   mkdirSync(home, { recursive: true });
   const marker = join(home, '.seeded');
-  if (existsSync(marker)) return { home, seeded: false, copied: [], linked: [] };
+
+  // 修一遍历史遗留：早期把"要写的东西"（attachments/cache）junction 过去了，
+  // 那种要做成真目录 —— junction 指回被拦的原处，等于没躲开。
+  const repaired = [];
+  for (const name of SEED_ITEMS) {
+    const ours = join(home, name);
+    try {
+      if (existsSync(ours) && lstatSync(ours).isSymbolicLink()) {
+        rmSync(ours, { recursive: true, force: true });   // junction：只删链，不动目标
+        const src = join(legacy, name);
+        if (existsSync(src)) cpSync(src, ours, { recursive: true, force: true });
+        else mkdirSync(ours, { recursive: true });
+        repaired.push(name);
+      }
+    } catch (err) {
+      logger.error?.('[dsh-home] 修 junction 失败：', name, err.message);
+    }
+  }
+  if (existsSync(marker)) {
+    return { home, seeded: false, copied: repaired, linked: [], repaired };
+  }
 
   const copied = [];
   const linked = [];
