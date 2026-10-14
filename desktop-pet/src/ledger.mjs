@@ -18,10 +18,11 @@
  * 纯函数都导出了：今天的花费、上限判据、金额格式这些**错了不会报错**（只是数字不对），
  * 所以 test/ledger.test.mjs 把它们的边界钉住。
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { runDir } from './dirs.mjs';
 import { ROOT } from './paths.mjs';
+import { readJson, writeJson } from './jsonfile.mjs';
 
 /** 只有它变了才播报：几分钱的修正不该当成"充值到账"。 */
 export const DEFAULT_RECHARGE_MIN_DELTA = 0.5;
@@ -161,38 +162,34 @@ export function findApiKey({ env = process.env, dir = runDir(), legacyDir = lega
   return { key: '', from: '' };
 }
 
+/**
+ * 读账本。
+ * ⚠️ 坏了**不能只"当空账本"**：账本空了 = 今天的花费归零 = 消费上限再也拦不住（真花钱）。
+ * 所以坏文件要留备份 + 报出来（见 jsonfile.mjs），再由调用方决定怎么办。
+ */
 export function readLedger(file = ledgerFile()) {
-  try {
-    if (!existsSync(file)) return emptyLedger();
-    return normalizeLedger(JSON.parse(readFileSync(file, 'utf8')));
-  } catch {
-    return emptyLedger();   // 坏了就当空账本，不拦着桌宠起来
-  }
+  const raw = readJson(file, null, { missing: null });
+  if (!raw) return emptyLedger();
+  return normalizeLedger(raw);
 }
 
 export function writeLedger(led, file = ledgerFile()) {
   try {
-    mkdirSync(dirname(file), { recursive: true });
-    writeFileSync(file, `${JSON.stringify(led, null, 2)}\n`, 'utf8');
+    writeJson(file, led);
     return true;
   } catch {
     return false;
   }
 }
 
+/** 账本状态（余额基线 / 上限触发记录 / 暂停状态）：同样原子写、读坏要说出来。 */
 export function readState(file = ledgerStateFile()) {
-  try {
-    if (!existsSync(file)) return null;
-    return JSON.parse(readFileSync(file, 'utf8'));
-  } catch {
-    return null;
-  }
+  return readJson(file, null, { missing: null });
 }
 
 export function writeState(state, file = ledgerStateFile()) {
   try {
-    mkdirSync(dirname(file), { recursive: true });
-    writeFileSync(file, `${JSON.stringify(state)}\n`, 'utf8');
+    writeJson(file, state, { space: 0 });
     return true;
   } catch {
     return false;

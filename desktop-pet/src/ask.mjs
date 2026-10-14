@@ -28,8 +28,9 @@
  *
  * 生成提示词与生成应答都是纯函数，可以穷举单测；文件监听单独一层。
  */
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { writeJson } from './jsonfile.mjs';
 
 /** 审批的三个选项。词表与 PowerShell 版一致。 */
 export const APPROVAL_OPTIONS = ['允许', '拒绝', '稍后'];
@@ -99,9 +100,10 @@ export function answerFor(req, choice) {
 export function writeAnswer(dir, req, choice) {
   const payload = answerFor(req, choice);
   if (!payload) return null;
-  mkdirSync(dir, { recursive: true });
   const file = join(dir, `ans-${req.id}.json`);
-  writeFileSync(file, JSON.stringify(payload), 'utf8');
+  // 原子写：对面（pet-responder）最久 200ms 就轮询一次，读到**写了一半**的应答会当解析失败。
+  // 这里的 tmp 名以 `.tmp-<pid>` 结尾，不会被 `ans-*.json` 那种过滤捞到（见 jsonfile.mjs）。
+  writeJson(file, payload, { space: 0 });
   return file;
 }
 

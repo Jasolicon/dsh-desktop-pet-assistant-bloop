@@ -17,9 +17,9 @@
  *
  * 落盘在 `run/tasks.json`（run/ 已 gitignore），所以重启后还能看见上一轮的结论。
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { runDir } from './dirs.mjs';
+import { readJson, writeJson } from './jsonfile.mjs';
 
 /** 最多留几条（和 PS 版"只列最后几个"同义）。 */
 export const MAX_TASKS = 20;
@@ -85,18 +85,14 @@ function normalize(raw) {
 }
 
 export function readTasks(file = tasksFile()) {
-  try {
-    if (!existsSync(file)) return { tasks: [] };
-    return normalize(JSON.parse(readFileSync(file, 'utf8')));
-  } catch {
-    return { tasks: [] };   // 坏了就当没有 —— 记录坏了不该让桌宠起不来
-  }
+  // 坏了要说出来 + 留备份（见 jsonfile.mjs）：直接"当没有"的话，下一次保存就把现场覆盖了，
+  // 用户永远不知道自己那张表是怎么空的
+  return normalize(readJson(file, { tasks: [] }, { missing: { tasks: [] } }));
 }
 
 export function writeTasks(state, file = tasksFile()) {
   try {
-    mkdirSync(dirname(file), { recursive: true });
-    writeFileSync(file, `${JSON.stringify(state, null, 2)}\n`, 'utf8');
+    writeJson(file, state);
     return true;
   } catch {
     return false;
@@ -124,13 +120,19 @@ export function resetStale(state, { note = '桌宠重启，这一轮任务中断
 export function createTaskLog({ file = tasksFile(), max = MAX_TASKS, now = () => new Date(), logger = console } = {}) {
   let state = readTasks(file);
   const save = () => { if (!writeTasks(state, file)) logger.error?.('[tasks] 记录写不进去：', file); };
+  // id 只要唯一就够（更新靠 id 找人）。**别只按时间戳**：Windows 计时器粒度约 15.6ms，
+  // 同一毫秒内开两条就是同一个 id —— 会话 id 上踩过一模一样的坑（见 dsh-session.mjs 的注释）。
+  // 这里用"时间 + 本进程随机标签 + 自增序号"，跨进程、跨重启、时钟回拨都不会重。
+  const runTag = Math.random().toString(36).slice(2, 6);
+  let seq = 0;
 
   return {
     state: () => state,
 
     /** 开一条（返回的是那条记录，调用方拿 id 去 update）。 */
     add({ kind = 'task', text = '', note = '' } = {}) {
-      const id = `t${now().getTime().toString(36)}${Math.floor(Math.random() * 1296).toString(36).padStart(2, '0')}`;
+      seq += 1;
+      const id = `t${now().getTime().toString(36)}${runTag}${seq.toString(36)}`;
       const rec = {
         id,
         kind,

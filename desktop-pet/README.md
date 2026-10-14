@@ -180,6 +180,21 @@ node_modules\electron\dist\electron.exe --no-sandbox tools/region-probe.mjs
 > **`desktop-guide/run/openai.key`** ← 别漏了最后这条：PS 版 `advisor-openai.ps1` 的 baseUrl
 > 就是 api.deepseek.com，那个文件里装的本来就是 DeepSeek 的 key，老用户不用为了账本再填一遍。
 
+### 状态文件：原子写 + 读坏了要说出来（不许静默当"它是空的"）
+
+`config.json`（设置）、`run\ledger.json`（账本）、`run\tasks.json`（派活记录）、学习表、应答文件
+都走 `src/jsonfile.mjs` 那两条规矩：
+
+- **写：先写 `.tmp-<pid>` 再 rename**（同卷上是原子的）。直接覆盖写时，进程死在半路会留下
+  **半截 JSON**，而半截 JSON 的后果不是"少一条记录"，是**整份状态被当成空的**：
+  96 项设置回默认、今天花费归零（消费上限就再也拦不住）、派活记录表清空。
+- **读：解析失败留一份 `<file>.bad-<时间>` 备份 + 大声报出来**（每次运行、每份文件只报一次），
+  然后才给兜底值。以前是 `catch { return 空 }` —— 等于把"文件坏了"翻译成"里面本来就没东西"，
+  下一次保存就把现场覆盖掉，用户永远不知道发生了什么。
+
+同理：配置读坏**不再让桌宠起不来**（以前是模块顶层 throw → 双击闪退）。现在起得来、日志里有话说、
+原件留了备份，用户还能把设置找回来。
+
 ### 长期记忆：把观察日志压成一段，喂给判断
 
 判断时能看到的只有最近 30 秒（截图 + 时间线），所以它原本不知道你上午在忙什么、
@@ -413,6 +428,15 @@ work   request/header 19918 字符      ← 24 个工具的 schema 全在
 > ⚠️ 踩过的坑：`DshSession` 的构造参数是 **`patchId`**。传成 `id` 不会报错，
 > 但两条会话会静默共用同一份 patch —— 表现就是"工具精简配了、其实没生效"
 > （实测看到两条 `request/header` 一字不差才发现）。
+
+> ⚠️ 另一个坑（用户报过）：**会话 id 必须两两不同，而且用过就不能再用**。
+> 服务端把 `session/prompt` 当**创建**用，id 已在盘上就直接拒
+> （`session "pet-xxx" already exists`；气泡上就是一句 `（没做成：{…}）`）。
+> 所以 id 形如 `pet-<judge|work>-<进程随机标签>-<序号>`（`dsh-session.mjs` 的 `mintSessionId`），
+> 而且**每次起进程都换一个**。别退回"按 `Date.now()` 起 id"：Windows 计时器粒度约 15.6ms，
+> 启动时 judge/work 两条会话在同一毫秒里 new 出来是**常态** —— 两条拿到同一个 id，
+> 谁先 prompt 谁建成功，另一条此后每次都失败（实测：`run\dsh-home\sessions\…` 里只落了一个
+> `pet-*` 目录，而它其实是**两条**会话在抢）。
 
 > 权限那一条会提醒你：选到 `完全访问`（`danger-full-access` + `approval: never`）意味着
 > 它派出去的活**不再问你**。

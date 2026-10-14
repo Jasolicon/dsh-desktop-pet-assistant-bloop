@@ -39,7 +39,7 @@ const TIMELINE_SIZE = 40;
  *        （子 agent 观察就是从这里塞 `agents` 进去的 —— 否则主 agent 会把
  *         "屏幕很久没动"误读成"用户卡住了"，而真相是用户派了活出去正在跑）
  */
-export function createMonitor({ config = {}, live = null, onDecision, onState, logger = console, context = null } = {}) {
+export function createMonitor({ config = {}, live = null, onDecision, onState, logger = console, context = null, claimJudge = null } = {}) {
   /**
    * 配置要**每次读**，不能启动时抄一份。
    * 为什么：设置窗口写回时主进程是"整份替换" cfg 对象（`cfg = { ...cfg, x }`），
@@ -239,6 +239,22 @@ export function createMonitor({ config = {}, live = null, onDecision, onState, l
         return;
       }
 
+      /**
+       * 闸门放行了，但**上面还有一道闸**：主进程那边"判断/问一句"这条路上已经有一轮在跑
+       * （手动「问一句」正在用同一条 judge 会话，见 main.mjs 的 thinking）。
+       * 这里要的是一记**纯跳过**：不记判定、不动 lastJudged*，下一拍（2 秒后）自然重来 ——
+       * 上一轮通常几秒就结束。⚠️ 别改成"记一条沉默"或"照跑"：沉默率是标注数据不能掺假，
+       * 而两条 prompt 同时进同一条会话会把答案串掉。
+       *
+       * ⚠️ claimJudge 必须是"**同步**检查 + 占位"（返回放开用的函数）：中间只要有一个 await，
+       * 手动那条就可能从缝里开跑 —— 两边都以为自己轮到了。放开由下面那个 finally 兜底。
+       */
+      const releaseJudge = claimJudge ? claimJudge() : null;
+      if (claimJudge && !releaseJudge) {
+        logger.log?.('[pet] 手动那一轮还在跑，这一拍先跳过');
+        return;
+      }
+
       // 4) 放行：这一轮才真的抓图、记账、叫模型
       st.lastSkipReason = '';
       st.lastJudgedFp = st.lastFp;
@@ -268,6 +284,7 @@ export function createMonitor({ config = {}, live = null, onDecision, onState, l
         }
       } finally {
         st.busy = false;
+        if (releaseJudge) releaseJudge();     // 这一轮结束（不管成没成）→ 放开"判断"这条路
       }
       onState?.(snapshot());
     } catch (err) {

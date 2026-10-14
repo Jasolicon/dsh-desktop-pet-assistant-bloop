@@ -17,6 +17,7 @@
 
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { runDir } from './dirs.mjs';
 
 /** 锁文件位置：与 desktop-guide/paths.ps1 的 Get-DgLockPath 一致。 */
 export function lockPath(env = process.env) {
@@ -56,26 +57,48 @@ export function holder(path = lockPath()) {
 
 /**
  * 尝试占锁。
- * @returns {{ok: boolean, holder?: number|null, why?: string}}
+ * @param {string} path 共享位置（和 PowerShell 版共用的那个）
+ * @param {string} alt  备用位置（应用自己的目录）：共享位置**写不进去**时用它
+ * @returns {{ok: boolean, holder?: number|null, why?: string, path?: string, shared?: boolean}}
  *   ok=false 只在"确实有另一只活着"时出现（调用方应当退出并说清是谁）。
- *   锁文件写不出来时 ok=true + why 里说明 —— 宁可多一只，也不要静默起不来。
+ *   两个位置都写不出来时 ok=true + why 里说明 —— 宁可多一只，也不要静默起不来。
+ *
+ * ⚠️ 为什么必须有备用位置（实测）：受限上下文里（比如从沙箱 shell 启动，见 start.cmd 的注释）
+ * `%LOCALAPPDATA%\Bloop` 是**只读**的（ACL 上只有 ReadAndExecute）→ 写共享锁文件 EPERM。
+ * 原来那种情况直接"这次不互斥"，于是"同时只有一只"这条保证**静默失效**：
+ * 两只一起抓屏、一起叫模型花钱、一起写同一份账本和外派记录。
+ * 备用位置在应用自己的目录里（两种上下文都写得进去），至少 Electron↔Electron 还能互相排斥。
+ * 共享位置仍然**先读**：PowerShell 版占着的话，这边照样要退出。
  */
-export function acquire(path = lockPath()) {
-  const held = holder(path);
-  if (held) return { ok: false, holder: held };
-  if (!path) return { ok: true, why: '没有可用的锁位置（LOCALAPPDATA/TEMP 都没有）' };
-  try {
-    mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(
-      path,
-      JSON.stringify({ pid: process.pid, at: new Date().toISOString(), form: 'electron（desktop-pet）' }),
-      'utf8',
-    );
-    return { ok: true };
-  } catch (err) {
-    return { ok: true, why: `锁文件写不进去（${err && err.message}）—— 这次不互斥` };
+export function acquire(path = lockPath(), alt = fallbackLockPath()) {
+  // 两个位置都要先查：谁占着都算"已经有一只"
+  for (const p of [path, alt]) {
+    if (!p) continue;
+    const held = holder(p);
+    if (held) return { ok: false, holder: held, path: p };
   }
+
+  const body = JSON.stringify({ pid: process.pid, at: new Date().toISOString(), form: 'electron（desktop-pet）' });
+  for (const [p, shared] of [[path, true], [alt, false]]) {
+    if (!p) continue;
+    try {
+      mkdirSync(dirname(p), { recursive: true });
+      writeFileSync(p, body, 'utf8');
+      return { ok: true, path: p, shared };
+    } catch (err) {
+      // 共享位置写不进去是**已知会发生的**（受限上下文）；备用位置再写不进去才是真的没辙
+      if (shared) continue;
+      return { ok: true, why: `两个锁位置都写不进去（共享：${path}，备用：${p}；${err && err.message}）—— 这次不互斥` };
+    }
+  }
+  return { ok: true, why: '没有可用的锁位置（LOCALAPPDATA/TEMP 与应用目录都没有）' };
 }
+
+/**
+ * 备用锁位置：应用自己的数据目录（开发态是仓库的 run/，打包后是 userData/run）。
+ * dirs.mjs 是纯 node 安全的（它对 electron 的 require 包在 try 里），所以这里 import 它没问题。
+ */
+export const fallbackLockPath = () => join(runDir(), 'pet.lock');
 
 /** 释放：只清自己的那把（别人的锁不能被我删掉）。 */
 export function release(path = lockPath()) {

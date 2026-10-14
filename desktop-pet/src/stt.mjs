@@ -18,10 +18,13 @@
  * 所以这里 spawn 的是 nodePath()，不是 Electron 自己。
  */
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { ROOT, nodePath } from './paths.mjs';
 import { runDir } from './dirs.mjs';
+
+/** 本进程里录第几次（wav 文件名要唯一，见 transcribe 里那段注释）。 */
+let recSeq = 0;
 
 /** 默认的识别器与模型位置（可被 config.sttRunner / config.sttModelDir 覆盖）。 */
 export function defaultRunner() {
@@ -104,7 +107,10 @@ export function transcribe(samples, sampleRate, config = {}, { timeoutMs = 60_00
 
   const dir = join(runDir(), 'stt');
   mkdirSync(dir, { recursive: true });
-  const wav = join(dir, `rec-${Date.now()}.wav`);
+  // 文件名要唯一：Windows 计时器粒度约 15.6ms，光用时间戳在"两只桌宠"（见 lock.mjs 的注释）下会撞。
+  // 顺带把 pid 写进去，一眼能看出是哪一次会话留下的。
+  recSeq += 1;
+  const wav = join(dir, `rec-${process.pid}-${Date.now()}-${recSeq}.wav`);
   writeFileSync(wav, wavFromSamples(samples, sampleRate || 16000));
 
   return new Promise((resolvePromise) => {
@@ -127,6 +133,22 @@ export function transcribe(samples, sampleRate, config = {}, { timeoutMs = 60_00
       settled = true;
       clearTimeout(timer);
       try { child.kill(); } catch { /* 已经退了 */ }
+      /**
+       * 收尾时把这段 wav 收掉。
+       * 为什么以前会一直堆：录一次写一个 `run\stt\rec-*.wav`，谁都不删 —— 一次 20 秒的录音
+       * 就是 640KB，用一阵子就是几十上百 MB（实测目录里已经躺着 5 个没人管的）。
+       * **失败的那些留着**（那是能用来查"为什么没听对"的现场），只保留最近 5 个。
+       */
+      if (ok) {
+        try { rmSync(wav, { force: true }); } catch { /* 删不掉就留在那不碍事 */ }
+      } else {
+        try {
+          const olds = readdirSync(dir).filter((f) => f.startsWith('rec-') && f.endsWith('.wav')).sort();
+          for (const f of olds.slice(0, Math.max(0, olds.length - 5))) {
+            try { rmSync(join(dir, f), { force: true }); } catch { /* 别人占着就算了 */ }
+          }
+        } catch { /* 目录读不了就算了 */ }
+      }
       resolvePromise(done(ok, text, why));
     };
     const timer = setTimeout(() => finish(false, '', `识别超过 ${Math.round(timeoutMs / 1000)} 秒`), timeoutMs);

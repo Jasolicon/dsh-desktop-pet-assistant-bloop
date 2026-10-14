@@ -11,10 +11,9 @@
  * 设计上的取舍：不做 schema 校验库，只做"缺键补默认值"。校验交给 useConfig 的调用方，
  * 出问题时给一条能看懂的错误，而不是抛一个 zod 的堆栈。
  */
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
-import { dirname, join } from 'node:path';
 import { ROOT } from './paths.mjs';
 import { configPath } from './dirs.mjs';
+import { readJson, writeJson } from './jsonfile.mjs';
 
 /** 打包后用 userData 目录（源码目录在 asar 里只读），见 dirs.mjs。 */
 export const CONFIG_PATH = configPath();
@@ -184,19 +183,21 @@ export const DEFAULTS = {
   silentBackoffMax: 4,
 };
 
+/**
+ * 读配置。
+ * ⚠️ 以前是"解析不了就 throw"，而 loadConfig 在**模块顶层**就被调用 —— 于是一份坏掉的
+ * config.json 让桌宠**根本起不来**（双击闪退，只剩 start.log 里一行栈）。用户丢的不是一次运行，
+ * 是"96 项设置 + 一个能用的桌宠"。现在：坏文件留一份 `.bad-<时间>` 备份 + 报出来（见 jsonfile.mjs），
+ * 照样返回默认值把桌宠起起来 —— 起得来才有机会把设置改回去。
+ */
 export function loadConfig(path = CONFIG_PATH) {
-  if (!existsSync(path)) return { ...DEFAULTS };
-  let raw;
-  try {
-    raw = JSON.parse(readFileSync(path, 'utf8'));
-  } catch (err) {
-    throw new Error(`配置文件不是合法 JSON：${path}\n${err.message}`);
-  }
+  const raw = readJson(path, { ...DEFAULTS }, { missing: { ...DEFAULTS } });
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { ...DEFAULTS };
   // 缺键补默认值；多的键原样保留（不静默丢用户的设置）
   return { ...DEFAULTS, ...raw };
 }
 
 export function saveConfig(cfg, path = CONFIG_PATH) {
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, `${JSON.stringify(cfg, null, 2)}\n`, 'utf8');
+  // 原子替换：拖一下桌宠就会存一次位置，直接覆盖写有"半截文件"的风险（见 jsonfile.mjs 的头注释）
+  writeJson(path, cfg);
 }

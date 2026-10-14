@@ -49,6 +49,20 @@ import {
 let win = null;
 let cfg = loadConfig();
 let busy = false;
+/**
+ * 「判断 / 问一句」这条路上的闸：同一时刻只允许一轮。
+ *
+ * 为什么必须有：自动判断（monitor 的 tick → onDecision）和手动「问一句」（pet:say）
+ * 走的是**同一条 judge 常驻会话**，而常驻会话是"一轮一个 prompt"。两条同时发进去，
+ * 后一条会把前一条的 waiter 顶掉 —— **答案会串**（第二条收到的是第一条的答案），
+ * 前一条一直挂到 120 秒超时。
+ *
+ * PowerShell 版有同一道闸（DesktopGuide.ps1 里 `if ($script:thinking) { return }`，
+ * 那边的注释写着"以前没有这道闸，连点两下会起两个 advisor，第二个会去抢同一个会话的写句柄，
+ * 留下孤儿 dsh 进程"）。⚠️ 这里的 `busy` 管的是**干活那条**路（派活 / 语音 / 看图片），
+ * `thinking` 管的是**判断这条**路，两者别合并成一条。
+ */
+let thinking = false;
 let monitor = null;
 /**
  * 常驻 DSH 会话：一次 initialize（约 4.5s），之后每轮秒级。见 dsh-session.mjs。
@@ -1004,10 +1018,24 @@ function createWindow() {
   win.setIgnoreMouseEvents(true, { forward: true });
   lastHover = false;
 
+  /**
+   * 位置记忆。⚠️ 'moved' 在拖动过程中会**连续**触发（一次拖动几十上百个事件），
+   * 每个事件都整份写一次 config.json 就是一场写风暴（写一次 ~4KB，还带 rename）。
+   * 内存里立刻更新、落盘合并到 500ms 一次 —— 崩在 500ms 内最多丢一次位置，无所谓。
+   */
+  let moveSave = null;
   win.on('moved', () => {
     const [nx, ny] = win.getPosition();
     cfg = { ...cfg, x: nx, y: ny, bottom: ny + win.getSize()[1] };
-    saveConfig(cfg);
+    if (moveSave) clearTimeout(moveSave);
+    moveSave = setTimeout(() => {
+      moveSave = null;
+      try {
+        saveConfig(cfg);
+      } catch (err) {
+        log('[配置] 位置存不进去（下次启动回默认位置）：', err && err.message);
+      }
+    }, 500);
   });
 
   win.on('closed', () => { win = null; });
@@ -1416,7 +1444,11 @@ async function recordCallCost(before) {
     if (delta >= 0) ledger.lastCallCost = Math.round(delta * 10000) / 10000;
     ledger.footer = footerText(led, { lastCallCost: ledger.lastCallCost, capYuan: Number(cfg.dailySpendCapYuan) || 0 });
     pushFooter();
-  } catch { /* 记不上就算了，不该影响派活本身 */ }
+  } catch (err) {
+    // 不能一声不吭：这一笔是"上一次调用花了多少"和"今天花了多少"的原料，
+    // 它悄悄失败 → 消费上限的判断也跟着不准（钱的事，至少日志里要说）
+    log('[账本] 这一笔记不上（不影响派活，但"今天花了多少"会偏）：', err && err.message);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1980,12 +2012,17 @@ function registerIpc() {
   // 「现在说一句」：暂时复用同一条 dsh 通道，等屏幕采样搬过来再换成真正的观察 payload
   ipcMain.handle('pet:say', async () => {
     if (busy) return { ok: false, why: '正忙' };
+    // 自动判断正在用同一条 judge 会话（一场只能跑一轮，见 thinking 的注释）。
+    // 说清楚为什么、大概多久 —— 比闷着不说（PS 版那道闸就是静默 return）好懂。
+    if (thinking) return { ok: false, why: '它正在看这一屏，等这一轮结束再来（几秒）' };
     monitor?.noteUserAction(cfg.userQuietSeconds || 6);
     busy = true;
+    thinking = true;
     try {
       return await ask(sayPrompt());
     } finally {
       busy = false;
+      thinking = false;
     }
   });
 
@@ -2153,20 +2190,22 @@ ipcMain.handle('settings:clearRegion', () => clearRegionNow());
 
 // 单实例：机器级锁，**和 PowerShell 版共用同一个锁文件**（见 src/lock.mjs 里的理由）。
 //   · 有另一只活着 → 说清是谁，然后退出（同时只有一只）
-//   · 锁写不出来   → 记一行，继续跑（静默起不来比重一只更糟）
+//   · 共享锁写不出来（受限上下文里 AppData 是只读的）→ 退到应用自己的 run/pet.lock 再锁一次，
+//     并把这件事记一行；两个位置都写不进去才真的"这次不互斥"（静默起不来比重一只更糟）
 // PET_NO_LOCK=1 跳过（诊断用：要同时开两只对照时也用得上）。
 const noLock = process.env.PET_NO_LOCK === '1';
-const lockFile = lockPath();
+let lockFile = lockPath();
 let lockHeld = false;
 if (noLock) {
   log('实例锁：跳过（PET_NO_LOCK=1）');
 } else {
   const got = acquire(lockFile);
   lockHeld = got.ok;
+  if (got.path) lockFile = got.path;
   if (got.ok) {
-    log('实例锁：已获得', lockFile, got.why ? `（${got.why}）` : '');
+    log('实例锁：已获得', lockFile, got.shared === false ? '（共享位置写不进去，退到了这个备用位置）' : '', got.why ? `（${got.why}）` : '');
   } else {
-    log(`实例锁：已被 pid ${got.holder} 占着 —— 同时只会有一只桌宠，这次退出`);
+    log(`实例锁：已被 pid ${got.holder} 占着（${got.path}）—— 同时只会有一只桌宠，这次退出`);
     app.quit();
   }
 }
@@ -2199,7 +2238,14 @@ app.whenReady().then(() => {
       const found = findDshRoot('');
       if (found) {
         cfg = { ...cfg, dshRoot: found };
-        try { saveConfig(cfg); log('已把 DSH 位置记进配置：', found); } catch { /* 存不上也不影响这次运行 */ }
+        // ⚠️ 存不上要**说出来**：这一项是"下次启动去哪找 DSH"，悄悄失败的表现就是
+        // "这次能用、重启又变成找不到"（用户只会说"它时好时坏"）
+        try {
+          saveConfig(cfg);
+          log('已把 DSH 位置记进配置：', found);
+        } catch (err) {
+          log('[配置] DSH 位置存不进去（这次仍然生效，重启后要重新找）：', err && err.message);
+        }
       }
     }
     createWindow();
@@ -2241,7 +2287,21 @@ app.whenReady().then(() => {
         return list.length ? { agents: list } : null;
       },
       onState: (s) => win?.webContents.send('pet:state', s),
+      /**
+       * 闸门说"值得看一眼"之后再问一句"现在轮得到吗"：手动「问一句」正在跑同一轮时先跳过这一拍。
+       *
+       * ⚠️ 这个回调必须**同步**地"检查 + 占位"（返回放开用的函数）：检查（thinking 空不空）
+       * 和占位（把它置上）之间只要隔一个 await，手动那条就能从缝里开跑，两边都以为自己轮到了。
+       * 也**不要**改成"照跑，让 ask() 去挡"：那会记一条**沉默**，把假数据掺进沉默率并触发退避。
+       * 这里要的是"这一拍没轮到"，跟 PS 版那道闸（`if ($script:thinking) { return }`）一样是纯跳过。
+       */
+      claimJudge: () => {
+        if (thinking) return null;
+        thinking = true;
+        return () => { thinking = false; };
+      },
       onDecision: async (payload) => {
+        // 这一轮已经由 claimJudge 占住了"判断"这条路（见上面的注释），这里只管发请求
         const r = await ask(buildLookPrompt(payload), { imagePaths: freshShotPaths(payload) });
         // 失败就当"没说"：宁可少说一句，也不要在出错时打扰用户
         if (!r.ok) {
@@ -2342,7 +2402,13 @@ app.whenReady().then(() => {
     try { globalShortcut.unregisterAll(); } catch { /* 已经退了 */ }
     if (cursorTimer) clearInterval(cursorTimer);
     if (ledgerTimer) clearInterval(ledgerTimer);
-    try { saveLedgerState(); } catch { /* 存不上就算了 */ }
+    // 存不上要说：这里落的是"到过上限于 / 暂停着关的"这类状态，
+    // 丢了它下一次启动就会**自己恢复观察**（等于没拦住的那部分钱又花出去）
+    try {
+      saveLedgerState();
+    } catch (err) {
+      log('[账本] 退出前状态存不上（下次启动可能自己恢复观察）：', err && err.message);
+    }
     if (lockHeld) release(lockFile);        // 只清自己那把（别人的锁不能被我删掉）
     tray?.destroy();
     askWatcher?.stop();

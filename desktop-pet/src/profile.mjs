@@ -16,9 +16,9 @@
  * 为什么值得单测：匹配错了不会报错 —— 症状是"打游戏时它每 2 秒截一次图在那儿念叨"，
  * 或者反过来"看视频时它一直在旁边说话"。这两种都很难从日志里看出来。
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { runDir } from './dirs.mjs';
+import { readJson, writeJson } from './jsonfile.mjs';
 
 export const MIN_SAMPLE = 0.3;
 export const MAX_SAMPLE = 60;
@@ -95,13 +95,10 @@ export function taskProfile(cfg = {}, { process = '', title = '', learned = {} }
 }
 
 export function readSamples(file = sampleFile()) {
-  try {
-    if (!existsSync(file)) return {};
-    const raw = JSON.parse(readFileSync(file, 'utf8'));
-    return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
-  } catch {
-    return {};   // 坏了就当空表（学习表坏了不该让桌宠起不来）
-  }
+  // 坏了会留一份 .bad-<时间> 备份并报出来（见 jsonfile.mjs）：学习表本身不重要，
+  // 但"悄悄当成空表、下一次保存覆盖掉"这件事不该发生
+  const raw = readJson(file, {}, { missing: {} });
+  return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
 }
 
 /**
@@ -122,8 +119,7 @@ export function recordSample(key, seconds, { source = 'model', why = '', file = 
       evidence: (Number(old.evidence) || 0) + 1,
       updatedAt: new Date().toISOString(),
     };
-    mkdirSync(dirname(file), { recursive: true });
-    writeFileSync(file, `${JSON.stringify(table, null, 2)}\n`, 'utf8');
+    writeJson(file, table);
     return { ok: true, entry: table[k] };
   } catch (err) {
     return { ok: false, why: err.message };

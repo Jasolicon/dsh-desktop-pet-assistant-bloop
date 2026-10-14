@@ -38,6 +38,27 @@ const MIME = {
   '.gif': 'image/gif',
 };
 
+/**
+ * 会话 id 的两条硬约束（都踩过）：
+ *   ① 服务端把 `session/prompt` 当**创建**用：id 已存在就直接拒
+ *      （`session "…" already exists`），而且会话是**落盘**的（`run\dsh-home\sessions\…`）——
+ *      这条 id 不能再被第二个进程用。
+ *   ② 所以 id **不能只按 `Date.now()` 生成**：Windows 的计时器粒度约 15.6ms，启动时那两条
+ *      会话（judge / work）在同一毫秒里 new 出来是**常态**，于是两条拿到同一个 id ——
+ *      谁先 prompt 谁建成功，另一条此后每次都报 "already exists"
+ *      （实测：11:26 那次重启在 dsh-home 里只落了一个 pet-\* 目录，第二次派活就弹这个错）。
+ *
+ * 现在的口径：每条会话一个**进程级随机标签 + 序号**，谁跟谁都不会撞；
+ * 而且**每次起进程都换一个新 id**（会话在磁盘上是永久的，老 id 用过就不能再用）。
+ */
+const RUN_TAG = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+let sessionSeq = 0;
+/** 发一个**没人用过**的会话 id（导出是为了单测：同毫秒连发也不能撞）。 */
+export function mintSessionId(patchId) {
+  sessionSeq += 1;
+  return `pet-${patchId || 'session'}-${RUN_TAG}-${sessionSeq}`;
+}
+
 /** 把事件里的文本取出来（assistant/message 的 content 里 type=text 的那些）。 */
 function eventText(ev) {
   const blocks = ev?.data?.message?.content || ev?.message?.content || [];
@@ -57,11 +78,9 @@ export class DshSession {
     this.proc = null;
     this.nextId = 1;
     this.pending = new Map();     // id -> { resolve, reject }
-    // 会话 id 每次启动换一个。**为什么不固定成 pet-main**：sdk 服务端对已存在的会话
-    // 会直接拒（`session "pet-main" already exists`）—— 那是 PowerShell 版用过的 id，
-    // 已经落盘了。想要"跨重启记住一整天的观察"就得固定 id，但那需要先找到
-    // "继续已有会话"的调用（不是 create），目前没找到，所以先用新 id。
-    this.sessionId = sessionId || `pet-${Date.now().toString(36)}`;
+    // 显式传进来的 id 优先（自检用）；正常情况留空，起进程时再发一个（见 mintSessionId 的注释）。
+    this.fixedSessionId = String(sessionId || '');
+    this.sessionId = this.fixedSessionId;
     this.promptWaiters = null;
     this.started = false;
     this.starting = null;
@@ -82,6 +101,8 @@ export class DshSession {
     if (!p.exe || !p.cli) throw new Error('找不到 DSH（设 DG_DSH_ROOT）');
 
     const patch = preparePatch(this.config, { id: this.patchId });
+    // 每起一个进程换一个新 id：上一个进程已经把这个会话建在盘上了，同样的 id 会被服务端拒。
+    if (!this.fixedSessionId) this.sessionId = mintSessionId(this.patchId);
     const args = ['--expose-internals', p.cli, '--profile', 'sdk'];
     if (patch.file) args.push('--patch', patch.file);
 
@@ -118,7 +139,8 @@ export class DshSession {
     const res = await this._rpc('initialize', params, 60_000);
     if (!res?.serverInfo) throw new Error('initialize 没返回 serverInfo');
     this.started = true;
-    this.logger.log?.('[pet] DSH 常驻会话已就绪');
+    // 会话 id 也打出来：下次再出 "already exists" 之类的问题，日志里能直接对上盘上的会话目录
+    this.logger.log?.(`[pet] DSH 常驻会话已就绪（${this.patchId} → ${this.sessionId}）`);
     return this;
   }
 
@@ -176,6 +198,17 @@ export class DshSession {
   /** 发一轮；返回 { ok, text, seconds, why }。 */
   async prompt(text, { imagePaths = [], timeoutMs = 120_000 } = {}) {
     await this.start();
+    /**
+     * 一条会话上同一时刻只跑一轮。
+     *
+     * 为什么要在**这里**再拦一道：这里的 waiter 只有一个槽（this.promptWaiters），
+     * 两条 prompt 并发时后一条会把前一条顶掉 —— 前一条的答案会被后一条收走（答案串了），
+     * 前一条自己挂到超时。上游（main.mjs 的 thinking / busy）已经按用途分好了闸，
+     * 这里是**兜底**：真撞上了就明说，而不是让两条轮互相污染。
+     */
+    if (this.promptWaiters) {
+      return { ok: false, text: '', why: '这条会话上还有一轮没结束（同一会话一次只跑一轮）', seconds: 0 };
+    }
     const started = Date.now();
     const contentBlocks = [];
     if (text) contentBlocks.push({ type: 'text', text });
