@@ -36,6 +36,22 @@ export function defaultModelDir() {
 }
 
 /**
+ * sherpa 的 JS 包装层在哪。
+ *
+ * 为什么要显式给：DSH 自带的那份在 `app.asar` 里，**普通 node 读不进去**（asar 是个文件），
+ * 所以必须用抽出来/接过来的本地副本。PowerShell 版早就装好了（`.stt\sherpa`），
+ * 这里直接复用它的 —— 不然用户得为同一个模型再下一遍 240MB。
+ * 三处都找过还是没有，就返回空串让识别器自己按候选列表去试（并如实报错）。
+ */
+export function defaultSherpaDir() {
+  const local = resolve(ROOT, '.stt', 'sherpa', 'sherpa-onnx-node');
+  if (existsSync(local)) return local;
+  const shared = resolve(ROOT, '..', 'desktop-guide', '.stt', 'sherpa', 'sherpa-onnx-node');
+  if (existsSync(shared)) return shared;
+  return '';
+}
+
+/**
  * 把 Float32 单声道样本写成 16 位 PCM 的 WAV。
  * 采样率照原样写进去 —— 识别器那边有重采样（sherpa 的 LinearResampler），
  * 所以录音用什么采样率都行，不必凑 16k。
@@ -92,11 +108,14 @@ export function transcribe(samples, sampleRate, config = {}, { timeoutMs = 60_00
   writeFileSync(wav, wavFromSamples(samples, sampleRate || 16000));
 
   return new Promise((resolvePromise) => {
+    const sherpaDir = config.sttSherpaDir ? resolve(config.sttSherpaDir) : defaultSherpaDir();
     const child = spawn(node, [
       runner,
       '--wav', wav,
       '--model-dir', modelDir,
       '--language', config.sttLanguage || 'auto',
+      // 显式指过去：默认候选里第一项是"本地 .stt"，找不到时靠这个参数兜住
+      ...(sherpaDir ? ['--sherpa-dir', sherpaDir] : []),
       '--json',
     ], { windowsHide: true });
 

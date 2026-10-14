@@ -4,6 +4,7 @@
 # 运行时依赖 / 大文件（可重建）
 desktop-guide/.tts/
 desktop-guide/.stt/
+desktop-pet/.stt/
 desktop-guide/.webui-profile/
 
 # Electron 重写版的依赖与产物
@@ -93,6 +94,9 @@ desktop-pet/diag-userdata/
 desktop-pet/ud-*/
 desktop-pet/diag-*.log
 desktop-pet/render-*.*
+
+# Electron 版的语音运行时与模型（跑 `npm run stt:install` 现装；模型 240MB，不进库）
+desktop-pet/.stt/
 
 # Electron 版「当前生效的 system prompt」：切风格时从 presets\ 复制过来、用户也可以直接改，
 # 属于本机状态（不是代码）。风格预设本身在 desktop-pet/presets/ 里，那才是进库的东西。
