@@ -722,7 +722,21 @@ async function dispatchTask(overrideText) {
 }
 
 send.addEventListener('click', dispatchTask);
-closeBtn.addEventListener('click', () => toggleBar(false));
+/**
+ * 输入条右边那个 ×：用 `pointerdown` 而不是 `click`。
+ *
+ * 为什么：这一格就在输入框旁边，用户点它之前鼠标往往刚从输入框里出来；
+ * `click` 要等 mousedown+mouseup 都在同一个元素上才算数，中间只要被判成"拖动"或
+ * 指针挪出去一点，这一下就没了 —— 观感就是"这个 × 没用"。
+ * `pointerdown`（按下就生效）受这些影响小得多。
+ */
+closeBtn.addEventListener('pointerdown', (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  toggleBar(false);
+});
+// 两条都留着：pointerdown 是"稳"的那条，click 兜住键盘/无障碍与脚本触发的路径
+closeBtn.addEventListener('click', (e) => { e.preventDefault(); toggleBar(false); });
 input.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') { e.preventDefault(); dispatchTask(); }
   if (e.key === 'Escape') { e.preventDefault(); toggleBar(false); }

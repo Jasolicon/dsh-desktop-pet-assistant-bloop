@@ -60,7 +60,9 @@ html, body {
      这里只留一个安全上限，免得一条超长消息把窗口撑到屏幕外。
      ⚠️ 上限必须是**固定像素**、不能用 vh：vh 是相对窗口高的，而窗口高又是按气泡高算出来的 ——
      互相咬住会收敛到一个偏小的值，顶上那几行就被 overflow:hidden 裁掉了（实测踩过）。 */
-  max-height: 360px;
+  /* 上限要和 #bubbleText 的滚动上限配套：气泡比正文的滚动区大，
+     滚动条才不会被 overflow:hidden 裁掉（footer 那行也要留出位置） */
+  max-height: min(72vh, 640px);
   overflow: hidden;
   /* 左右 13 是 PowerShell 版的 BubblePadX；右边多留的那一截是给右上角那个 × 腾地方
      （不留的话长句子会钻到它底下） */
@@ -80,7 +82,24 @@ html, body {
   */
 }
 
-#bubbleText { white-space: pre-wrap; word-break: break-word; }
+/*
+  卡片（"看它判过什么"那种长内容）**必须能滚**。
+  以前只有 #bubble 上的 overflow:hidden —— 超出的部分直接没了，用户看到的是"没滚动条、
+  下面的记录看不到"。这里让正文自己滚：窗口高度是有上限的（工作区的 80%），
+  内容比它长是天经地义的事，不该靠把窗口撑破来解决。
+*/
+#bubbleText {
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: min(64vh, 560px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+/* 细一点的滚动条：桌宠窗口很窄，默认那条太抢眼 */
+#bubbleText::-webkit-scrollbar { width: 8px; }
+#bubbleText::-webkit-scrollbar-thumb { background: rgba(90, 100, 120, 0.38); border-radius: 4px; }
+#bubbleText::-webkit-scrollbar-thumb:hover { background: rgba(90, 100, 120, 0.6); }
+#bubbleText::-webkit-scrollbar-track { background: transparent; }
 
 /* 页脚：比正文小一号、更淡，还带一条分隔线 —— 它是"顺便看一眼"的信息，不抢正文 */
 #bubbleFooter {
@@ -340,14 +359,15 @@ html, body {
 /* 收起按钮：双击宠物也能收，但那个手势没人猜得到，给一个看得见的出口 */
 #close {
   flex: none;
-  width: 24px;
-  height: 24px;
+  /* 24px 对"点一下就关"来说太小了（还紧挨着输入框），放大到 30 并给足内边距 */
+  width: 30px;
+  height: 30px;
   padding: 0;
   border: 0;
   border-radius: 50%;
   background: transparent;
   color: #98a0ae;
-  font-size: 16px;
+  font-size: 17px;
   line-height: 1;
   font-family: inherit;
   cursor: pointer;
