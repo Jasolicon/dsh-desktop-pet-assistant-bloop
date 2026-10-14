@@ -153,7 +153,14 @@ export class DshSession {
     if (msg.id != null && this.pending.has(msg.id)) {
       const { resolve, reject } = this.pending.get(msg.id);
       this.pending.delete(msg.id);
-      if (msg.error) reject(new Error(typeof msg.error === 'string' ? msg.error : JSON.stringify(msg.error)));
+      if (msg.error) {
+        // 服务端**明确拒了这一条请求**（比如 `session "pet-x" already exists`）。
+        // 打上记号：这类失败 = "模型一步都没跑"，所以调用方可以安全地换一条新会话重发一次
+        // （见 prompt 的 retryable / main.mjs 的 ask）。
+        const err = new Error(typeof msg.error === 'string' ? msg.error : JSON.stringify(msg.error));
+        err.rpcError = true;
+        reject(err);
+      }
       else resolve(msg.result);
       return;
     }
@@ -222,8 +229,10 @@ export class DshSession {
       } catch { /* 图读不到就跳过，别让整轮失败 */ }
     }
 
+    /** 这一轮的收尾（超时）定时器：提前失败时**必须**清掉，见下面 catch 里那段注释。 */
+    let waitTimer = null;
     const done = new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
+      waitTimer = setTimeout(() => {
         this.promptWaiters = null;
         resolve({ timedOut: true, answer: '' });
       }, timeoutMs);
@@ -232,24 +241,54 @@ export class DshSession {
         finish: () => {
           // 先把答案抓下来再清 waiters（清了就读不到了）
           const answer = this.promptWaiters?.answer || '';
-          clearTimeout(timer);
+          clearTimeout(waitTimer);
           this.promptWaiters = null;
           resolve({ timedOut: false, answer });
         },
-        reject: (e) => { clearTimeout(timer); this.promptWaiters = null; reject(e); },
+        reject: (e) => { clearTimeout(waitTimer); this.promptWaiters = null; reject(e); },
       };
     });
 
     try {
       await this._rpc('session/prompt', { sessionId: this.sessionId, contentBlocks }, 30_000);
     } catch (err) {
-      return { ok: false, text: '', why: err.message, seconds: (Date.now() - started) / 1000 };
+      /**
+       * 请求发都没发成 / 服务端当场拒了这一条（比如 `session "…" already exists`）。
+       *
+       * ⚠️ 这里必须把这一轮**收干净**：waiter 清掉、定时器清掉。
+       * 以前不清 —— 后果有两个，都是"从此再也发不出话"：
+       *   ① 下一轮会被上面那道"同一会话一次只跑一轮"的闸永久挡住（waiter 一直挂着）
+       *   ② 那个 120 秒的定时器还活着，测试里能让整个进程挂住不退出
+       *
+       * sessionUnusable：这条会话别再用了（调用方丢掉它、必要时重开一条新的）。
+       * retryable：**服务端明确拒了**才算"模型一步都没跑"，换新会话重发一次是安全的；
+       * 本地超时/写不进去那种不算（可能已经跑了一半）。
+       */
+      clearTimeout(waitTimer);
+      this.promptWaiters = null;
+      return {
+        ok: false,
+        text: '',
+        why: err.message,
+        seconds: (Date.now() - started) / 1000,
+        sessionUnusable: true,
+        retryable: !!err.rpcError,
+      };
     }
 
     const w = await done;
     const seconds = (Date.now() - started) / 1000;
     const answer = w.answer;
-    return { ok: !!answer, text: answer, why: answer ? null : (w.timedOut ? '这一轮超时' : '没有产出结论'), seconds };
+    // 超时 = 这一轮的结果已经无法和后面几轮区分开了（旧轮的事件会撞进新轮的 waiter），
+    // 所以把它当成"这条会话不能再用了"：调用方重建一条新的，而不是继续往上堆。
+    // 注意**不自动重发**：超时那一轮可能已经跑了一半，重发可能把动作做两遍。
+    return {
+      ok: !!answer,
+      text: answer,
+      why: answer ? null : (w.timedOut ? '这一轮超时' : '没有产出结论'),
+      seconds,
+      ...(w.timedOut ? { sessionUnusable: true, retryable: false } : {}),
+    };
   }
 
   stop() {

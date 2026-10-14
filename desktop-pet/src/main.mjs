@@ -379,15 +379,29 @@ process.on('unhandledRejection', (err) => { console.error('[pet] 未处理的 Pr
 /**
  * 问一轮。优先走常驻会话（秒级）；起不来或出错就退回一次性调用（慢但可靠）。
  * 这条降级路径很重要：常驻会话挂了不该让桌宠整个哑掉。
+ *
+ * 另外：常驻会话**坏了要能自己回来**。用户那次「（没做成：{…already exists…}）」就是反例 ——
+ * 会话 id 撞了之后每轮都失败，而这条路原来把失败当"这一轮的结论"返回（不回退、不重建），
+ * 于是一直坏到重启为止。现在：会话说"我不能用了"就丢掉它，必要时按需要重开一条新的。
  */
-async function ask(text, { imagePaths = [], purpose = 'judge' } = {}) {
+async function ask(text, { imagePaths = [], purpose = 'judge', retried = false } = {}) {
   const live = sessionOf(purpose);
   if (live) {
     try {
       const r = await live.prompt(text, { imagePaths });
       if (r.ok) return r;
+      if (r.sessionUnusable) {
+        log(`常驻会话（${purpose}）不能用了，丢掉它：`, r.why);
+        setSession(purpose, null);
+        // retryable = 服务端明确拒了这一条（模型一步都没跑）→ 换新会话重发一次是安全的。
+        // 超时那种不重发：那一轮可能已经跑了一半，重发会把动作做两遍。
+        if (r.retryable && !retried) {
+          log(`重开一条新会话，把这轮再发一次（${purpose}）`);
+          return ask(text, { imagePaths, purpose, retried: true });
+        }
+      }
       log('常驻会话这一轮没成：', r.why);
-      return r;   // 会话在，只是这一轮没结论 —— 那是判断结果，不回退
+      return r;   // 会话还在、只是这一轮没结论 —— 那是判断结果，不回退（PS 版同一口径）
     } catch (err) {
       log('常驻会话出错，退回一次性调用：', err.message);
       setSession(purpose, null);
