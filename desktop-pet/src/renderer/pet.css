@@ -56,13 +56,20 @@ html, body {
   pointer-events: auto;
   position: relative;
   max-width: 100%;
+  /* 纵列 flex：正文自己缩（能滚），页脚固定不缩 —— 这样"气泡到上限"时被挤的是正文，
+     页脚永远留在气泡里。不这么做就得在 JS 里"量出差值再给正文设上限"，
+     而气泡已经被夹住时量出来的差值只有几个像素，正文反而不会被压小，页脚被挤出气泡外（实测踩过）。 */
+  display: flex;
+  flex-direction: column;
   /* 高度由"窗口自动跟着内容长"来兜（见 pet.js 的 petFit）——
      这里只留一个安全上限，免得一条超长消息把窗口撑到屏幕外。
-     ⚠️ 上限必须是**固定像素**、不能用 vh：vh 是相对窗口高的，而窗口高又是按气泡高算出来的 ——
-     互相咬住会收敛到一个偏小的值，顶上那几行就被 overflow:hidden 裁掉了（实测踩过）。 */
-  /* 上限要和 #bubbleText 的滚动上限配套：气泡比正文的滚动区大，
-     滚动条才不会被 overflow:hidden 裁掉（footer 那行也要留出位置） */
-  max-height: min(72vh, 640px);
+     ⚠️ 上限是 JS 按"窗口封顶 − 别的块"算好写进 --bubble-max 的（见 pet.js 的 applyBubbleBudget），
+     **不能用 vh/百分比**：vh 是相对窗口高的，而窗口高又是按气泡高算出来的 —— 自己量自己，
+     互相咬不住时窗口比内容矮，而布局底边锚定，顶上那几行就被裁掉了（实测踩过两次：
+     一次是把窗口收敛到偏小，一次是卡片第一行整个不见、被裁 77px）。
+     这里的 640px 只是"主进程还没回话"时的默认值。 */
+  /* 上限得留得住页脚那行：气泡是 flex 纵列，正文自己缩（能滚），页脚不缩 —— 见下面 #bubbleText */
+  max-height: var(--bubble-max, 640px);
   overflow: hidden;
   /* 左右 13 是 PowerShell 版的 BubblePadX；右边多留的那一截是给右上角那个 × 腾地方
      （不留的话长句子会钻到它底下） */
@@ -87,11 +94,14 @@ html, body {
   以前只有 #bubble 上的 overflow:hidden —— 超出的部分直接没了，用户看到的是"没滚动条、
   下面的记录看不到"。这里让正文自己滚：窗口高度是有上限的（工作区的 80%），
   内容比它长是天经地义的事，不该靠把窗口撑破来解决。
+  上限不再单独写死：气泡是 flex 纵列，够长时**缩的就是这一块**（min-height:0 是前提，
+  少了它 flex 项不会缩到内容以下，页脚照样被挤出去），页脚那行留着不动。
 */
 #bubbleText {
   white-space: pre-wrap;
   word-break: break-word;
-  max-height: min(64vh, 560px);
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
 }
@@ -103,6 +113,7 @@ html, body {
 
 /* 页脚：比正文小一号、更淡，还带一条分隔线 —— 它是"顺便看一眼"的信息，不抢正文 */
 #bubbleFooter {
+  flex: none;              /* 气泡被夹住时不许缩它（缩了就等于把余额那行裁了） */
   margin-top: 6px;
   padding-top: 5px;
   border-top: 1px solid rgba(30, 40, 60, 0.12);

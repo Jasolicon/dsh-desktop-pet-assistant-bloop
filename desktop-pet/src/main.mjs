@@ -370,6 +370,24 @@ async function ask(text, { imagePaths = [], purpose = 'judge' } = {}) {
     .finally(() => { pendingAskChild = null; });
 }
 
+/**
+ * 桌宠窗口的高度上限 = 工作区的 80%（封顶口径**只有这一处**）。
+ * 渲染进程也要知道它 —— 它得据此把气泡压进窗内（见 pet.js 的 applyBubbleBudget）。
+ * 两边各写一份 0.8 迟早会漂，漂了就成了"渲染进程以为还有 720、这边只给 700"。
+ */
+function windowCapHeight(area) {
+  let a = area;
+  if (!a) {
+    if (win) {
+      const b = win.getBounds();
+      a = screen.getDisplayNearestPoint({ x: b.x + Math.round(b.width / 2), y: b.y + Math.round(b.height / 2) }).workArea;
+    } else {
+      a = screen.getPrimaryDisplay().workArea;
+    }
+  }
+  return Math.round(a.height * 0.8);
+}
+
 function createWindow() {
   const { workArea } = screen.getPrimaryDisplay();
   // 窗口尺寸要**装得下**最宽的那一行：宠物本体 / 气泡 / 底部那排按钮
@@ -438,6 +456,18 @@ function createWindow() {
   });
   // 页面就绪后把"哪几格灯亮着"推过去（按钮条的高亮状态）
   win.webContents.on('did-finish-load', () => { pushToolbar(); pushFooter(); });
+
+  /**
+   * 显示器 / 缩放 / 任务栏变了 → 窗口封顶跟着变，得**重新告诉渲染进程**。
+   * 封顶现在是个常量（不再按窗口自己的高度算，见 pet.js 的 applyBubbleBudget），
+   * 所以它不会自己跟上；不推这一下，换块屏或者改缩放之后气泡又会顶到窗外来。
+   */
+  const pushCap = () => {
+    win?.webContents.send('pet:settingsChanged', { ...cfg, maxWindowHeight: windowCapHeight() });
+  };
+  screen.on('display-metrics-changed', pushCap);
+  screen.on('display-added', pushCap);
+  screen.on('display-removed', pushCap);
 
   // 光标轮询：这条是穿透的**主判据**（见 hoverPoll 的注释：转发的 mousemove 不可靠）
   startHoverPoll();
@@ -611,6 +641,62 @@ function createWindow() {
         log('[debug] 窗口高度 =', win.getBounds().height, '（渲染进程算出来的需要值 =', out?.需要的高度, '）');
       } catch (err) {
         console.error('[pet][debug] 按钮条自检失败', err);
+      }
+      app.quit();
+    });
+  }
+
+  // 开发用：设了 PET_DEBUG_FIT=1 就把"长卡片能不能装进窗口"量一遍。
+  //
+  // 为什么单开一个：窗口高度是按内容定的，**封顶**在工作区的 80%（windowCapHeight），
+  // 而布局是底边锚定的（桌宠站在屏幕底边）—— 一旦内容比窗口高，裁掉的是**顶上**那截。
+  // 症状就是「看它判过什么」那张卡片第一行整个不见，而且怎么滚都翻不出来（实测被裁 77px）。
+  // 静态代码看不出这种事，只能让它自己量：**气泡顶端不许是负的**；
+  // 没到封顶时窗口高应该正好等于需要的高度，到了封顶则靠正文滚。
+  if (process.env.PET_DEBUG_FIT) {
+    win.webContents.once('did-finish-load', async () => {
+      try {
+        await new Promise((r) => setTimeout(r, 800));
+        // 一条"肯定比窗口上限还长"的卡片（走和真卡片同一条路：pet:card + pet:footer）
+        const rows = Array.from({ length: 40 }, (_, i) => `10:${String(i % 60).padStart(2, '0')} 没问 · 画面几乎没变（差异 ${i % 12} < 12），前台窗口也没换`);
+        win.webContents.send('pet:footer', '余额 ¥62.94 · 今天 ¥3.94 / 上限 ¥50.00');
+        win.webContents.send('pet:card', ['判断 99 次 · 说了 30 / 没说 69 · 沉默率 70%', '本地闸门省下 137 次模型调用', '———', ...rows].join('\n'));
+        // 等窗口高度稳定（每轮 250ms，最多 2 秒）
+        let last = -1;
+        for (let i = 0; i < 8; i++) {
+          await new Promise((r) => setTimeout(r, 250));
+          const h = win.getBounds().height;
+          if (h === last) break;
+          last = h;
+        }
+        const out = await win.webContents.executeJavaScript(`(() => {
+          const q = (id) => document.getElementById(id);
+          const stage = q('stage');
+          const kids = [...stage.children].filter((el) => !el.classList.contains('hidden') && el.offsetHeight > 0);
+          const st = getComputedStyle(stage);
+          const b = q('bubble').getBoundingClientRect();
+          const t = q('bubbleText');
+          return {
+            视口高: Math.round(window.innerHeight),
+            需要的高度: Math.ceil(kids.reduce((a, el) => a + el.offsetHeight, 0)
+              + (parseFloat(st.rowGap || st.gap) || 0) * (kids.length - 1)
+              + (parseFloat(st.paddingTop) || 0) + (parseFloat(st.paddingBottom) || 0)),
+            明细: kids.map((el) => el.id + '=' + el.offsetHeight).join(' '),
+            气泡顶端: Math.round(b.top),
+            气泡高: Math.round(b.height),
+            气泡上限: getComputedStyle(q('bubble')).maxHeight,
+            正文能滚: t.scrollHeight > t.clientHeight,
+            页脚在气泡里: q('bubbleFooter').getBoundingClientRect().bottom <= b.bottom + 1,
+          };
+        })()`);
+        const winH = win.getBounds().height;
+        const 裁掉 = Math.max(0, -out.气泡顶端);
+        log('[debug] 卡片封顶自检:', JSON.stringify(out, null, 0));
+        log(`[debug] 窗口高 = ${winH}（需要 ${out.需要的高度}，封顶 ${windowCapHeight()}）`);
+        log(`[debug] 气泡顶端被裁 = ${裁掉 > 0}（${裁掉}px）；`
+          + `正文自己滚 = ${out.正文能滚}；页脚还在气泡里 = ${out.页脚在气泡里}`);
+      } catch (err) {
+        console.error('[pet][debug] 卡片封顶自检失败', err);
       }
       app.quit();
     });
@@ -1621,6 +1707,10 @@ function registerIpc() {
    *   · **底边不动**：桌宠站在屏幕底边，长高该是往上长。不锚底边的话，
    *     每来一条长消息它整只往下挪一截，几次之后就爬出屏幕了。
    *   · **封顶**（工作区的 80%）：一条超长消息不该让窗口变成一个盖住半屏的透明大块。
+    *
+    * ⚠️ 封顶真生效时，裁掉的是**顶上**那截（因为底边锚定）—— 所以渲染进程必须知道这个上限、
+    * 自己把气泡压进窗内（见 pet:info 的 maxWindowHeight 与 pet.js 的 applyBubbleBudget）。
+    * 只靠这里裁，用户看到的是"卡片第一行整个不见了"（实测被裁 77px）。
    */
   ipcMain.on('pet:fit', (_e, desired) => {
     if (!win) return;
@@ -1629,7 +1719,9 @@ function registerIpc() {
     if (!want) return;
     const { x, y, width, height } = win.getBounds();
     const area = screen.getDisplayNearestPoint({ x: x + Math.round(width / 2), y: Math.round(y + height / 2) }).workArea;
-    const next = Math.max(160, Math.min(want, Math.round(area.height * 0.8)));
+    const cap = windowCapHeight(area);
+    const next = Math.max(160, Math.min(want, cap));
+    if (want > cap) log('[pet] 内容比窗口上限还高（', want, '>', cap, '）→ 顶上会被裁；渲染进程本该已按 maxWindowHeight 压过气泡');
     if (next === height) return;
     win.setBounds({ x, y: Math.max(area.y, y + height - next), width, height: next });
   });
@@ -1641,6 +1733,9 @@ function registerIpc() {
     electron: process.versions.electron,
     node: process.versions.node,
     monitor: monitor?.snapshot() ?? null,
+    // 窗口封顶（工作区的 80%）：渲染进程拿它反推"气泡最多能多高"。
+    // 不给这个数、让它按窗口当前高度算，就是自己量自己 —— 顶上会被裁（见 pet.js 的 applyBubbleBudget）。
+    maxWindowHeight: windowCapHeight(),
     // 底部按钮条要的两件事：区域设了没（那格灯亮不亮）、整条要不要显示
     region: cfg.region || null,
     showToolbar: cfg.showToolbar !== false,

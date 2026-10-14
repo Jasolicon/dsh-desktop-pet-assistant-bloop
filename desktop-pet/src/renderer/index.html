@@ -22,7 +22,13 @@
         <button id="bubbleClose" type="button" title="收起气泡（Esc）" aria-label="收起气泡">&#xE711;</button>
       </div>
 
-      <div id="pet" data-state="idle" title="点我：摸一下　按住说话　双击：打字派活　右键：菜单（让它说一句在按钮条上）">
+      <!--
+        刻意**不带 title**：原生 tooltip 是浏览器画的黑色系统提示条，
+        既难看（见用户截图：一条黑杠横在宠物身上），又会在弹出的那一刻给窗口发一个
+        假的 mouseleave —— 我们的穿透判定会当成"鼠标走了"，于是"鼠标又丢了"。
+        想告诉用户怎么用，用下面那段自绘说明（或菜单里那几条）。
+      -->
+      <div id="pet" data-state="idle">
         <!-- 角色图：有就用它（和 PowerShell 版同一张），没有/加载失败就退回下面自绘的那只 -->
         <img id="petimg" alt="" draggable="false" />
         <div class="body">

@@ -70,8 +70,57 @@ function measureNeeded() {
   return Math.ceil(kids.reduce((a, el) => a + el.offsetHeight, 0) + gap * (kids.length - 1) + pad);
 }
 
+// ---------------------------------------------------------------------------
+// 气泡的高度上限：**按窗口上限反推**，不许按窗口自己的高度算（vh / 百分比）。
+//
+// 为什么：窗口高是按"内容需要多高"定出来的，而内容里就有气泡；气泡的上限再跟着窗口高走，
+// 就成了自己量自己 —— 两边咬不住时窗口会比内容矮，而布局是**底边锚定**的（桌宠站在屏幕底边），
+// 差出来的那截全从**顶上**裁掉。用户看到的就是「看它判过什么」那张卡片第一行
+// （"判断 N 次 · … 沉默率 …"）整个不见（实测：被裁 77px，且怎么滚都翻不出来）。
+//
+// 上限 = 主进程给的窗口封顶（工作区的 80%，见 main.mjs 的 windowCapHeight）
+//        − 别的那些块（宠物 / 输入条 / 问答 / 按钮条 + 间距 + 内边距）。
+// 这是个常量，量一次就定住；卡片再长也是 #bubbleText 自己滚（本来就该滚）。
+// ---------------------------------------------------------------------------
+const BUBBLE_MAX_FALLBACK = 640;   // 主进程还没给上限时的固定值（与 pet.css 的默认一致）
+const BUBBLE_MIN = 96;             // 再挤也要留得住一行字（否则卡片会变成一根空条）
+let maxWindowHeight = 0;           // 主进程给的窗口封顶（pet:info.maxWindowHeight）
+let bubbleMax = 0;                 // 上次写进 CSS 的值（没变就不写，免得白触发一次重排）
+
+/**
+ * 把气泡的高度上限写进 CSS 变量（为什么这么算见上面那段）。
+ * 正文区不用管：气泡是 flex 纵列，正文自己缩、页脚固定不缩（见 pet.css 的 #bubble/#bubbleText）。
+ */
+function applyBubbleBudget() {
+  const root = document.documentElement;
+  const cap = Number(maxWindowHeight);
+  if (!(cap > 0)) {
+    // 还不知道窗口上限（主进程还没回话 / 自检环境）：交回 CSS 的默认值
+    if (bubbleMax) {
+      root.style.removeProperty('--bubble-max');
+      bubbleMax = 0;
+    }
+    return;
+  }
+  const stage = document.getElementById('stage');
+  const style = getComputedStyle(stage);
+  const gap = parseFloat(style.rowGap || style.gap) || 0;
+  const pad = (parseFloat(style.paddingTop) || 0) + (parseFloat(style.paddingBottom) || 0);
+  const others = [...stage.children]
+    .filter((el) => el !== bubble && !el.classList.contains('hidden') && el.offsetHeight > 0);
+  // 缝的条数按"气泡也在场"算：气泡一显示，可见块之间就是 others.length 条缝
+  const chrome = others.reduce((a, el) => a + el.offsetHeight, 0) + gap * others.length + pad;
+  const next = Math.max(BUBBLE_MIN, Math.min(cap - chrome, BUBBLE_MAX_FALLBACK));
+  if (next !== bubbleMax) {
+    bubbleMax = next;
+    root.style.setProperty('--bubble-max', `${next}px`);
+  }
+}
+
 let lastFit = 0;
 function petFit() {
+  // 先定上限再量：反过来的话量到的是"上限还没压住"的那个高度，白多一次窗口调整
+  applyBubbleBudget();
   const needed = measureNeeded();
   if (!needed) return;
   if (needed !== lastFit) {
@@ -233,6 +282,18 @@ window.pet.onSpeak((text) => {
   say(text);
 });
 
+/**
+ * 判断记录里的时间戳是 **UTC**（主进程写的是 `new Date().toISOString()`），
+ * 卡片上要显示**本地**时间 —— 照 PowerShell 版的口径。
+ * 以前这里是 `String(r.at).slice(11, 16)`，等于把 UTC 当本地时间印出来：
+ * 东八区用户看到的时间永远比挂钟少 8 小时（凌晨 2:57 其实是上午 10:57）。
+ */
+function clockOf(at) {
+  const d = new Date(at);
+  if (Number.isNaN(d.getTime())) return String(at || '').slice(11, 16);
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
 // 「看它判过什么」：把判断记录画成一张卡片（不翻日志就能看）
 async function showDecisionsCard() {
   const { rows, stats, why } = await window.pet.decisions();
@@ -243,7 +304,7 @@ async function showDecisionsCard() {
   const sub = `本地闸门省下 ${stats.skipped} 次模型调用`
     + (stats.profile ? ` · 当前档：${stats.profile}（每 ${stats.sampleSeconds}s 采样）` : '');
   const lines = rows.map((r) => {
-    const t = String(r.at || '').slice(11, 16);
+    const t = clockOf(r.at);
     if (r.kind === 'skip') return `${t} 没问 · ${r.reason || ''}`;
     if (r.kind === 'silent') return `${t} 没说 · ${r.key || ''}`;
     return `${t} 说了 · ${String(r.text || '').slice(0, 40)}`;
@@ -378,7 +439,11 @@ document.addEventListener('mousemove', (e) => {
   updateHover(e.target, 'move');
 });
 // 真正离开窗口（不是失焦）：指针确实不在窗口里了
-document.addEventListener('mouseleave', () => { lastPoint = null; updateHover(document.body, 'leave'); });
+// ⚠️ 这里**不要把 lastPoint 清掉**：原生 tooltip 弹出、系统弹窗抢焦点这类事都会
+// 产生一次"假 mouseleave"，而指针其实还在宠物身上。清掉坐标 = 之后那 400ms 的复判
+// 也因为"不知道指针在哪"而失效，于是窗口一直处于穿透态 —— 用户说的"鼠标又丢了"。
+// 留着坐标，让复判按实际位置把它纠正回来。
+document.addEventListener('mouseleave', () => updateHover(document.body, 'leave'));
 window.addEventListener('blur', () => recheckHover('blur'));
 // 兜底：指针**停在原地不动**时也可能丢状态（角色在轻微上下浮，边缘处会闪），
 // 每 400ms 按最后已知坐标复判一次，让它能自己恢复。开销就是一次 elementFromPoint。
@@ -458,8 +523,9 @@ function abortRecording() {
   const r = rec;
   rec = null;
   if (!r) return;
-  try { r.mr.stop(); } catch { /* 已经停了 */ }
+  try { r.node.port.onmessage = null; r.node.disconnect(); r.src.disconnect(); r.sink.disconnect(); } catch { /* 已经断了 */ }
   try { r.stream.getTracks().forEach((t) => t.stop()); } catch { /* 忽略 */ }
+  try { r.ctx.close(); } catch { /* 忽略 */ }
   bubble.classList.add('hidden');
   console.log('[renderer] 录音中检测到拖动 → 改判为拖动');
 }
@@ -522,12 +588,25 @@ async function beginRecording() {
      * 换成 MediaRecorder：采集交给 Chromium 自己的编码器，渲染进程里**不建任何实时音频图**。
      * 录完再用离线的 OfflineAudioContext 解码成 PCM（离线解码不碰硬件，是安全的）。
      */
-    const mime = ['audio/webm;codecs=opus', 'audio/webm', ''].find((m) => !m || MediaRecorder.isTypeSupported(m));
-    const mr = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+    /**
+     * AudioWorklet 采集：音频线程上每 128 帧把 PCM 原样丢回来，**不编码、不解码**。
+     * （ScriptProcessor 会 0xC0000005 崩渲染进程；MediaRecorder + decodeAudioData 又在
+     *   "抬起"那一步崩 —— 实测两轮都试过了，所以走这条最直的路。）
+     */
+    const ctx = new AudioContext();
+    if (!ctx.audioWorklet) throw new Error('这个 Electron 不支持 AudioWorklet');
+    await ctx.audioWorklet.addModule('recorder-worklet.js');
+    const src = ctx.createMediaStreamSource(stream);
+    const node = new AudioWorkletNode(ctx, 'pet-recorder');
     const parts = [];
-    mr.ondataavailable = (e) => { if (e.data && e.data.size) parts.push(e.data); };
-    mr.start(200);               // 每 200ms 收一块，松手时不用等太久
-    rec = { stream, mr, parts };
+    node.port.onmessage = (e) => { if (e.data && e.data.length) parts.push(e.data); };
+    src.connect(node);
+    // 必须有下游节点 process 才会被调用；接一个零增益出口（绝不能直接接扬声器 = 自己听自己）
+    const sink = ctx.createGain();
+    sink.gain.value = 0;
+    node.connect(sink);
+    sink.connect(ctx.destination);
+    rec = { stream, ctx, src, node, sink, parts };
     setState('listening');
     showBubble('正在听…（松开结束）', 0);
   } catch (err) {
@@ -537,39 +616,25 @@ async function beginRecording() {
   }
 }
 
-/** 录下来的音频 → 单声道 Float32 PCM（给识别用）。离线解码，不碰音频硬件。 */
-async function decodeToPcm(blob) {
-  const buf = await blob.arrayBuffer();
-  // 只拿它当解码器：OfflineAudioContext 不需要输出设备
-  const off = new OfflineAudioContext(1, 1, 16000);
-  const audio = await off.decodeAudioData(buf);
-  return { samples: audio.getChannelData(0), rate: audio.sampleRate };
-}
-
 async function finishRecording() {
   const r = rec;
   rec = null;
   if (!r) return;
-  // 先让 MediaRecorder 收尾（最后一块 may 还在路上），再关麦克风
-  const stopped = new Promise((res) => { r.mr.onstop = () => res(); });
-  try { r.mr.stop(); } catch { /* 已经停了 */ }
-  try { await stopped; } catch { /* 忽略 */ }
+  const rate = r.ctx.sampleRate;
+  // 断开音频图 + 关麦克风（顺序无所谓，但都要做干净，别留着它继续收声）
+  try { r.node.port.onmessage = null; r.node.disconnect(); r.src.disconnect(); r.sink.disconnect(); } catch { /* 已经断了 */ }
   try { r.stream.getTracks().forEach((t) => t.stop()); } catch { /* 忽略 */ }
-  const blob = new Blob(r.parts, { type: (r.mr && r.mr.mimeType) || 'audio/webm' });
-  if (blob.size < 1200) {             // 太短（约 0.3 秒内）当作没说话，和 sttMinSeconds 同义
+  try { await r.ctx.close(); } catch { /* 忽略 */ }
+
+  const total = r.parts.reduce((a, c) => a + c.length, 0);
+  if (total < rate * 0.3) {           // 比 0.3 秒还短当作没说话（和 sttMinSeconds 同义）
     setState('idle');
     hideBubble();
     return;
   }
-  let samples;
-  let rate;
-  try {
-    ({ samples, rate } = await decodeToPcm(blob));
-  } catch (err) {
-    setState('silent');
-    showBubble(`音频解不开：${err.message}`, 8000);
-    return;
-  }
+  const samples = new Float32Array(total);
+  let o = 0;
+  for (const c of r.parts) { samples.set(c, o); o += c.length; }
 
   setState('thinking');
   showBubble('听清楚了，正在认字…', 0);
@@ -876,6 +941,10 @@ function applyLook(info) {
   if (info.fontFamily) {
     document.documentElement.style.setProperty('--ui-font', `"${info.fontFamily}", "Microsoft YaHei UI", "Segoe UI", sans-serif`);
   }
+  // 窗口封顶：气泡的高度上限由它反推（见 applyBubbleBudget）。少给一个的症状就是顶上被裁。
+  // ⚠️ 带这个键的只有 pet:info；设置窗口推过来的是**配置对象**（没这个键）——
+  // 那种情况下别把已有的值清零，否则改一次设置就退回默认上限，卡片顶上又会被裁。
+  if (Number(info.maxWindowHeight) > 0) maxWindowHeight = Number(info.maxWindowHeight);
   tools.classList.toggle('hidden', info.showToolbar === false);
   ttsEnabled = info.ttsEnabled !== false;
   // 把状态挂到 <html> 上：一是排查时一眼能看出"朗读到底开没开"（这个开关曾经是摆设），
