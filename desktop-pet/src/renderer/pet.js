@@ -458,9 +458,8 @@ function abortRecording() {
   const r = rec;
   rec = null;
   if (!r) return;
-  try { r.proc.disconnect(); r.src.disconnect(); } catch { /* 已经断了 */ }
+  try { r.mr.stop(); } catch { /* 已经停了 */ }
   try { r.stream.getTracks().forEach((t) => t.stop()); } catch { /* 忽略 */ }
-  try { r.ctx.close(); } catch { /* 忽略 */ }
   bubble.classList.add('hidden');
   console.log('[renderer] 录音中检测到拖动 → 改判为拖动');
 }
@@ -513,21 +512,22 @@ async function beginRecording() {
     const stream = await navigator.mediaDevices.getUserMedia(
       micDeviceId ? { audio: { deviceId: { exact: micDeviceId } } } : { audio: true },
     );
-    const ctx = new AudioContext();
-    const src = ctx.createMediaStreamSource(stream);
-    // ScriptProcessorNode 虽然过时，但零依赖、行为可预期；这里每帧只要 4k 样本
-    const proc = ctx.createScriptProcessor(4096, 1, 1);
-    const chunks = [];
-    proc.onaudioprocess = (e) => chunks.push(new Float32Array(e.inputBuffer.getChannelData(0)));
-    src.connect(proc);
-    // 接一个**零增益**的出口，而不是直接接到扬声器：
-    // 直接接扬声器等于把你的麦克风原样放出来（啸叫 / 回声），某些驱动上还会把音频线程搞炸。
-    // ScriptProcessor 必须有下游节点才会被调用，所以这里要的是"通路存在、音量为零"。
-    const sink = ctx.createGain();
-    sink.gain.value = 0;
-    proc.connect(sink);
-    sink.connect(ctx.destination);
-    rec = { stream, ctx, src, proc, chunks };
+    /**
+     * ⚠️ 这里**不能**用 ScriptProcessorNode —— 实测（start.err.log）：
+     *   [renderer] The ScriptProcessorNode is deprecated. Use AudioWorkletNode instead.
+     *   [pet] 渲染进程退出 {"reason":"crashed","exitCode":-1073741819}   ← 0xC0000005 访问越界
+     * 也就是"长按开始录音 → 桌宠消失"的**真凶就是它**：那个废弃节点在这台机器的音频栈上
+     * 直接把渲染进程打崩（透明窗口没有渲染进程 = 屏幕上什么都没有，看着就是桌宠没了）。
+     *
+     * 换成 MediaRecorder：采集交给 Chromium 自己的编码器，渲染进程里**不建任何实时音频图**。
+     * 录完再用离线的 OfflineAudioContext 解码成 PCM（离线解码不碰硬件，是安全的）。
+     */
+    const mime = ['audio/webm;codecs=opus', 'audio/webm', ''].find((m) => !m || MediaRecorder.isTypeSupported(m));
+    const mr = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+    const parts = [];
+    mr.ondataavailable = (e) => { if (e.data && e.data.size) parts.push(e.data); };
+    mr.start(200);               // 每 200ms 收一块，松手时不用等太久
+    rec = { stream, mr, parts };
     setState('listening');
     showBubble('正在听…（松开结束）', 0);
   } catch (err) {
@@ -537,24 +537,39 @@ async function beginRecording() {
   }
 }
 
+/** 录下来的音频 → 单声道 Float32 PCM（给识别用）。离线解码，不碰音频硬件。 */
+async function decodeToPcm(blob) {
+  const buf = await blob.arrayBuffer();
+  // 只拿它当解码器：OfflineAudioContext 不需要输出设备
+  const off = new OfflineAudioContext(1, 1, 16000);
+  const audio = await off.decodeAudioData(buf);
+  return { samples: audio.getChannelData(0), rate: audio.sampleRate };
+}
+
 async function finishRecording() {
   const r = rec;
   rec = null;
   if (!r) return;
-  const rate = r.ctx.sampleRate;
-  try { r.proc.disconnect(); r.src.disconnect(); } catch { /* 已经断了 */ }
+  // 先让 MediaRecorder 收尾（最后一块 may 还在路上），再关麦克风
+  const stopped = new Promise((res) => { r.mr.onstop = () => res(); });
+  try { r.mr.stop(); } catch { /* 已经停了 */ }
+  try { await stopped; } catch { /* 忽略 */ }
   try { r.stream.getTracks().forEach((t) => t.stop()); } catch { /* 忽略 */ }
-  try { await r.ctx.close(); } catch { /* 忽略 */ }
-
-  const total = r.chunks.reduce((a, c) => a + c.length, 0);
-  if (total < rate * 0.3) {           // 比 0.3 秒还短当作没说话（和 sttMinSeconds 同义）
+  const blob = new Blob(r.parts, { type: (r.mr && r.mr.mimeType) || 'audio/webm' });
+  if (blob.size < 1200) {             // 太短（约 0.3 秒内）当作没说话，和 sttMinSeconds 同义
     setState('idle');
     hideBubble();
     return;
   }
-  const samples = new Float32Array(total);
-  let o = 0;
-  for (const c of r.chunks) { samples.set(c, o); o += c.length; }
+  let samples;
+  let rate;
+  try {
+    ({ samples, rate } = await decodeToPcm(blob));
+  } catch (err) {
+    setState('silent');
+    showBubble(`音频解不开：${err.message}`, 8000);
+    return;
+  }
 
   setState('thinking');
   showBubble('听清楚了，正在认字…', 0);
