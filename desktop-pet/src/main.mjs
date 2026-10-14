@@ -319,6 +319,21 @@ function setPaused(v) {
   // 注意：PET_NO_AUTO=1（只开窗口不开观察循环）时不要借"继续"把循环启动起来。
   if (autoEnabled) { if (paused) monitor?.stop(); else monitor?.start(); }
   win?.webContents.send('pet:paused', paused);
+  /**
+   * 暂停之后**再确认一次窗口是可见的、不透明的**。
+   * 用户报"暂停后桌宠会透明然后消失" —— 不管那是渲染进程崩了、还是窗口被谁碰到了，
+   * 暂停这个动作本身**绝不该让桌宠不可见**，所以这里加一道兜底：
+   * 发现不可见就显回来，透明度被改过就拉回 1，每一处都留日志（下次一眼看出是谁干的）。
+   */
+  try {
+    if (win && !win.isDestroyed()) {
+      if (!win.isVisible()) { log('[pet] 暂停/继续后窗口竟是隐藏的 → 显回来'); win.show(); }
+      const op = typeof win.getOpacity === 'function' ? win.getOpacity() : 1;
+      if (op < 1) { log('[pet] 窗口透明度是', op, '→ 拉回 1'); win.setOpacity(1); }
+    }
+  } catch (err) {
+    log('[pet] 暂停后核对窗口状态失败：', err.message);
+  }
   refreshTray();
   log(paused ? '已暂停：不再采样 / 判断 / 自动发言（点它仍然可以手动说一句）' : '已继续');
 }

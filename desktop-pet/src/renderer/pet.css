@@ -271,8 +271,10 @@ html, body {
 #pet[data-state="speaking"]  { color: var(--speak); }
 #pet[data-state="silent"]    { color: var(--silent); }
 #pet[data-state="listening"] { color: var(--listen); }
-/* 暂停：灰掉 + 半透明，一眼看出"它现在不管事"（和沉默的灰区分在透明度上） */
-#pet[data-state="paused"]    { color: var(--silent); opacity: 0.5; }
+/* 暂停：灰掉 + 稍微淡一点，一眼看出"它现在不管事"。
+   0.5 太重了 —— 用户报"暂停后桌宠会透明然后消失"，先把它压到 0.72：
+   暂停应该是"它打盹了"，不是"它快没了"。 */
+#pet[data-state="paused"]    { color: var(--silent); opacity: 0.72; }
 #pet[data-state="thinking"]::before { animation: pulse 1.4s ease-in-out infinite; }
 
 @keyframes pulse {
