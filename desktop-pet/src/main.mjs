@@ -114,6 +114,8 @@ let cursorTimer = null;
 let holdMouse = false;      // 拖动/录音期间强制接收鼠标（否则中途 mouseup 收不到）
 /** 光标位置（物理像素）。koffi 懒加载，拿不到就退回"只按事件"的老路。 */
 let cursorApi = null;
+/** 滞回用：刚刚还"命中"过，就先别急着放开（见 hoverPoll 里的说明）。 */
+let hoverUntil = 0;
 
 function loadCursorApi() {
   if (cursorApi !== null) return cursorApi;
@@ -174,9 +176,22 @@ function hoverPoll() {
   const lx = cx - b.x;
   const ly = cy - b.y;
   // 边缘给 10px 宽容：抓宠物这种动作手很快，差几个像素就按空会觉得很"涩"
-  const slack = 10;
+  // 宽容 18px：抓宠物、点按钮都是快手动作，差十几像素就判空会一直"丢鼠标"
+  const slack = 18;
   const hit = hitRects.some((r) => lx >= r.x - slack && lx < r.x + r.w + slack
     && ly >= r.y - slack && ly < r.y + r.h + slack);
+  /**
+   * 滞回：刚刚还在宠物身上、现在只挪出去一点点 → **再等 250ms 才放开**。
+   * 为什么需要：轮询天生有间隔（哪怕 15ms），而"从宠物边缘滑出去"这种动作会产生
+   * 一串"命中/不命中"的抖动，抖到"不命中"那一拍上刚好按下就是丢鼠标。
+   * 松开晚 250ms 的代价只是"宠物边上那一小圈会多拦会儿鼠标"，比丢点击好得多。
+   */
+  if (!hit && lastHover) {
+    if (!hoverUntil) hoverUntil = Date.now() + 250;
+    if (Date.now() < hoverUntil) { applyHover(true, '滞回'); return; }
+  } else {
+    hoverUntil = 0;
+  }
   applyHover(hit, `窗内(${Math.round(lx)},${Math.round(ly)})`);
 }
 
@@ -185,7 +200,10 @@ function startHoverPoll() {
   // 间隔决定了"鼠标刚移到宠物身上、还要等多久才能按住它"——也就是用户说的"拖不动"。
   // GetCursorPos 是极快的调用，40ms 一次完全无所谓；用 90ms 时那种"移过去马上按住"
   // 的习惯动作会有一成左右的概率按空（实测体感就是"有时候拖不动"）。
-  cursorTimer = setInterval(hoverPoll, 40);
+  // 15ms ≈ 一秒 66 次 GetCursorPos（一次系统调用，开销可以忽略），
+  // 目的是把"鼠标刚移到宠物身上、还没轮到判定"这段空窗压到最短 —— 用户说的"丢鼠标"
+  // 绝大多数就是在这段空窗里按下的那一下。
+  cursorTimer = setInterval(hoverPoll, 15);
   hoverPoll();
 }
 /** 暂停 = 关掉观察循环（不采样、不判断、不自动开口）。手动点它"说一句"仍然有效。 */
