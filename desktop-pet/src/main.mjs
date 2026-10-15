@@ -22,7 +22,7 @@ import { SCHEMA } from './settings/schema.mjs';
 import { CONFIG_PATH, loadConfig, saveConfig } from './config.mjs';
 import { askDsh } from './brain.mjs';
 import { createMonitor } from './monitor.mjs';
-import { dataDir } from './dirs.mjs';
+import { dataDir, runDir } from './dirs.mjs';
 import { DshSession } from './dsh-session.mjs';
 import { transcribe } from './stt.mjs';
 import { route } from './router.mjs';
@@ -622,6 +622,27 @@ function createWindow() {
         log('[debug] 没图时不说范围 =', !没图.includes('范围：这一轮'));
       } catch (err) {
         console.error('[pet][debug] 范围自检失败', err);
+      }
+      app.quit();
+    });
+  }
+
+  /**
+   * 开发用：设了 PET_DEBUG_REGION=1 就验"框选那层窗"——真拖一个框、量像素。
+   *
+   * 为什么值得单开：它坏掉的样子是"整屏一块黑板，用户没法对准"，而那是**不报错**的坏法
+   * （用户报过一次：窗口不透明 + 整屏那层压暗没收起来，洞里露的是窗口自己的底色）。
+   * 判据：洞里 alpha 必须是 0（露出真实桌面），洞外 ≈102；顺带把合成预览存到 run\。
+   * ⚠️ 会把那层铺满屏幕 1~2 秒（要截图才能量），只在自检里跑；**不改**你的监控区域。
+   */
+  if (process.env.PET_DEBUG_REGION) {
+    win.webContents.once('did-finish-load', async () => {
+      try {
+        const out = join(runDir(), 'region-picker-selftest.png');
+        const r = await pickRegion({ logger: console, selfTestOut: out });
+        log('[debug] 框选自检 =', JSON.stringify(r?.selfTest || null));
+      } catch (err) {
+        console.error('[pet][debug] 框选自检失败', err);
       }
       app.quit();
     });

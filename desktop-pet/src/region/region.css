@@ -1,9 +1,19 @@
-/* 框选层：整屏压暗，拖出来的那块保持原亮度。配色与 PowerShell 版的 RegionPicker 同一套。 */
+/*
+  框选层：整屏压暗，拖出来的那块**完全透出来**（保持原亮度）。
+
+  ⚠️ 三层必须一起对（少一层就会变成"一大片黑，没法对准"）：
+    ① 窗口 transparent: true                    —— 见 region-picker.mjs
+    ② html/body 自己不画底色（transparent）      —— 见下面
+    ③ 暗只由 #veil 画；#hole 一粒像素都不填
+
+  与 PowerShell 版的差别（有意）：那边的选中块是**35% 白纱**（整窗 Opacity = 0.35），
+  这里改成"一点不压"—— 用户要的是能对准，透出原图比蒙一层白纱准得多。
+*/
 html, body {
   margin: 0;
   height: 100%;
   overflow: hidden;
-  background: #0a0a0e;
+  background: transparent;      /* ⚠️ 不是 #0a0a0e：那是"整屏黑板"的来源 */
   cursor: crosshair;
   font-family: "Microsoft YaHei UI", "Segoe UI", system-ui, sans-serif;
   user-select: none;
@@ -13,35 +23,51 @@ html, body {
 #veil {
   position: fixed;
   inset: 0;
-  background: rgba(10, 10, 14, 0.62);
+  background: rgba(10, 10, 14, 0.4);
 }
+/* ⚠️ 一开始拖就把它收起来（见 region.js 的 paint）：整屏一层盖上去之后，
+   洞里露出的也只会是这层暗 —— "挖空"是做不到的，压暗必须由 #hole 自己往外泼（见下）。 */
+
+/* 鼠标十字线：没有它，边角对不准（普通截图工具都有） */
+#cross { position: fixed; inset: 0; pointer-events: none; }
+#cross .v, #cross .h { position: absolute; background: rgba(255, 255, 255, 0.5); box-shadow: 0 0 3px rgba(0, 0, 0, 0.85); }
+#cross .v { top: 0; bottom: 0; width: 1px; }
+#cross .h { left: 0; right: 0; height: 1px; }
 
 #hole {
   position: fixed;
-  border: 3px solid #3c8cf0;
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.55), 0 0 22px rgba(60, 140, 240, 0.55);
-  background: transparent;
+  border: 2px solid #3c8cf0;
+  /* 第一层是"洞外压暗"：一个 9999px 的外阴影，等于把整屏压暗**除了洞本身**。
+     用外阴影而不是"整屏一层 + 透明洞"：后者做不到挖空（透明洞盖在暗层上，看见的还是暗层）。 */
+  box-shadow: 0 0 0 9999px rgba(10, 10, 14, 0.4),
+              0 0 0 1px rgba(255, 255, 255, 0.55),
+              0 0 22px rgba(60, 140, 240, 0.55);
+  background: transparent;      /* 洞里就是真实桌面，别填任何颜色 */
   pointer-events: none;
 }
 
+/* 提示条与尺寸：都做成深色小胶囊，压在任何桌面/文档上都读得清 */
 #tip {
   position: fixed;
   left: 32px;
   top: 28px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: rgba(12, 14, 20, 0.78);
   color: #fff;
   font-size: 15px;
   font-weight: 600;
-  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.75);
   pointer-events: none;
 }
 
 #size {
   position: fixed;
-  left: 32px;
-  top: 56px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: rgba(12, 14, 20, 0.82);
   color: #cfe4ff;
   font-size: 13px;
-  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.75);
+  font-variant-numeric: tabular-nums;
   pointer-events: none;
 }
 

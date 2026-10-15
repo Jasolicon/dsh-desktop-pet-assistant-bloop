@@ -6,8 +6,13 @@
     <link rel="stylesheet" href="region.css" />
   </head>
   <body>
-    <!-- 洞里露出的是真实屏幕：用四个矩形拼一个"挖空"的罩子，比 canvas 便宜也更好对齐 -->
+    <!--
+      洞里露出的是**真实桌面**：#veil 只压暗、#hole 完全不填色，而窗口本身是 transparent 的
+      （见 region-picker.mjs 的 transparent: true —— 少那一项，这里挖的洞也只会露出窗口自己的底色，
+       整屏看着就是一块黑板，用户根本没法对准）。
+    -->
     <div id="veil"></div>
+    <div id="cross" aria-hidden="true"><div class="v"></div><div class="h"></div></div>
     <div id="hole" class="hidden"></div>
     <div id="tip">拖出一个矩形 = 只监控这一块　　Esc / 拖太小 = 取消</div>
     <div id="size" class="hidden"></div>
