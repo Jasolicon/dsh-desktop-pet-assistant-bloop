@@ -43,7 +43,7 @@ import { createTaskLog, toRow } from './tasks.mjs';
 import { ensureDshHome } from './dsh-home.mjs';
 import { usableShots } from './shots.mjs';
 import {
-  customSection, readPreset, readSystemPrompt, shouldAdoptPreset, systemPromptFile, writeSystemPrompt,
+  customSection, readPreset, readSystemPrompt, scopeLines, shouldAdoptPreset, systemPromptFile, writeSystemPrompt,
 } from './prompt.mjs';
 
 let win = null;
@@ -570,6 +570,40 @@ function createWindow() {
         log('[debug] 记忆进提示词了吗 =', prompt.includes('记忆自检'), `（提示词 ${prompt.length} 字）`);
       } catch (err) {
         console.error('[pet][debug] 记忆自检失败', err);
+      }
+      app.quit();
+    });
+  }
+
+  /**
+   * 开发用：设了 PET_DEBUG_SCOPE=1 就验"提示词里说没说这张图的范围"。
+   *
+   * 为什么单开一个：用户框选监控区域之后，交给模型的图是**裁过**的，而模型看不见"边界"，
+   * 会拿那一块当整屏下结论（"屏幕上只有这个窗口"）。这件事只有真拼一遍提示词才能确认 ——
+   * 静态代码看不出"那句话到底进没进"。两种情形都跑：整屏 / 框了区域。
+   */
+  if (process.env.PET_DEBUG_SCOPE) {
+    win.webContents.once('did-finish-load', () => {
+      try {
+        const base = {
+          current: { process: '自检', title: 'Code', inWindowS: 12 },
+          human: { idleSeconds: 1 }, timeline: [],
+        };
+        // 那句范围话只在**真有图要发**时才出现（没有图时提示词说的是"看不到画面"，
+        // 见 buildLookPrompt 的 else 分支）—— 所以这两份假 payload 必须带一张"新鲜"的截图：
+        // freshShotPaths 只看时间戳，不看文件在不在，这里不需要真的存在一个 jpg。
+        const 新鲜 = { shots: ['C:/self-test/shot.jpg'], shotTimes: [new Date().toISOString()] };
+        const 整屏 = buildLookPrompt({ ...base, ...新鲜, screen: { stillSeconds: 3, region: '整屏' } });
+        const 区域 = buildLookPrompt({ ...base, ...新鲜, screen: { stillSeconds: 3, region: '640×360' } });
+        const 没图 = buildLookPrompt({ ...base, screen: { stillSeconds: 3, region: '640×360' }, shots: [], shotTimes: [] });
+        log('[debug] 整屏那句在吗 =', 整屏.includes('范围：这一轮给你的是')
+          && 整屏.includes('整屏'), `（提示词 ${整屏.length} 字）`);
+        log('[debug] 框了区域那句在吗 =', 区域.includes('不是整屏') && 区域.includes('640×360')
+          && 区域.includes('不等于'), `（提示词 ${区域.length} 字）`);
+        // 没有可用截图时不该出现"最新截图/范围"那两句（那句话只在真有图时才有意义）
+        log('[debug] 没图时不说范围 =', !没图.includes('范围：这一轮'));
+      } catch (err) {
+        console.error('[pet][debug] 范围自检失败', err);
       }
       app.quit();
     });
@@ -1559,6 +1593,9 @@ function buildLookPrompt(payload) {
   const fresh = freshShotPaths(payload);
   if (fresh.length) {
     lines.push('', '【最新截图】随本条消息一起给你了，直接看。');
+    // 图是整屏还是裁过的一块，必须说出来（见 prompt.mjs 的 scopeLines）：
+    // 不说的话，模型会拿"用户框选的那一块"当整屏下结论（"屏幕上只有这个窗口"）。
+    lines.push(...scopeLines(payload.screen));
   } else if (payload.taskProfile?.matched || payload.current) {
     lines.push(
       '',

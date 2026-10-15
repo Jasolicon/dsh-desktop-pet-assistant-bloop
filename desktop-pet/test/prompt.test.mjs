@@ -14,7 +14,28 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { runDir } from '../src/dirs.mjs';
-import { customSection, presetFile, readPreset, readSystemPrompt, shouldAdoptPreset, STYLES, systemPromptFile, writeSystemPrompt } from '../src/prompt.mjs';
+import { customSection, presetFile, readPreset, readSystemPrompt, scopeLines, shouldAdoptPreset, STYLES, systemPromptFile, writeSystemPrompt } from '../src/prompt.mjs';
+
+/**
+ * 截图范围那句话。为什么值得单测：用户框选监控区域之后，交给模型的图是**裁过**的，
+ * 而模型看不见边界 —— 不告诉它，它就会拿那一块当整屏下结论（"屏幕上只有这个窗口"）。
+ * 这种错话只会在真跑起来之后现形，所以口径钉在这里。
+ */
+test('scopeLines：整屏 / 框了区域 / payload 里没这个字段', () => {
+  const whole = scopeLines({ region: '整屏' }).join('\n');
+  assert.match(whole, /整屏/);
+  assert.doesNotMatch(whole, /不是整屏/, '整屏时不许出现"不是整屏"这种误导');
+
+  const crop = scopeLines({ region: '640×360' }).join('\n');
+  assert.match(crop, /不是整屏/, '框了区域必须说清楚这不是整屏');
+  assert.match(crop, /640×360/, '把范围数字带上，模型才知道自己看到的是多大一块');
+  assert.match(crop, /不等于/, '关键约束：这块里看不到 ≠ 屏幕上没有');
+
+  // 字段缺失（老的 payload、自检造的假 payload）按整屏处理，不能抛
+  assert.match(scopeLines().join('\n'), /整屏/);
+  assert.match(scopeLines({}).join('\n'), /整屏/);
+  assert.match(scopeLines({ region: '   ' }).join('\n'), /整屏/);
+});
 
 test('四档预设都读得到，而且内容不是空壳', () => {
   for (const s of STYLES) {
