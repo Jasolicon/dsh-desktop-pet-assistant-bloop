@@ -42,6 +42,7 @@ import { readSamples, taskProfile } from './profile.mjs';
 import { createTaskLog, toRow } from './tasks.mjs';
 import { ensureDshHome } from './dsh-home.mjs';
 import { usableShots } from './shots.mjs';
+import { createTts } from './tts.mjs';
 import {
   customSection, readPreset, readSystemPrompt, scopeLines, shouldAdoptPreset, systemPromptFile, writeSystemPrompt,
 } from './prompt.mjs';
@@ -67,6 +68,13 @@ app.disableHardwareAcceleration();
 let win = null;
 let cfg = loadConfig();
 let busy = false;
+/**
+ * 朗读那条路（见 src/tts.mjs、src/tts.ps1）。
+ * 为什么不用渲染进程自带的 speechSynthesis：这台机器上它是坏的（实测 `synthesis-failed`），
+ * 而系统那条（System.Speech/SAPI）是好的 —— 所以声音由主进程起一个一次性助手去念。
+ * ⚠️ 配置要**现读**（`live`）：设置窗口里改语速/音量/音色要立刻生效，别抄一份停在那儿。
+ */
+const tts = createTts({ live: () => cfg, logger: console });
 /**
  * 「判断 / 问一句」这条路上的闸：同一时刻只允许一轮。
  *
@@ -643,6 +651,35 @@ function createWindow() {
         log('[debug] 框选自检 =', JSON.stringify(r?.selfTest || null));
       } catch (err) {
         console.error('[pet][debug] 框选自检失败', err);
+      }
+      app.quit();
+    });
+  }
+
+  /**
+   * 开发用：PET_DEBUG_TTS=1 验朗读那条路 —— 探一次引擎 + 念一句**音量 0**的（听不见，只看通不通）；
+   * PET_DEBUG_TTS=play 就按配置的音量真念一句（自己听听音色好不好听）。
+   * 为什么要有它：这条路坏掉的样子是"它不吭声"，而"不吭声"跟"没这功能"长得一模一样。
+   */
+  if (process.env.PET_DEBUG_TTS) {
+    win.webContents.once('did-finish-load', async () => {
+      try {
+        const probe = await tts.probe();
+        log('[debug] TTS 引擎 =', JSON.stringify(probe));
+        const saved = cfg;
+        const play = process.env.PET_DEBUG_TTS === 'play';
+        cfg = {
+          ...saved, ttsEnabled: true, ttsEngine: 'auto', ttsVoice: '',
+          ttsVolume: play ? (Number(saved.ttsVolume) || 100) : 0,
+        };
+        log('[debug] TTS 入队 =', JSON.stringify(tts.speak('朗读自检：这一句出来就说明系统语音引擎这条路通了。')));
+        await new Promise((r) => setTimeout(r, play ? 9000 : 4000));
+        const st = tts.status();
+        log('[debug] TTS 状态 =', JSON.stringify(st));
+        log('[debug] TTS 那句念出来了吗 =', st.spoken >= 1, st.why ? `（为什么：${st.why}）` : '');
+        cfg = saved;
+      } catch (err) {
+        console.error('[pet][debug] 朗读自检失败', err);
       }
       app.quit();
     });
@@ -2116,6 +2153,20 @@ function registerIpc() {
     }
   });
 
+  /**
+   * 朗读：渲染进程把要念的那句丢过来（它不再直接调 speechSynthesis —— 那条在这台机器上是坏的）。
+   * ok=false 时渲染进程会**退回** Chromium 自带那条（Mac/Linux 上只有它有用），并把原因写进日志。
+   */
+  ipcMain.handle('pet:tts', (_e, text) => {
+    if (cfg.ttsEnabled === false) return { ok: true, skipped: 'muted' };
+    if (String(cfg.ttsEngine || 'auto') === 'web') return { ok: false, why: '引擎配成了 web（只用浏览器自带那条）' };
+    return tts.speak(text);
+  });
+  ipcMain.handle('pet:ttsStop', () => {
+    // 停下来这件事要**两边都做**：系统引擎那边杀进程 + 清队，浏览器那条由渲染进程自己 cancel
+    return tts.stop();
+  });
+
 // 设置窗口要的两件事：读当前配置 + schema；把改动写回 config.json。
 // 只接受 schema 里列过的键 —— 配置里还有一堆 `_xxxNote` 和 PowerShell 版专属的键，
 // 界面上不该出现的键也不该被写坏。写回是"改内存里那份 cfg 再整份落盘"，所以
@@ -2420,6 +2471,20 @@ app.whenReady().then(() => {
     }
     startLedger();
 
+    /**
+     * 朗读：开跑之前先探一次系统引擎（拿到音色、判定能不能出声）。
+     * ⚠️ 出问题**必须说出来**：这条路以前坏掉时一声不吭（Web Speech 的 catch 里什么都不做），
+     * 用户只能猜"是不是被改成可选了"——他真是这么问的。所以这里探到失败就明说一次。
+     */
+    if (cfg.ttsEnabled !== false && String(cfg.ttsEngine || 'auto') !== 'web') {
+      void tts.probe().then((r) => {
+        if (r.ok) return;
+        log('[tts] 朗读起不来：', r.why);
+        win?.webContents.send('pet:card',
+          `（朗读起不来：${r.why}\n要么把「朗读 → 引擎」改成 web，要么把「启用」关掉；细节在 start.log 里。）`);
+      });
+    }
+
     // 派活记录对账：还挂着"在跑"的其实是上一轮的残留（常驻会话已经不在了）。
     // 不做这一步，表里会永远有一条在跑 —— 用户以为它卡住了（PS 版踩过同样的坑）。
     const fixed = tasks.resetStale();
@@ -2500,6 +2565,7 @@ app.whenReady().then(() => {
       log('[账本] 退出前状态存不上（下次启动可能自己恢复观察）：', err && err.message);
     }
     if (lockHeld) release(lockFile);        // 只清自己那把（别人的锁不能被我删掉）
+    tts.dispose();                          // 正在念的那句跟着走（别留一个还在说话的孤儿进程）
     tray?.destroy();
     askWatcher?.stop();
     dropSessions();

@@ -254,19 +254,46 @@ let lastSpoken = '';
 /** 指定用哪个麦克风录音（空 = 系统默认）。设备列表在设置窗口里选，这里只负责用。 */
 let micDeviceId = '';
 
+/**
+ * 念一句。
+ *
+ * ⚠️ 顺序很重要：**先走主进程那条**（系统语音引擎，见 src/tts.mjs）——
+ * 渲染进程自带的 `speechSynthesis` 在某些机器上是**坏的**（本机实测：报支持、列得出中文音色，
+ * 真念就 `synthesis-failed`），而且它坏起来一声不吭，用户只能猜"是不是被改成可选了"。
+ * 所以：主进程说不行，才退回自带那条；两条都失败**都写日志**（主进程那条本来就会报）。
+ */
 function say(text) {
   const line = speakable(text);
   if (!line) return;
   lastSpoken = line;
   if (!ttsEnabled) return;
-  try {
-    if (!window.speechSynthesis) return;
-    window.speechSynthesis.cancel();          // 新的盖掉旧的，别排队念一串
-    const u = new SpeechSynthesisUtterance(line);
-    u.lang = 'zh-CN';
-    u.rate = 1.05;
-    window.speechSynthesis.speak(u);
-  } catch { /* 没音色就静默，不影响气泡 */ }
+
+  const webSpeak = () => {
+    try {
+      if (!window.speechSynthesis) return;
+      window.speechSynthesis.cancel();          // 新的盖掉旧的，别排队念一串
+      const u = new SpeechSynthesisUtterance(line);
+      u.lang = 'zh-CN';
+      u.rate = 1.05;
+      // 这条路坏的时候**不能装没事**（原先就是 catch 里什么都不做）
+      u.onerror = (e) => console.error('[tts] 浏览器自带那条也失败了：', (e && e.error) || 'unknown');
+      window.speechSynthesis.speak(u);
+    } catch (err) {
+      console.error('[tts] 浏览器自带那条抛异常：', err && err.message);
+    }
+  };
+
+  if (!window.pet?.tts) { webSpeak(); return; }     // 老 preload / 自检环境：直接退回自带那条
+  Promise.resolve(window.pet.tts(line))
+    .then((r) => {
+      if (r && r.ok) return;
+      if (r && r.why) console.warn('[tts] 系统引擎没接住，退回浏览器那条：', r.why);
+      webSpeak();
+    })
+    .catch((err) => {
+      console.warn('[tts] 主进程那条出错，退回浏览器那条：', err && err.message);
+      webSpeak();
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -964,7 +991,11 @@ window.pet.onSettingsChanged((next) => {
 });
 
 // 菜单里的「朗读」那一组（出声的开关也在设置窗口里，两边改的是同一个键）
-window.pet.onSpeakStop(() => { try { window.speechSynthesis?.cancel(); } catch { /* 没音色 */ } });
+window.pet.onSpeakStop(() => {
+  // 两条路都要停：系统引擎那条由主进程杀进程 + 清队，自带那条在这边 cancel
+  try { window.pet.ttsStop?.(); } catch { /* 主进程那条没接上就算了 */ }
+  try { window.speechSynthesis?.cancel(); } catch { /* 没音色 */ }
+});
 window.pet.onSpeakReplay(() => { if (lastSpoken) say(lastSpoken); });
 
 window.pet.info().then((info) => {

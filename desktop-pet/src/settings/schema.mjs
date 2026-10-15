@@ -128,11 +128,15 @@ export const SCHEMA = [
     items: [
       { key: 'ttsEnabled', label: '启用', type: 'bool', live: true },
       { key: 'ttsEngine', label: '引擎', type: 'choice', live: true, choices: [
-        { value: 'auto', text: '自动' },
-        { value: 'edge', text: 'edge —— 微软神经音色（音质好，要联网）' },
-        { value: 'speech', text: 'speech —— 本机音色（离线）' },
+        { value: 'auto', text: '自动 —— 系统音色优先，失败再退回浏览器自带的' },
+        { value: 'speech', text: 'speech —— 只用系统音色（离线、瞬时）' },
+        { value: 'web', text: 'web —— 只用浏览器自带那条（Mac/Linux 上只有它）' },
       ] },
-      { key: 'ttsVoice', label: '音色', type: 'string', live: true, help: '留空 = 用引擎默认音色。' },
+      { key: 'ttsVoice', label: '音色', type: 'string', live: true, help: '留空 = 自动挑中文音色。写系统里的音色名（可用音色每次启动都写进 start.log）。' },
+      { key: 'ttsRate', label: '语速', type: 'int', min: -10, max: 10, live: true, help: '-10..10，0 正常（和 PowerShell 版同一口径）。' },
+      { key: 'ttsVolume', label: '音量', type: 'int', min: 0, max: 100, live: true, help: '0..100。' },
+      { key: 'ttsMaxChars', label: '最多念多少字', type: 'int', min: 20, max: 600, live: true, help: '超了在标点处截断（别让一句话念三分钟）。' },
+      { key: 'ttsQueueMax', label: '待念队列上限', type: 'int', min: 1, max: 10, live: true, help: '自动判断可能连着产出、嘴跟不上：满了丢最旧的。' },
     ],
   },
   {

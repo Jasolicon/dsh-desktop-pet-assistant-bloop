@@ -47,6 +47,10 @@ contextBridge.exposeInMainWorld('pet', {
   onSpeakReplay: (cb) => ipcRenderer.on('pet:speakReplay', () => cb()),
   // 气泡页脚（余额 / 上次调用 / 今天）：主进程算好推过来，渲染进程只负责显示
   onFooter: (cb) => ipcRenderer.on('pet:footer', (_e, text) => cb(text)),
+  // 朗读：走主进程那条（系统语音引擎）—— 渲染进程自带的 speechSynthesis 在有些机器上是坏的
+  // （本机实测 synthesis-failed），所以由主进程决定用哪条；它说不行这边才退回自带的
+  tts: (text) => ipcRenderer.invoke('pet:tts', text),
+  ttsStop: () => ipcRenderer.invoke('pet:ttsStop'),
   // 通用"卡片"（账本那种长文本）：只显示、不朗读
   onCard: (cb) => ipcRenderer.on('pet:card', (_e, text) => cb(text)),
   // 选项问答 / 审批：主进程收到请求就推过来，用户在气泡上点选后回传

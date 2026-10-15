@@ -159,8 +159,18 @@ export const DEFAULTS = {
   sttModelDir: '',
   // 朗读
   ttsEnabled: true,
+  /**
+   * auto   = 系统引擎优先（src/tts.ps1），失败再退回 Chromium 自带的 Web Speech
+   * speech = 只用系统引擎；web = 只用 Web Speech（macOS/Linux 上只有这条）
+   * ⚠️ 这台机器上 Web Speech 是坏的（`synthesis-failed`，实测），所以默认 auto 走系统那条。
+   */
   ttsEngine: 'auto',
+  /** 音色名（系统里的，例如 "Microsoft Huihui Desktop"）；留空 = 自动挑中文音色。 */
   ttsVoice: '',
+  ttsRate: 0,          // -10..10（System.Speech 的口径，照 PS 版）
+  ttsVolume: 100,      // 0..100
+  ttsMaxChars: 180,    // 一句话最多念多少字，超了在标点处截断
+  ttsQueueMax: 3,      // 待念队列最多几句，满了丢最旧的（越新的消息越值钱）
   // 行为
   userQuietSeconds: 6,
   /**
