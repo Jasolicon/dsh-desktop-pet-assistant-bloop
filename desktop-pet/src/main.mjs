@@ -46,6 +46,24 @@ import {
   customSection, readPreset, readSystemPrompt, scopeLines, shouldAdoptPreset, systemPromptFile, writeSystemPrompt,
 } from './prompt.mjs';
 
+/**
+ * 关掉硬件加速：桌宠**不该依赖 GPU 进程**。
+ *
+ * 为什么（有尸体）：2026-10-15 04:27:38 桌宠整只没了，stderr 最后三行是
+ *   gpu_process_host.cc: GPU process exited unexpectedly: exit_code=-1073741205（0xC0000409 fail-fast）
+ *   gpu_data_manager_impl_private.cc: FATAL GPU process isn't usable. Goodbye.
+ * —— 后一行是**浏览器进程自己 abort**，不是渲染进程崩。渲染进程崩了我们能 reload 自己回来
+ * （见 render-process-gone），浏览器进程 abort 谁也拦不住：它就这么静默死在半夜（多半是睡眠/唤醒
+ * 或显示器切换把 GPU 设备搞丢了，本机还是混合显卡 + 已知 Electron 33 会崩的那台机器）。
+ *
+ * 而桌宠用的东西**根本不需要 GPU**：一个 320px 宽的透明窗口，内容只有文字、圆角和一个 ±4px 的
+ * 上下浮动动画；截图走 desktopCapturer（与 GPU 无关）；PowerShell 版更是 GDI 自绘、从来就没有 GPU 这个概念。
+ * 关掉之后这一类"GPU 设备丢了 → 整只静默死掉"的风险直接消失，代价只是软件光栅化这点 CPU（可以忽略）。
+ *
+ * ⚠️ 必须在 app ready 之前调。
+ */
+app.disableHardwareAcceleration();
+
 let win = null;
 let cfg = loadConfig();
 let busy = false;

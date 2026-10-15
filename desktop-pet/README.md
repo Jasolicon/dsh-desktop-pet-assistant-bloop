@@ -84,6 +84,31 @@ patch 的字段名是 desktop-guide 那侧踩出来的、写错不会报错只�
 权限那条必须是 `permission`（写成 `permission-presets` 会新增一条而不是覆盖，
 权限就从来没生效过）。
 
+### 为什么关掉硬件加速（GPU 进程会把整只带走）
+
+`main.mjs` 开头有 `app.disableHardwareAcceleration()`。原因是一次**半夜静默死亡**：
+
+```
+2026-10-15 04:27:38
+  gpu_process_host.cc            GPU process exited unexpectedly: exit_code=-1073741205（0xC0000409 fail-fast）
+  gpu_data_manager_impl_private  FATAL: GPU process isn't usable. Goodbye.
+```
+
+注意最后一行：**abort 的是浏览器进程本身**，不是渲染进程。渲染进程崩了我们能自己 reload 回来
+（见 `render-process-gone`）；浏览器进程 abort 谁也拦不住 —— 表现就是"睡一觉起来桌宠没了、日志里也没有我们自己的报错"。
+多半是睡眠/唤醒或显示器切换把 GPU 设备搞丢了（这台还是混合显卡）。
+
+而桌宠根本不需要 GPU：320px 宽的透明窗口，内容只有文字、圆角和一个 ±4px 的浮动动画；
+截图走 `desktopCapturer`（与 GPU 无关）；PowerShell 版更是 GDI 自绘、从来没这个概念。
+关掉之后这类"设备丢了 → 整只死"的依赖就没了，代价是软件光栅化那点 CPU（可忽略）。
+
+> ⚠️ 别和上面那条 Electron 33 的启动崩混起来：那次 `--disable-gpu` / `--use-angle=swiftshader`
+> 全试过、一样崩，那是**版本**问题（换 28 解决）。这条是 28 跑了一整夜之后 **GPU 设备丢失**
+> 把浏览器进程带走，是两回事。
+>
+> 自检：`PET_DEBUG_CAPTURE=<png>` 跑一次，图应该照常画出来（气泡 + 角色 + 底部图标）——
+> 软件渲染下实测正常（`run\pet-softrender.png`）。
+
 ## 交互
 
 | 操作 | 效果 |
