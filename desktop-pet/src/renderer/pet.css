@@ -21,6 +21,11 @@
 
 * { box-sizing: border-box; }
 
+/* 窗口隐藏/最小化时连 CSS 呼吸动画也停掉；视频由 pet.js 暂停。 */
+html[data-visible="off"] * {
+  animation-play-state: paused !important;
+}
+
 html, body {
   margin: 0;
   height: 100%;
@@ -253,6 +258,37 @@ html, body {
 /* 用角色图时把自绘的身体和影子收起来（图上自带阴影） */
 #pet.has-image .body,
 #pet.has-image .shadow { display: none; }
+
+/*
+  动作层：
+  · WebM 用 video（Chromium 原生支持 VP9 alpha，不需要像 WPF 那样拉 FFmpeg 解码）；
+  · GIF/PNG 用 actionimg；
+  · scale 用独立的 CSS `scale` 属性，不抢 bob 动画的 `transform`。
+*/
+#petvideo,
+#petactionimg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: none;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-drag: none;
+  background: transparent;
+  transform-origin: 50% 100%;
+  scale: var(--action-scale, 1);
+}
+
+#pet.has-video #petvideo { display: block; }
+#pet.has-actionimg #petactionimg { display: block; }
+#pet.has-video #petimg,
+#pet.has-actionimg #petimg { display: none; }
+#pet.has-video .body,
+#pet.has-video .shadow,
+#pet.has-actionimg .body,
+#pet.has-actionimg .shadow { display: none !important; }
 
 /*
   ⚠️ 自绘那只（白色 C 形身体 + 两只眼睛）**默认不显示**。

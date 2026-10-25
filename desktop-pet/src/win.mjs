@@ -100,3 +100,14 @@ export function foregroundWindow() {
     return empty;
   }
 }
+
+/**
+ * 是不是泡泡自己的窗口。抓屏/观察时要把自己排除掉：
+ * 否则“气泡出现 → 画面变化 → 又触发判断 → 再冒泡”会形成自激循环。
+ */
+export function isOwnWindow(win = {}) {
+  const process = String(win.process || '').toLowerCase();
+  const title = String(win.title || '');
+  return (process === 'electron' || process === 'desktop-pet' || process === '随时指导桌宠')
+    && /随时指导|desktop-pet|泡泡|bloop/i.test(title);
+}

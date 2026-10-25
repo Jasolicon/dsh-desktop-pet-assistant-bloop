@@ -7,7 +7,7 @@
       `'self'` 匹配不上，结果就是 **CSS 被静默拦掉** —— 宠物完全由 CSS 画，
       于是窗口一片透明、看着像"没起来"（实测踩过，排查了一轮）。
     -->
-    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self' file:; script-src 'self' file:; img-src 'self' file: data:;" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self' file:; script-src 'self' file:; img-src 'self' file: data:; media-src 'self' file:;" />
     <title>随时指导</title>
     <link rel="stylesheet" href="pet.css" />
   </head>
@@ -31,6 +31,10 @@
       <div id="pet" data-state="idle">
         <!-- 角色图：有就用它（和 PowerShell 版同一张），没有/加载失败就退回下面自绘的那只 -->
         <img id="petimg" alt="" draggable="false" />
+        <!-- 动作视频：透明 WebM（VP9 alpha）；播完回到待机动作，没有动作就回到静态图 -->
+        <video id="petvideo" muted playsinline preload="auto"></video>
+        <!-- 自定义动作如果是 GIF/PNG，用这张；视频和图片二选一 -->
+        <img id="petactionimg" alt="" draggable="false" />
         <div class="body">
           <div class="eye left"></div>
           <div class="eye right"></div>

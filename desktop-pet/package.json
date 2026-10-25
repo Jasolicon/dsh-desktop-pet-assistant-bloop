@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "泡泡 · Bloop —— 桌面「随时指导」桌宠 Electron 重写版（非商业）",
+  "author": "Jasolicon",
   "license": "PolyForm-Noncommercial-1.0.0",
   "type": "module",
   "main": "src/main.mjs",
@@ -13,8 +14,10 @@
     "test": "node --test",
     "stt:install": "node tools/install-stt.mjs",
     "migrate-config": "node tools/migrate-config.mjs",
-    "dist": "electron-builder --win nsis",
-    "pack": "electron-builder --win dir"
+    "dist": "electron-builder --win nsis portable",
+    "pack": "electron-builder --win dir",
+    "icon": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/make-icon.ps1",
+    "release:manifest": "node tools/make-update-manifest.mjs"
   },
   "build": {
     "appId": "org.palai.desktop-pet",
@@ -24,21 +27,34 @@
     },
     "files": [
       "src/**/*",
+      "assets/**/*",
+      "presets/**/*",
       "package.json",
       "!**/*.map"
     ],
     "asarUnpack": [
-      "**/*.node"
+      "**/*.node",
+      "assets/actions/**/*"
     ],
     "win": {
+      "icon": "assets/deepseek.ico",
       "target": [
         {
           "target": "nsis",
           "arch": [
             "x64"
           ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
         }
       ]
+    },
+    "portable": {
+      "artifactName": "${productName}-${version}-portable.${ext}"
     },
     "nsis": {
       "oneClick": false,

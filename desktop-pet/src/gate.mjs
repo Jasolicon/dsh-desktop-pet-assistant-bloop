@@ -25,6 +25,8 @@ export const GATE_DEFAULTS = {
   silentBackoffMax: 4,       // 连续"决定不说"时间隔最多放宽到几倍
   judgeIdleSkipSeconds: 600, // 人多久没键鼠输入 + 窗口没换 → 别打扰
   judgeMaxGapSeconds: 300,   // 保险丝：不管画面多静，隔这么久也要看一眼
+  fastJudgeSeconds: 5,       // 窗口切换/画面突变的快速通道最小间隔
+  fastFpDelta: 24,           // 快速通道认为“明显变化”的指纹差
 };
 
 /**
@@ -38,6 +40,7 @@ export const GATE_DEFAULTS = {
  * @param {number}  s.lastJudgedAt  上次**真的起了模型调用**的时间（0 = 从没判断过）
  * @param {number}  s.silentStreak  连续几次"它决定不说"
  * @param {number}  s.idleSeconds   无键鼠输入的秒数
+ * @param {object}  [s.prediction]  本地预测（见 predict.mjs）
  * @param {object}  [s.config]      阈值覆盖
  * @returns {string} '' = 值得问；否则是"先别问"的原因
  */
@@ -54,10 +57,14 @@ export function worthAutoJudge(s) {
   const mult = 1 + Math.min(s.silentStreak || 0, Math.max(0, cfg.silentBackoffMax - 1));
   const need = quiet * mult;
   const since = s.lastJudgedAt ? (s.now - s.lastJudgedAt) / 1000 : Number.POSITIVE_INFINITY;
+  const fastSince = since >= cfg.fastJudgeSeconds;
 
   // 保险丝：没有这道的话，用户在一个窗口里连续工作（8×8 指纹本来就看不出一行代码的变化），
   // 闸门会一直跳过 —— 省是省了，但桌宠等于停了。
   if (since >= cfg.judgeMaxGapSeconds) return '';
+  // 预测快路径：窗口刚换/画面突发变化时，不要求等满常规 60 秒。
+  // 这不是“多叫模型”，而是把明显需要重新理解上下文的时刻提前到前面。
+  if (fastSince && (s.prediction?.fastPath || (winChanged && fpDist >= cfg.fastFpDelta))) return '';
   if (!winChanged && fpDist < delta) {
     return `画面几乎没变（差异 ${fpDist} < ${delta}），前台窗口也没换`;
   }

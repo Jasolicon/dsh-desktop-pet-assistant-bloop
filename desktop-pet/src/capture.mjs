@@ -11,6 +11,9 @@
  *   · 指纹只算区域内的画面 —— 区域外的变化不该叫醒模型（这是框选的意义之一）
  *   · 截图只留区域内那块，**按原生分辨率裁**（先整屏抓，再原生裁，最后才按需缩小）
  *     和 PowerShell 版一致：那边也是先 StretchBlt 抓再裁，不是"把区域放大/缩小来凑"。
+ * 现在优先走 capture-worker 的常驻桌面流：启动时一次 getUserMedia，之后 drawImage/getImageData。
+ * 没有常驻流（worker 还没起、或区域属于副屏）时，才回退到下文的 desktopCapturer 路径。
+ *
  * 抓多大：**按"裁出来要多宽"反推整屏该抓多宽**，不是先整屏原生抓再裁。
  *   capW = 整屏物理宽 × 目标宽 / 区域物理宽      （夹在 [320, 整屏物理宽] 之间）
  * 这样裁出来的那块正好是目标宽：
@@ -24,6 +27,16 @@ import { fingerprintOf } from './fingerprint.mjs';
 import { cropFor, displayForRegion } from './region.mjs';
 
 export { fingerprintOf, fpDistance } from './fingerprint.mjs';
+
+/**
+ * 由 capture-worker 注入的常驻采样器。
+ * 没有它时回退到 desktopCapturer.getSources（每次 0.5–1.1 秒，见 tools/bench-capture.cjs）。
+ */
+let fastSampler = null;
+
+export function setFastSampler(fn) {
+  fastSampler = typeof fn === 'function' ? fn : null;
+}
 
 /**
  * 抓一次屏：返回指纹 + JPEG（base64）。
@@ -40,6 +53,15 @@ export async function grabScreen({
   native = false,
   jpeg = true,
 } = {}) {
+  // 常驻桌面流优先：一次 getUserMedia，之后每次只做 drawImage + getImageData。
+  if (fastSampler) {
+    try {
+      const fast = await fastSampler({ width, height, quality, region, native, jpeg });
+      if (fast) return { ...fast, fast: true };
+    } catch {
+      // 常驻流坏了就回退，不让观察循环停掉。
+    }
+  }
   const displays = screen.getAllDisplays();
   const disp = region ? displayForRegion(region, displays) : screen.getPrimaryDisplay();
 

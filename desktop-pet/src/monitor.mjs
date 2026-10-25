@@ -20,7 +20,9 @@ import { join } from 'node:path';
 import { powerMonitor } from 'electron';
 import { grabScreen } from './capture.mjs';
 import { worthAutoJudge, GATE_DEFAULTS } from './gate.mjs';
-import { foregroundWindow } from './win.mjs';
+import { fpDistance } from './fingerprint.mjs';
+import { predictObservation } from './predict.mjs';
+import { foregroundWindow, isOwnWindow } from './win.mjs';
 import { logsDir, runDir } from './dirs.mjs';
 import { observeFile, pruneObserve } from './memory.mjs';
 import { readSamples, taskProfile } from './profile.mjs';
@@ -39,7 +41,10 @@ const TIMELINE_SIZE = 40;
  *        （子 agent 观察就是从这里塞 `agents` 进去的 —— 否则主 agent 会把
  *         "屏幕很久没动"误读成"用户卡住了"，而真相是用户派了活出去正在跑）
  */
-export function createMonitor({ config = {}, live = null, onDecision, onState, logger = console, context = null, claimJudge = null } = {}) {
+export function createMonitor({
+  config = {}, live = null, onDecision, onState, logger = console,
+  context = null, claimJudge = null, isVisible = () => true,
+} = {}) {
   /**
    * 配置要**每次读**，不能启动时抄一份。
    * 为什么：设置窗口写回时主进程是"整份替换" cfg 对象（`cfg = { ...cfg, x }`），
@@ -53,17 +58,31 @@ export function createMonitor({ config = {}, live = null, onDecision, onState, l
     silentBackoffMax: C().silentBackoffMax ?? GATE_DEFAULTS.silentBackoffMax,
     judgeIdleSkipSeconds: C().judgeIdleSkipSeconds ?? GATE_DEFAULTS.judgeIdleSkipSeconds,
     judgeMaxGapSeconds: C().judgeMaxGapSeconds ?? GATE_DEFAULTS.judgeMaxGapSeconds,
+    fastJudgeSeconds: C().fastJudgeSeconds ?? GATE_DEFAULTS.fastJudgeSeconds,
+    fastFpDelta: C().fastFpDelta ?? GATE_DEFAULTS.fastFpDelta,
   });
-  const sampleSecondsNow = () => {
-    const v = Number(C().sampleSeconds);
+  const baseSampleSeconds = () => {
+    const v = Number(st.profile?.sampleSeconds ?? C().sampleSeconds);
     return v > 0 ? v : 2;
+  };
+  const sampleSecondsNow = () => {
+    const base = baseSampleSeconds();
+    const fast = Number(C().fastSampleSeconds);
+    let idle = 0;
+    try { idle = powerMonitor.getSystemIdleTime(); } catch { /* 读不到就按常规节奏 */ }
+    return fast > 0 && idle < 10 ? Math.min(base, Math.max(0.3, fast)) : base;
   };
 
   const st = {
     running: false,
     timer: null,
+    ticking: false,
     standby: false,
     lastFp: '',
+    fpDelta: 0,
+    recentDeltas: [],
+    lastCaptureMs: null,
+    lastCaptureFast: false,
     lastJudgedFp: '',
     currentKey: '',
     lastJudgedKey: '',
@@ -82,6 +101,7 @@ export function createMonitor({ config = {}, live = null, onDecision, onState, l
     region: config.region || null,
     // 当前任务档（由 taskRules + 学习表算出来）：决定"多久看一眼"和提示词里的 hint
     profile: null,
+    lastExternalWin: null,
   };
 
   function touchWindow(key, now) {
@@ -131,8 +151,8 @@ export function createMonitor({ config = {}, live = null, onDecision, onState, l
     const changed = !st.profile || st.profile.sampleSeconds !== prof.sampleSeconds || st.profile.name !== prof.name;
     st.profile = prof;
     if (!changed) return;
-    logger.log?.(`[pet] 任务档：${prof.name}（每 ${prof.sampleSeconds}s 采样，判断间隔 ${prof.judgeMinSeconds}s）`);
-    if (st.running) restartTimer(prof.sampleSeconds * 1000);
+    logger.log?.(`[pet] 任务档：${prof.name}（每 ${sampleSecondsNow()}s 采样，判断间隔 ${prof.judgeMinSeconds}s）`);
+    if (st.running) restartTimer(sampleSecondsNow() * 1000);
   }
 
   /** 重建采样定时器（只在周期真的变了的时候调，见 syncProfile）。 */
@@ -155,6 +175,8 @@ export function createMonitor({ config = {}, live = null, onDecision, onState, l
         stillSeconds: Math.round((now - st.stillSince) / 1000),
         fingerprint: st.lastFp,
         region: st.region ? `${st.region.w}×${st.region.h}` : '整屏',
+        sampleMs: st.lastCaptureMs,
+        fastCapture: st.lastCaptureFast,
       },
       shots: st.shots.map((s) => s.path),
       shotTimes: st.shots.map((s) => s.at),
@@ -179,13 +201,29 @@ export function createMonitor({ config = {}, live = null, onDecision, onState, l
   }
 
   async function tick() {
-    if (st.busy || !st.running) return;
+    // ⚠️ 抓屏本身也占时间：不能只看 st.busy（那只是模型调用）。
+    // 2 秒定时器在慢抓屏下会重入，多个 desktopCapturer.getSources 互相拖慢。
+    if (st.ticking || !st.running) return;
+    st.ticking = true;
     const now = Date.now();
     try {
+      // 桌宠隐藏/最小化时不采屏、不叫模型；时间提醒由 rhythm-runtime 独立处理。
+      if (!isVisible()) {
+        onState?.(snapshot());
+        return;
+      }
       // 待机期间：除了自愈探测什么都不做（不抓屏、不判断、不打扰）
       if (st.standby) { await probeStandby(now); return; }
       // 1) 前台窗口（进程名 + 标题）
-      const win = foregroundWindow();
+      const rawWin = foregroundWindow();
+      // 自己的透明窗口/气泡不应该成为“用户工作窗口”。保留最近一次外部窗口，
+      // 但当前确实回到自己的窗口时不做自动判断；否则会自激。
+      if (!isOwnWindow(rawWin)) st.lastExternalWin = rawWin;
+      const win = isOwnWindow(rawWin) ? (st.lastExternalWin || rawWin) : rawWin;
+      if (isOwnWindow(rawWin) && !st.lastExternalWin) {
+        onState?.(snapshot());
+        return;
+      }
       const switched = touchWindow(win.key, now);
       const heartbeatMs = (Number(C().observeHeartbeatSeconds) > 0 ? Number(C().observeHeartbeatSeconds) : 120) * 1000;
       if (switched || now - (st.lastObserveAt || 0) >= heartbeatMs) appendObserve(now, win.key);
@@ -198,6 +236,13 @@ export function createMonitor({ config = {}, live = null, onDecision, onState, l
       const shot = await grabScreen({ width: 160, height: 90, region: st.region, jpeg: false });
       if (shot) {
         st.captureFails = 0;
+        st.lastCaptureMs = Number.isFinite(Number(shot.sampleMs)) ? Number(shot.sampleMs) : null;
+        st.lastCaptureFast = !!shot.fast;
+        const previousFp = st.lastFp;
+        const delta = previousFp ? fpDistance(previousFp, shot.fingerprint) : 0;
+        st.fpDelta = Number.isFinite(delta) ? delta : 0;
+        st.recentDeltas.push({ at: now, delta: st.fpDelta });
+        while (st.recentDeltas.length > 20) st.recentDeltas.shift();
         if (shot.fingerprint !== st.lastFp) {
           st.lastFp = shot.fingerprint;
           st.stillSince = now;
@@ -216,6 +261,22 @@ export function createMonitor({ config = {}, live = null, onDecision, onState, l
       // 系统空闲时间用 Electron 的 powerMonitor（= Win32 GetLastInputInfo），
       // 注意别用 process.uptime() —— 那是本进程跑了多久，跟用户有没有动键鼠无关。
       const idleSeconds = Math.round(powerMonitor.getSystemIdleTime());
+      // 用户刚动键鼠 → 使用更快的活跃采样；停手后自动回落。
+      if (st.running) restartTimer(sampleSecondsNow() * 1000);
+      const extra = context?.() || {};
+      const prediction = predictObservation({
+        now,
+        currentKey: st.currentKey,
+        windowChanged: switched,
+        windowSeconds: (now - st.windowSince) / 1000,
+        stillSeconds: (now - st.stillSince) / 1000,
+        fpDelta: st.fpDelta,
+        recentDeltas: st.recentDeltas,
+        idleSeconds,
+        hasAgents: Array.isArray(extra.agents) && extra.agents.length > 0,
+        config: Number(C().fastFpDelta) > 0 ? { burstDelta: Number(C().fastFpDelta) } : {},
+      });
+      st.lastPrediction = prediction;
       const why = worthAutoJudge({
         standby: st.standby,
         lastFp: st.lastFp,
@@ -226,6 +287,7 @@ export function createMonitor({ config = {}, live = null, onDecision, onState, l
         lastJudgedAt: st.lastJudgedAt,
         silentStreak: st.silentStreak,
         idleSeconds,
+        prediction,
         // 这一档自己带了 judgeMinSeconds 就用它的（比如游戏档 20 秒、看片档 180 秒）
         config: { ...gateCfgNow(), judgeMinSeconds: st.profile?.judgeMinSeconds ?? gateCfgNow().judgeMinSeconds },
       });
@@ -272,15 +334,23 @@ export function createMonitor({ config = {}, live = null, onDecision, onState, l
           native: true,   // 给模型看的这一张：按原生分辨率裁，别把框选出来的细节缩没了
         });
         if (hi) pushShot(now, hi.jpegBase64);
-        const payload = { ...buildPayload(now, idleSeconds), ...(context?.() || {}) };
+        const payload = { ...buildPayload(now, idleSeconds), ...extra, prediction };
         onState?.(snapshot());
         const result = await onDecision?.(payload);
         if (result === 'silent') {
           st.silentStreak += 1;
           st.silentTotal += 1;
-          record({ at: new Date().toISOString(), kind: 'silent', key: st.currentKey, fpDelta: 0 });
+          record({
+            at: new Date().toISOString(), kind: 'silent', key: st.currentKey,
+            fpDelta: st.fpDelta, prediction: prediction.mode, confidence: prediction.confidence,
+            fastPath: !!prediction.fastPath,
+          });
         } else if (result) {
-          record({ at: new Date().toISOString(), kind: 'spoke', text: String(result).slice(0, 200), key: st.currentKey });
+          record({
+            at: new Date().toISOString(), kind: 'spoke', text: String(result).slice(0, 200),
+            key: st.currentKey, fpDelta: st.fpDelta, prediction: prediction.mode,
+            confidence: prediction.confidence, fastPath: !!prediction.fastPath,
+          });
         }
       } finally {
         st.busy = false;
@@ -289,6 +359,8 @@ export function createMonitor({ config = {}, live = null, onDecision, onState, l
       onState?.(snapshot());
     } catch (err) {
       logger.error('[pet] 采样出错', err?.message || err);
+    } finally {
+      st.ticking = false;
     }
   }
 
@@ -333,11 +405,14 @@ export function createMonitor({ config = {}, live = null, onDecision, onState, l
       skipped: st.skipped,
       silentTotal: st.silentTotal,
       stillSeconds: Math.round((Date.now() - st.stillSince) / 1000),
+      fpDelta: st.fpDelta,
+      prediction: st.lastPrediction || null,
       busy: st.busy,
       lastJudgedAt: st.lastJudgedAt,
       shots: st.shots.length,
       region: st.region,
       standby: st.standby,
+      visible: !!isVisible(),
     };
   }
 
@@ -408,7 +483,7 @@ export function createMonitor({ config = {}, live = null, onDecision, onState, l
       if (next === st.standby) return;
       st.standby = next;
       if (next) clearShots();
-      else { st.lastFp = ''; st.lastJudgedFp = ''; st.stillSince = Date.now(); st.windowSince = Date.now(); st.lastJudgedAt = 0; }
+      else { st.lastFp = ''; st.lastJudgedFp = ''; st.recentDeltas = []; st.fpDelta = 0; st.lastPrediction = null; st.stillSince = Date.now(); st.windowSince = Date.now(); st.lastJudgedAt = 0; }
       logger.log?.(next ? '[pet] 进入待机（不采样、不判断）' : '[pet] 退出待机（重新看一眼）');
       onState?.(snapshot());
     },
@@ -417,6 +492,9 @@ export function createMonitor({ config = {}, live = null, onDecision, onState, l
       st.region = region || null;
       st.lastFp = '';
       st.lastJudgedFp = '';
+      st.recentDeltas = [];
+      st.fpDelta = 0;
+      st.lastPrediction = null;
       st.stillSince = Date.now();
       st.lastJudgedAt = 0;
       clearShots();
@@ -429,6 +507,9 @@ export function createMonitor({ config = {}, live = null, onDecision, onState, l
       clearShots();
       st.lastFp = '';
       st.lastJudgedFp = '';
+      st.recentDeltas = [];
+      st.fpDelta = 0;
+      st.lastPrediction = null;
       st.stillSince = Date.now();
       st.lastJudgedAt = 0;
       st.lastJudgedFp = '';

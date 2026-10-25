@@ -9,4 +9,8 @@ contextBridge.exposeInMainWorld('settings', {
   clearRegion: () => ipcRenderer.invoke('settings:clearRegion'),
   // DeepSeek key 写的是 run\deepseek.key 文件（不是 config.json）
   setKey: (value) => ipcRenderer.invoke('settings:setKey', value),
+  previewAction: (idOrFile) => ipcRenderer.invoke('settings:previewAction', idOrFile),
+  rhythmLog: (limit) => ipcRenderer.invoke('settings:rhythmLog', limit),
+  openRhythmLog: () => ipcRenderer.invoke('settings:openRhythmLog'),
+  refreshActions: () => ipcRenderer.invoke('settings:refreshActions'),
 });

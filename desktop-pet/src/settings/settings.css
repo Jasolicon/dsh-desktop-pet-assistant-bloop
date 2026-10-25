@@ -62,6 +62,9 @@ section.group > h2 {
 
 .row:first-of-type { border-top: 0; }
 
+/* 表格/日志这类整行控件：标签放上面，表格吃满宽度（否则素材文件名会被压成两个字） */
+.row.wide { grid-template-columns: 1fr; }
+
 .row .label { font-weight: 600; }
 .row .label .live {
   font-weight: 400;
@@ -105,6 +108,70 @@ section.group > h2 {
 .row .mic select { flex: 1; min-width: 200px; }
 .row .micHint { color: var(--dim); font-size: 11.5px; width: 100%; }
 .row .key { color: #98a2b3; font-size: 11px; font-family: ui-monospace, Consolas, monospace; }
+
+/* 动作/时段/饭点/节日/提醒的表格编辑器 */
+.row .tableEditor { min-width: 0; }
+.row .tableWrap {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+.row table {
+  border-collapse: collapse;
+  width: 100%;
+  min-width: 700px;
+  font-size: 11.5px;
+}
+.row th, .row td {
+  padding: 4px 5px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+.row thead th {
+  background: #f2f5fa;
+  color: var(--dim);
+  font-weight: 600;
+}
+.row tbody tr:last-child td { border-bottom: 0; }
+.row td input[type="text"],
+.row td input[type="number"],
+.row td input[type="time"],
+.row td select {
+  width: 100%;
+  min-width: 54px;
+  padding: 3px 5px;
+  font-size: 11.5px;
+}
+.row td input[type="checkbox"] { width: 15px; height: 15px; }
+.row td select[data-col="file"] { min-width: 150px; }
+.row td select[data-col="text"] { min-width: 150px; }
+.row td input[data-col="text"] { min-width: 150px; }
+.row .rowActions { display: flex; gap: 4px; }
+.row .rowActions button {
+  padding: 2px 6px;
+  font-size: 11px;
+  border-radius: 5px;
+}
+.row .rowActions button.danger { color: #b42318; }
+.row .tableEditor > button { margin-top: 6px; padding: 4px 10px; font-size: 11.5px; }
+.row .rhythmLog { width: 100%; }
+.row .rhythmLogText {
+  max-height: 160px;
+  overflow: auto;
+  margin: 0;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--dim);
+  font: 11px/1.5 ui-monospace, Consolas, monospace;
+  white-space: pre-wrap;
+}
+.row .rhythmLogButtons { display: flex; gap: 6px; margin-top: 5px; }
+.row .rhythmLogButtons button { padding: 3px 9px; font-size: 11.5px; }
 
 footer {
   border-top: 1px solid var(--line);

@@ -70,6 +70,32 @@ test('窗口换了：即使画面没变也值得问', () => {
   assert.equal(worthAutoJudge(base({ currentKey: 'C|D', lastJudgedAt: T0 - 120_000 })), '');
 });
 
+test('窗口刚换：快速通道不用等满常规判断间隔', () => {
+  const r = worthAutoJudge(base({
+    currentKey: 'C|D',
+    lastJudgedAt: T0 - 4_000,
+    prediction: { fastPath: true, mode: 'context_switch' },
+    config: { fastJudgeSeconds: 3 },
+  }));
+  assert.equal(r, '');
+});
+
+test('画面突变：快速通道只在超过 fastFpDelta 时放行', () => {
+  const slow = worthAutoJudge(base({
+    lastFp: '0'.repeat(40) + '?'.repeat(24),
+    lastJudgedAt: T0 - 4_000,
+    config: { fastJudgeSeconds: 3, fastFpDelta: 24 },
+  }));
+  assert.match(slow, /间隔不够|距上次判断/);
+  const fast = worthAutoJudge(base({
+    lastFp: FP_MAX,
+    lastJudgedAt: T0 - 4_000,
+    prediction: { fastPath: true, mode: 'screen_burst' },
+    config: { fastJudgeSeconds: 3, fastFpDelta: 24 },
+  }));
+  assert.equal(fast, '');
+});
+
 test('从没判断过：值得问', () => {
   assert.equal(worthAutoJudge(base({ lastJudgedAt: 0 })), '');
 });
@@ -86,6 +112,8 @@ test('默认阈值与 PowerShell 版一致', () => {
     silentBackoffMax: 4,
     judgeIdleSkipSeconds: 600,
     judgeMaxGapSeconds: 300,
+    fastJudgeSeconds: 5,
+    fastFpDelta: 24,
   });
 });
 

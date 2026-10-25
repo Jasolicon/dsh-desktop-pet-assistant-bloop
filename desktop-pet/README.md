@@ -17,6 +17,16 @@ npm install          # 会下载 Electron（约 100–200MB，只此一次）
 npm start
 ```
 
+### 桌面快捷方式与图标
+
+`npm run icon` 会从 `assets/pet.png` 生成多尺寸 `assets/deepseek.ico`。桌面快捷方式应指向当前 JS 源码：
+
+```text
+node_modules\electron\dist\electron.exe --no-sandbox .
+```
+
+工作目录设为 `desktop-pet`，图标设为 `assets\deepseek.ico,0`。这样启动的是 Electron/JS 版，不是旧的 `desktop-guide\DesktopGuide.ps1`。
+
 > **国内网络**下从 GitHub 下 Electron 二进制会卡住（实测十几分钟不动）。用镜像：
 > ```powershell
 > $env:ELECTRON_MIRROR = 'https://npmmirror.com/mirrors/electron/'
@@ -548,6 +558,54 @@ work   request/header 19918 字符      ← 24 个工具的 schema 全在
 - **手动要它说话仍然有效**（点它 / Ctrl+Alt+T 打字 / 语音），因为那是你主动要的，不是它多事。
 - **DSH 的问答题仍然会弹**（`pet-responder` 那条线）—— 那是 agent 在等你回话，
   把它一起静音会让你以为 agent 卡住了。真要它彻底别出现，直接退出。
+
+## 生活节奏与动作（新增）
+
+桌宠现在有两套时钟，别混在一起：
+
+- **判断闸门**（`monitor`）决定"要不要叫模型、要不要开口"；
+- **生活节奏**（`src/rhythm.mjs` + `src/rhythm-runtime.mjs`）只读本地钟表，决定"现在是什么时段、是不是饭点/节日、该做什么小动作、到点该提醒什么"。
+
+生活节奏**不调用模型、不截图**。它的所有规则都在「设置 → 生活节奏与动作」里：
+
+| 设置 | 作用 |
+|---|---|
+| 时间段 | 清晨/上午/午间/下午/晚上/深夜，支持跨午夜（23:00–05:00）；可指定进入该时段时播放的动作 |
+| 饭点 | 早餐/午餐/晚餐窗口；进入时优先播放指定动作 |
+| 节日 | 公历 + 农历（Intl 中文历法），支持前后 N 天氛围窗口；可指定节日动作 |
+| 时间提醒 | `daily` / `weekdays` / `weekends` / `1,3,5`；支持提前提醒、到点气泡/朗读、系统通知兜底；错过只补最近一次 |
+| 动作规则 | 触发方式（idle/event/click/drag/thinking/speaking/greeting）、素材、权重、冷却；可试播 |
+| 动作素材 | 默认 `assets/actions/`，按 idle/click/drag/thinking/speaking/greeting/event/meal/holiday 分类；新增素材点“刷新素材”即可 |
+
+日志写到 `logs/rhythm.jsonl`（时段/饭点/节日/动作/提醒/错过提醒），设置页底部能直接看最近 60 条并打开完整文件。
+动作层用 Chromium 原生播放透明 WebM；没有素材或播放失败时自动退回静态角色图，不会把桌宠变成透明窗口。
+桌宠隐藏或最小化时暂停视频解码、CSS 动画和动作定时器，恢复显示后回到待机动作。
+
+## 快速观察与本地预测
+
+`src/capture-worker.mjs` 启动一个隐藏窗口，用一次 `getUserMedia` 建立常驻桌面流；之后 `src/capture.mjs` 的采样走 canvas `drawImage` + `getImageData`，不再每拍调用一次 `desktopCapturer.getSources`。本机实测：
+
+- 原来的小图 `getSources`：约 0.5–1.1 秒/次。
+- 常驻流的 160×90 指纹：约 20–55 毫秒/次。
+- 常驻流的 1024×576 JPEG：约 40–65 毫秒/次。
+
+`src/predict.mjs` 从窗口切换、画面突变、持续小幅编辑、静止时长、键鼠闲置和后台 agent 状态生成一个**可解释的预测先验**，例如：
+
+```json
+{"mode":"context_switch","confidence":0.85,"fastPath":true,"expected":"用户刚切换了工作窗口"}
+```
+
+预测会进入判断提示词，但明确标注“不是事实”；模型仍以当前截图核验。窗口切换/明显突变可以在 5 秒后走快速通道，不再等满常规 60 秒。`tick()` 现在从抓屏开始就持有重入锁，避免慢采样重叠。
+
+泡泡自己的窗口和气泡不参与“用户前台窗口”判断；否则气泡出现会改变画面，形成自激循环。
+
+### 为什么没有直接装 DSH 的 `schedule` 插件
+
+DSH 插件商城确实有官方 `@deepseek-ai/dsh-experimental-schedule-bundle`（依赖 `@deepseek-ai/dsh-schedule`），
+支持 daily / weekly / cron、重启恢复和错过补发。但它是**会话级投递**：到期后往原会话塞一条 user 消息，
+需要 Host/Web 的 Session controller；官方 README 明确写着不能在 headless / SDK 组合里单独挂载。
+泡泡的大脑走 `headless`，所以它不能拿来当桌宠的本地动作时钟。这里保留了它好用的语义（本地钟表、
+只补最近一次、发送记录），但实现放在桌宠自己的 `rhythm` 模块里 —— 不新增一个必须依赖 DSH 才能动的环节。
 
 ## 状态与沉默
 

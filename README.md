@@ -1,357 +1,359 @@
 <div align="center">
   <a href="https://github.com/Jasolicon/dsh-desktop-pet-assistant-bloop" target="_blank">
-    <img src="docs/images/pet.png" alt="泡泡 · Bloop" width="460">
+    <img src="docs/images/pet.png" alt="泡泡 · Bloop" width="420">
   </a>
-  <h1>
-    <a href="https://github.com/Jasolicon/dsh-desktop-pet-assistant-bloop" target="_blank">泡泡 · Bloop</a>
-  </h1>
+  <h1>泡泡 · Bloop</h1>
+  <p>基于 DeepSeek Harness 的 Windows 桌面常驻助手</p>
 </div>
-
-<p align="center">🐳 PowerShell 7 × WinForms × DeepSeek Harness —— 一只自己看屏幕的桌面鲸鱼：值得说才开口，不值得就闭嘴。</p>
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-1fa669?style=flat" alt="License"></a>
-  <a href="https://github.com/Jasolicon/dsh-desktop-pet-assistant-bloop"><img src="https://img.shields.io/badge/platform-Windows-0078D6?style=flat&logo=windows&logoColor=white" alt="Platform"></a>
-  <a href="https://github.com/Jasolicon/dsh-desktop-pet-assistant-bloop"><img src="https://img.shields.io/badge/PowerShell-7-5391FE?style=flat&logo=powershell&logoColor=white" alt="PowerShell"></a>
-  <a href="https://github.com/Jasolicon/dsh-desktop-pet-assistant-bloop"><img src="https://img.shields.io/badge/host-DeepSeek%20Harness-4D6BFE?style=flat" alt="Host"></a>
+  <img src="https://img.shields.io/badge/platform-Windows-0078D6?style=flat&logo=windows&logoColor=white" alt="Platform">
+  <img src="https://img.shields.io/badge/Electron-28-47848F?style=flat&logo=electron&logoColor=white" alt="Electron">
+  <img src="https://img.shields.io/badge/host-DeepSeek%20Harness-4D6BFE?style=flat" alt="DeepSeek Harness">
 </p>
 
 > [!TIP]
-> 它大多数时候**什么都不说** —— 沉默也是一次判断的结果，每一条"没说"连同理由都记在本机日志里。
-> 想看它话痨一点：右键 →「设置 → 说话风格 → 损友（先吐槽再给建议）」。
+> 泡泡大多数时候什么都不说。沉默和开口一样，都是本地判断的结果；每次判断、每条沉默理由、每次任务执行都会留在本机日志里。
 
-## 💡 这是什么
+## 目录
 
-Windows 桌面宠物，也是一个**主动式**助手：不需要提问，也不需要用户先意识到自己卡住了。
-它在后台按任务节奏采样屏幕（每次采样都带一张截图），先由本地代码判断"值不值得打扰"，
-再由模型决定"说什么"。
+- [这是什么](#这是什么)
+- [它如何调用 DSH](#它如何调用-dsh)
+- [功能](#功能)
+- [快速开始](#快速开始)
+- [设置](#设置)
+- [安装包与发布](#安装包与发布)
+- [Agent 事件协议](#agent-事件协议)
+- [隐私与安全](#隐私与安全)
+- [开发与测试](#开发与测试)
+- [项目结构](#项目结构)
+- [已知限制](#已知限制)
+- [许可与致谢](#许可与致谢)
 
-用 AI 的人都会遇到同一个矛盾：**要它帮忙，得先知道自己卡住了，还要有余力开口。**
-做菜、修理、开会、赶表格的时候，这两个前提常常同时不成立 —— 手被占着，注意力也被占着，
-于是既想不到要问，也腾不出手去问。
+## 这是什么
 
-| 常见的失效 | 它的做法 |
-| --- | --- |
-| 来不及问（双手被占 / 正在通话） | 自己看，不需要用户开口 |
-| 不知道自己卡住了（同一处试到第三遍） | 看着操作，试到第三次说一句 |
-| 每次都要重述背景 | 保留当天的观察与判断记录，不必重新交代 |
+泡泡是一个把 DeepSeek Harness（DSH）的 agent 能力带到桌面上的 Windows 助手。
 
-它一次只说一句。**沉默不是"没有输出"，而是一次判断的结果** ——
-这是它和"随叫随到"的助手的根本区别。
+它同时承担两件事：
 
-下面两类例子都取自它自己的判断日志。
+- **桌面陪伴**：透明置顶的小鲸鱼，会待机、点击回应、拖拽、吃饭、过节、在深夜打哈欠，也会在合适的时候说一句。
+- **主动协助**：在后台按任务节奏观察屏幕；需要用户注意时提醒，需要做事时把任务交给 DSH agent 执行。
 
-**它说过的：**
+它不要求用户先打开聊天窗口，也不要求用户先意识到自己卡住了。做菜、修理、开会、赶表格时，用户的手和注意力都可能被占着；泡泡在后台看，值得说才开口，不值得就保持安静。
 
-> 「两个桌宠叠一起时按钮会互相抢点击 —— 确认旧实例真的退出了没有。」
->
-> 「鼠标悬停时倒计时要暂停，否则正要点击的瞬间按钮就消失了。」
->
-> 「同一个循环整理第三遍了，上面的判断可以合并。」
+## 它如何调用 DSH
 
-**它选择沉默的（理由同样记录在案）：**
+DSH 是泡泡的大脑。泡泡本身负责桌面窗口、屏幕采样、本地闸门、气泡、语音和交互；判断、对话、工具调用、权限审批和子 agent 由 DSH 负责。
 
-> *「任务正在正常跑、用户在等它 —— 这属于正常等待，没有可证明的错误。」*
->
-> *「用户只是在阅读文档。」*
->
-> *「屏幕上没什么异常，也说不准在发生什么。」*
-
-## 📥 下载
-
-本项目不发布二进制安装包 —— 它就是一个 PowerShell 脚本，**拉下来就能跑**（不需要 Docker，也不需要单独申请模型 key）。
-
-```powershell
-git clone https://github.com/Jasolicon/dsh-desktop-pet-assistant-bloop.git
-cd dsh-desktop-pet-assistant-bloop
-pwsh -NoProfile -ExecutionPolicy Bypass -File .\desktop-guide\DesktopGuide.ps1
+```text
+Desktop pet (Electron)
+  │
+  ├─ judge session ── stdio JSON-RPC ──> dsh --profile sdk
+  │     只读、工具精简，负责“要不要说”
+  │
+  ├─ work session  ── stdio JSON-RPC ──> dsh --profile sdk
+  │     有工具与权限，负责“去做”
+  │
+  ├─ chat window   ── local web ───────> dsh --profile web
+  │     Markdown / 工具卡片 / 会话侧栏
+  │
+  └─ approval & question bridge ───────> pet-responder
+        气泡上的允许 / 拒绝 / 选项，写回 DSH
 ```
 
-## 🛠️ 安装
+### 常驻会话
 
-### 📋 环境要求
+`src/dsh-session.mjs` 通过 `dsh --profile sdk` 起一条常驻的 stdio JSON-RPC 会话。一次初始化之后，每轮判断或派活不需要重新启动 DSH。
+
+两条会话分工明确：
+
+| 会话 | 用途 | 权限与工具 |
+| --- | --- | --- |
+| `judge` | 看屏幕、判断“现在值不值得开口” | 只读；按行关闭用不到的工具，降低每轮 token 与延迟 |
+| `work` | 执行用户派出的任务、读取文件、调用工具 | 工作 agent 的权限档；可开子 agent |
+
+模型和权限通过 `agents.json` 与 `--patch` 注入。默认使用本机 DSH 已登录的 `deepseek-account` 路由，不需要另配 API key；也可以在设置里切换模型或权限档。
+
+### 一次性回退
+
+常驻会话起不来、或某条会话被服务端拒绝时，`src/brain.mjs` 会退回 `dsh --profile headless --json` 的一次性调用。速度慢一些，但不会因为一条会话坏掉就整个哑掉。
+
+### 对话窗口
+
+`src/webui.mjs` 启动 `dsh --profile web --port <端口> --no-open`，用 DSH 自己的 Web 界面承载 Markdown、工具卡片、流式输出和会话侧栏。泡泡只负责窗口和生命周期，不重画聊天界面。
+
+### 审批与提问
+
+`desktop-guide/pet-responder` 是 DSH 侧的小插件：它监听审批与提问的 waterfall，把请求写成 `run/ask` 下的文件；泡泡的气泡显示“允许 / 拒绝 / 稍后”或模型给出的选项，用户点选后再写回应答文件。
+
+### 子 agent 与记忆
+
+- 子 agent：`src/subagents.mjs` 从工作会话的事件流里识别 `agent-start` / `agent-end`，在气泡里显示后台子任务进度。
+- 记忆：`src/memory.mjs` 把观察日志压成一段活动汇总，接进判断提示词；压缩不调用模型。
+- 账本：`src/ledger.mjs` 记录余额、充值、每次调用花费和每日消费上限；到线自动暂停自动观察。
+
+## 功能
+
+### 主动观察
+
+后台按任务档采样屏幕。每次采样先算一张 160×90 的指纹；本地闸门根据画面变化、前台窗口、距上次判断的时间、用户闲置和待机状态决定要不要起一次模型调用。
+
+放行之后，截图会随消息内联给模型，模型只输出一句值得说的话；没有值得说的就输出 `SILENT`。判断记录和沉默理由写入 `logs/`，可以在“看它判过什么”里查看。
+
+任务档可以按进程名或窗口标题匹配，例如卡牌游戏提高采样率、视频播放降低打扰频率。监控区域支持只截取屏幕的一部分。
+
+观察链路现在分两段：
+
+- **常驻桌面流**：启动时建立一次 `getUserMedia` 屏幕流，之后每次采样只做 `drawImage` + `getImageData`；本机实测小图采样从约 0.5–1.1 秒降到 20–55 毫秒，按需高清 JPEG 约 40–65 毫秒。
+- **本地预测**：根据窗口切换、画面突发变化、持续小幅编辑、长时间静止和后台 Agent 状态，生成 `context_switch` / `screen_burst` / `steady_edit` / `still_or_stuck` / `agent_working` 等先验。窗口切换和明显突变走快速通道，不再等满常规 60 秒；预测会写进判断提示词，但明确标注“不是事实”，由当前截图核验。
+- **自适应节奏**：用户刚有键鼠输入时默认 1 秒采样，停手后回到 2 秒；采样器本身已由常驻流降到毫秒级。
+- **排除自体反馈**：泡泡自己的透明窗口和气泡不会被当成“用户前台窗口”，避免“气泡出现 → 画面变化 → 再判断 → 再冒泡”的自激循环。
+
+### 任务执行
+
+- 长按桌宠说话，松开后由 SenseVoice 在本机离线识别，再交给 DSH 工作 agent。
+- `Ctrl+Alt+T` 或底部按钮打开“打字派活”。
+- 把文件或图片拖到桌宠身上，按 DSH 原生文件引用交给 agent。
+
+任务完成后，泡泡把最后一行结论显示在气泡里并朗读；失败也会如实回报。每次派活默认新建一条 agent 会话，也可以在“子 agent 管理”里选择持续复用同一条会话。
+
+### 对话
+
+右键“对话”打开 DSH 的 Web 界面。支持 Markdown、代码块、工具卡片、流式输出、会话侧栏和审批。
+
+### 语音
+
+- 语音输入：SenseVoice + sherpa-onnx，本机离线识别；首次使用时按需下载约 229MB 模型。
+- 语音输出：默认走微软 Edge 神经音色；断网时可以切换到本机系统音色。
+- 朗读支持队列、去重、丢弃最旧和打断；单击正在朗读的桌宠即可让它闭嘴。
+
+### 生活节奏与动作
+
+生活节奏是本地时钟层，不调用模型、不截图。它负责：
+
+- 时间段：清晨、上午、午间、下午、晚上、深夜，支持跨午夜。
+- 饭点：早餐、午餐、晚餐；进入饭点时优先播放对应动作。
+- 节日：公历与农历节日，支持节日前后的气氛窗口。
+- 动作：待机、点击、拖拽、思考、说话、开场、自动事件；每条规则可配置素材、权重与冷却。
+- 提醒：每天、工作日、周末或指定星期；支持提前提醒、到点提醒、宽限补发和系统通知。
+- 日志：时段、饭点、节日、动作、提醒和错过提醒写入 `logs/rhythm.jsonl`。
+
+动作素材默认放在 `desktop-pet/assets/actions/`，按 `idle`、`click`、`drag`、`thinking`、`speaking`、`greeting`、`event`、`meal`、`holiday` 分类。新增素材后在设置表格里点“刷新素材”即可，不需要重启桌宠。
+
+### 判断记录与账本
+
+“看它判过什么”会显示判断次数、说了几次、沉默几次和每次沉默的理由。账本显示余额、上次调用花费、今天花费和每日上限；到上限后自动暂停自动观察。
+
+## 快速开始
+
+### 环境要求
 
 | 需要 | 说明 |
 | --- | --- |
-| **PowerShell 7（必须）** | 不能用系统自带的 5.1 —— 它跑的是 .NET Framework，`Add-Type` 的引用解析方式完全不同，脚本开头的版本守卫会直接拒绝并提示升级。一条命令装好：`winget install Microsoft.PowerShell`（用户级，不用管理员） |
-| **DeepSeek Harness** | 桌宠把它当作"大脑"（用 DSH 里已登录的账号，无需另配 key） |
-| 语音输入（可选） | 首次使用按需下载 SenseVoice 模型，约 229MB；识别全程在本机离线完成 |
-| 语音朗读（可选） | 默认走微软 Edge 神经音色（需要联网）；断网时可在设置里切到本机音色 |
+| Windows 10/11 x64 | 当前桌面实现只支持 Windows |
+| Node.js 18+ | 运行 Electron 与构建脚本 |
+| DeepSeek Harness | 必须安装并登录；泡泡默认复用 DSH 的账号路由 |
+| PowerShell 7（可选） | 只有运行 `desktop-guide/` 参考实现或旧版自检时需要 |
 
-角色图随仓库自带（`desktop-guide/assets/pet.png`），不需要安装其它插件；想换成自己的图，覆盖该文件即可。
+语音输入和朗读是可选能力；不装模型时，文字气泡和任务执行仍然可用。
 
-### 🔧 启动
-
-三条路，任选一条：
-
-1. 上面那条 `pwsh -File ...\DesktopGuide.ps1`；
-2. 双击 `desktop-guide\start.cmd`（保持那个窗口开着，关掉它就停）；
-3. 跑一次 `desktop-guide\make-launcher.ps1`：它会在桌面和仓库目录各生成一个「泡泡桌宠.lnk」
-   （图标用角色图现生成），以后双击那个。
-
-开机启动：右键 →「设置 → 开机启动（跟 Windows 一起起）」（写 HKCU 的 Run 项，不需要管理员）。
-
-> [!IMPORTANT]
-> 同时只会有一个桌宠。启动脚本自己会拦重复实例，而且是**跨形态互斥** ——
-> 已经独立运行时又去开插件外壳，后起的那个会直接退出。
-
-### 🧪 自检
+### 运行
 
 ```powershell
-pwsh -NoProfile -ExecutionPolicy Bypass -File .\desktop-guide\DesktopGuide.ps1 -SelfTest
+git clone https://github.com/Jasolicon/dsh-desktop-pet-assistant-bloop.git
+cd dsh-desktop-pet-assistant-bloop\desktop-pet
+npm install
+npm start
 ```
 
-它会现编译 C# 再跑几十项断言：界面排版、判断闸门、监控区域、账本、权限审批、托盘、子 agent 窗口……
-预览图写进 `desktop-guide\run\`。改过代码之后先跑它，比"重启看看"快得多。
+也可以双击 `desktop-pet\start.cmd`。首次启动会探测 DSH 安装位置，并把结果写回 `config.json`。
 
-### ⚙️ 配置
+### 自检
 
-所有可调项都在 `desktop-guide\config.json`；右键 →「设置 → 所有设置…（一个窗口改完）」是同一个文件的可视化版本，
-改完立刻生效。先看几个常用的：
-
-| 配置项 | 默认 | 说明 |
-| --- | --- | --- |
-| `speakStyle` | `roast` | 说话风格：`guard` 保守（只在明显问题时说）/ `coach` 陪练（每次都建议）/ `roast` 损友（画面没变也陪着说两句，出厂默认）/ `scout` 找事（主动提一件它真能替你做的事，气泡上给「做 / 先不用」） |
-| `roastMinSeconds` | `30` | 损友模式的最短间隔，同时也是它的检查节拍 |
-| `dailySpendCapYuan` | `50` | 每日消费上限，到线自动暂停；`0` = 不设上限 |
-| `autoMinutes` | `1` | 非损友模式下"自动看一眼"的节奏 |
-| `judgeMinSeconds` / `judgeMinFpDelta` | `60` / `12` | 本地闸门：两次判断的最小间隔、画面指纹差异阈值 |
-| `taskRules` | 见文件 | 任务档：按进程名 / 窗口标题匹配，决定"多久看一眼"和"这类任务该怎么帮" |
-| `ttsEnabled` / `ttsEngine` | `true` / `auto` | 朗读开关与引擎（`edge` 神经音色 / `speech` 本机音色） |
-| `sttEnabled` | `true` | 语音输入开关 |
-| `chatUi` | `dsh` | 「对话」打开什么：`dsh` = DSH 自带 Web 界面；`bubbles` = 自绘气泡（兜底） |
-| `webModel` | 空 | 「对话」窗口用哪个模型（填 `agents.json` 里的 `name`；留空 = 第一个） |
-
-## 🎯 它能做什么
-
-### 🫧 主动提示：不开口也会说
-
-后台按任务档采样屏幕，**"值不值得问"由本地判据决定**（画面指纹是否变化、前台窗口是否切换、
-距上次判断多久、用户是否闲置、是否处于待机）；放行之后才起一次模型调用，结果用气泡显示并朗读。
-
-![主动提示](docs/images/ui-suggestion.png)
-
-限制：一次只说一句；判断质量取决于它对"什么算异常"的理解，提示词是主要调节点。
-另外，**没有截图的轮次它不会硬答**：截图缓冲为空、或最新一张超过 30 秒，提示词会禁止它依据窗口标题
-推断画面、禁止给出具体操作步骤 —— 只能说"现在看不到画面"。
-
-### 💬 对话
-
-右键「对话」打开 DSH 自带的 Web 界面（Edge `--app=` 无地址栏模式）：Markdown、工具卡片、流式输出、
-会话侧栏都由 DSH 渲染，不是自绘的聊天框。
-
-限制：打开的就是桌宠主 agent 的会话；同一会话同时只允许一个写入者，若在别处也打开了同一会话，
-下一轮会自动判断会撞上"主会话被别处占着"，气泡会直接提示。
-
-### 📣 派活：语音、打字、拖文件
-
-- **语音**：长按桌宠说话，松手后由 SenseVoice 在本机离线识别（首次使用按需下载约 229MB 模型），
-  识别结果直接派给后台 agent 执行，不是丢进对话框聊天。实测一句"查一下 CPU 占用"9.3 秒出结论。
-- **打字**：`Ctrl+Alt+T`、底部键盘按钮或右键菜单，和语音走完全相同的下游管线。
-- **拖文件**：按 DSH 原生 `@path` 引用写进任务，模型自行调用 `read` / `read_image` 读取
-  （拖入图片时调用的是 `read_image`）。只丢文件、没有附加要求时，会补一句最小任务。
-
-完成后桌宠把最后一行结论报出来并朗读；失败也会如实回报。
-
-默认每次派活都**新建一个 agent**。想让后续派活都交给同一条 agent（接着它的会话跑、上下文不断），
-打开右键 →「更多 → 子 agent 管理（记录 / 中断 / 派活）…」，在里面选一条即可；
-同一个窗口还能新建、删除、看它的记录、中断它，选择会被记住。
-
-### 🎮 游戏里的实时建议
-
-任务档按**进程名或窗口标题**匹配（内置 `balatro` / `slay` / `sts` / `hearthstone` / `mtga` / `yugioh` 等），
-命中后把采样提高到 **0.6 秒一张**、最短 20 秒才可能再次开口；提示词中预先写明这类任务的关注顺序：
-当前手牌能凑出的牌型 / 连招、本轮出牌顺序、资源（费用、血量、手牌数）的风险，并禁止复述界面上已有的数字。
-
-未内置的游戏在 `desktop-guide/config.json` 的 `taskRules` 里加一行即可（进程名、采样秒数、
-一句"这类任务优先看什么"）。
-
-### 📄 文档、表格、演示文稿
-
-把文件拖到桌宠身上并附一句要求（例如"把 report.docx 第三段加粗"），或通过语音 / 打字派活。
-工作 agent 挂了 `office-docx` / `office-pptx` / `office-xlsx` 三个 skill，支持创建、局部编辑、结构检查、
-渲染 PDF 与交付声明。
-
-限制：它操作的是**文件本身**，不驱动 WPS / Word 窗口；文件同时被编辑器打开时，注意重载提示。
-
-### 🧩 插件管理与运行时查询
-
-`plugin_manager` 是 DSH 原生工具（列出已装插件、列出可选 bundle、开关插件、安装 bundle 等八个 action），
-桌宠只是把默认关闭的开关打开，因此插件管理与 DSH 是同一套。另有三个只读的 `cordis_inspect_*` 工具，
-用于在改插件前查询运行时契约。
-
-限制：可以列出"已装 / 可选"，但**不能按关键词搜索 npm** —— 要安装需给出包名、git 地址或本地路径。
-
-### ✅ 权限审批与提问应答
-
-无头模式的 DSH 默认没有应答者（权限审批一律拒绝、`ask_user_question` 不可用）。桌宠补上了这一环：
-气泡上出现「允许 / 拒绝 / 稍后」，或请求自带的选项标签。
-
-![在气泡上回答](docs/images/ui-options.png)
-
-限制：默认等待 45 秒；超时或选择「稍后」视为未作答，不会伪造一个答案回填给模型。
-
-### 🗂️ 判断记录与后台进度
-
-右键「更多 → 看它判过什么」显示卡片：判断次数、说了几次、沉默几次、每条沉默的理由。
-后台 agent（包括它再开的子 agent）运行时，气泡每 3 秒更新当前动作（如"改文件：xxx.docx"）。
-
-![判断记录](docs/images/ui-record.png)
-
-记录保存在本机日志里，重启后仍在。卡片不会自动消失，点右上角的 **×** 收起（右键「更多 → 收起气泡」同效）。
-
-## 🕹️ 操作一览
-
-它平时就是桌角一只会眨眼的小宠物。透明区域点击会穿透，不遮挡下层窗口，也永远不抢焦点。
-
-| 操作 | 效果 |
-| --- | --- |
-| 左键单击（或 `Ctrl+Alt+G`） | 立刻判断一次并给出建议；**它正在朗读时，这一下是让它闭嘴**，不会叠加新判断 |
-| 长按约 0.4 秒 | 开始录音，松手后识别并派活；**开麦前会先停掉正在进行的朗读** |
-| `Ctrl+Alt+T` / 右键「打字派活」 | 输入一句话派活（与语音同一条管线） |
-| 双击 | 完全打断：停止朗读，并取消正在进行的这一轮思考 |
-| 点常驻气泡右上角的 **×** | 收起这张气泡（判断记录卡片等不会自动消失的气泡） |
-| 拖文件 / 文字到它身上 | 作为任务交给它 |
-| 右键 | 菜单：现在说一句 / 对话 / 语音输入 / 打字派活 / 更多 / 设置 / 退出 |
-| 托盘图标 | 左键显示 / 隐藏；右键可暂停（暂停时桌宠头顶左上角有一个暂停标） |
-
-**底部那排按钮**（从左到右）：问一句 · 对话 · 打字派活 · 框选监控区域 · 看它判过什么。
-鼠标悬停会浮出名字。**开着的那一格会亮成淡黄**，一眼就能看出"再点一下会发生什么"：
-
-| 按钮 | 亮着 = | 再点一下 |
-| --- | --- | --- |
-| 问一句 | ——（它是一次动作，不参与开关，所以从不亮灯） | 立刻再判一次 |
-| 对话 | DSH 对话窗口开着 | **收起窗口**（会话还在），下次点直接显回来复用 |
-| 打字派活 | 输入框开着 | 关掉输入框 |
-| 框选监控区域 | 已经框了监控区域（只截那一块） | 取消区域，回到整屏 |
-| 看它判过什么 | 判断记录卡片正铺在气泡里 | 收掉卡片 |
-
-「对话」那个窗口是你自己用 × 关掉也行 —— 桌宠每秒对一次账，关了灯就自己灭。
-它默认用**你 DSH 里已登录的账号**那条路由（`deepseek-account`，不需要 API key）；
-如果某个**早先建的会话**里记着的是官方路由（`deepseek-official`，要 `DEEPSEEK_API_KEY`），
-桌宠会把本机 `run\openai.key` 那把 key 备给这个服务，所以那种会话现在也能直接说话。
-
-**打断语音的三条路**：它正在说话时单击宠物（最直接）、双击宠物（连正在跑的判断一起取消）、
-右键「设置 → 朗读 → 停止朗读（打断）」。误打断了也不亏，同一条子菜单里的「重读上一句」可以复读。
-
-**账本**：气泡最下方常显一行小字「余额 · 上次调用 · 今天」。余额增加（充值）会播报一次，
-默认每 30 分钟也会主动报一次；API key 在右键 →「设置 → 填 API key…」里配置。可以设**每日消费上限**
-（默认 50 元）：今天的花费到线就**自动暂停**、不再自己观察，页脚会显示「今天 ¥x / 上限 ¥y」。
-
-## 🚫 它不做什么
-
-| 不做 | 原因 |
-| --- | --- |
-| 不监听键盘输入 / 不读剪贴板 / 不记录窗口内的文字 | 侵入性过强，对判断帮助有限 |
-| 不抢焦点 | 可点击、可拖动，但永远不激活、不打断当前操作 |
-| 不替用户在其它窗口里点鼠标、敲键盘 | 它的操作落在文件上（读、改、渲染、交付） |
-| 不把截图落盘 | 截图只保留在内存环形缓冲中，落盘的只有窗口标题 / 进程 / 时间 |
-| 不在忙碌时插话 | 用户一操作就立刻让位；黑屏 / 锁屏 / 睡眠期间直接待机 |
-| 不写"什么时候该说"的硬规则 | 该不该说由可测试的本地判据决定，说什么才交给模型 |
-
-## 🧭 技术架构
-
-- **门控在本地**：模型对"何时介入"的判断通过率不足一半，因此是否打扰由确定性代码决定，
-  且可穷举单测；模型只负责把话说好。
-- **采样率跟着任务走**：卡牌 0.6 秒 / 视频 8 秒 / 桌面 10 秒，**采样即截图** ——
-  降低采样率就等于减少截图、降低开销。
-- **常驻运行时**：通过 DSH 的 sdk profile（stdio JSON-RPC）常驻一个大脑，每轮判断从 8–25 秒压到
-  0.9–1.5 秒；语音朗读另有一个常驻的"播音员"进程，所以第一句和第一百句的出声延迟一样。
-- **用户操作优先**：用户一动手，自动判断立刻让位，停手后补做；双击打断则不补做。
-- **待机不装忙**：读系统信号（显示器电源 / 会话锁 / 睡眠）而不是靠抓屏失败猜；唤醒后作废过期观测。
-  每 30 秒还会自检一次实时状态（有人在动键鼠 + 没锁屏 + 能抓到屏），前台窗口一换也立刻试一次，
-  防止系统通知漏发后一直以为在待机 —— 那样它会没有截图、只能照窗口标题猜。菜单里另有
-  「我是醒着的（现在就看一眼）」这个手动出口，不必重启进程。
-- **界面是自绘的**：WinForms 分层窗口逐像素 alpha，常驻气泡 / 选项按钮 / 底部按钮条都在
-  `desktop-guide/DesktopGuide.ps1` 里画；「对话」则直接开 DSH 自己的 Web 界面，不重造 Markdown 渲染。
-
-```mermaid
-flowchart LR
-  Screen(["屏幕 / 前台窗口"]) --> Sample["按任务档采样<br/>采样即截图"]
-  Sample --> Gate{"本地闸门<br/>画面变了？窗口换了？人还在？"}
-  Gate -- "不值得问" --> Silent["沉默<br/>连理由一起记档"]
-  Gate -- "值得问" --> Brain["DSH 主 agent<br/>常驻会话"]
-  Brain --> Bubble["气泡 + 朗读"]
+```powershell
+cd desktop-pet
+npm test
 ```
 
-工程细节（含每个决定的理由与实测数据）见 [`desktop-guide/README.md`](desktop-guide/README.md)，
-产品层面的决策记录见 [`随时指导项目_总纲.md`](随时指导项目_总纲.md)。
+只开窗口、不启动观察循环：
 
-## 📌 项目状态
+```powershell
+$env:PET_NO_AUTO = '1'
+npm start
+```
 
-| | |
+开发用的渲染快照：
+
+```powershell
+$env:PET_DEBUG_CAPTURE = "$PWD\run\pet.png"
+npm start
+```
+
+## 设置
+
+右键桌宠 →“设置”，所有可调项都在一个窗口里。修改后点保存；标了“立即生效”的项会当场生效。
+
+| 分组 | 主要设置 |
 | --- | --- |
-| **可用** | [`desktop-guide/`](desktop-guide/) —— PowerShell + WinForms 版，功能最全 |
-| **迁移中** | [`desktop-pet/`](desktop-pet/) —— Electron 版，见其 README 与 MIGRATION.md |
-| **已停用** | [`ambient-guide/`](ambient-guide/) —— 最早的 DSH 插件形态，保留作历史 |
+| 外观 | 角色图、窗口宽度、字体、字号、气泡停留、状态光晕 |
+| 说话风格 | `guard` 保守 / `coach` 陪练 / `roast` 损友 / `scout` 找事 |
+| 模型与权限 | 主 agent 模型、工作 agent 权限 |
+| 采集与节奏 | 监控区域、采样间隔、任务规则、截图宽度与质量、待机探测 |
+| 生活节奏与动作 | 时间段、饭点、节日、提醒、动作规则、素材目录、动作缩放 |
+| 判断与闸门 | 判断间隔、画面差异阈值、沉默退避、长期记忆、脱敏 Agent 事件 |
+| 账本 | API key、余额轮询、充值阈值、每日消费上限 |
+| 语音输入 / 朗读 | 长按判定、麦克风、音色、语速、队列 |
+| 路径 | DSH 安装根、`cli.js`、`node.exe` 等 |
 
-三份实现的功能差距与"有意为之的差别"记在 [`实现差别记录.md`](实现差别记录.md)（换 .NET 期间的账本）。
+常用配置键：
 
-**已知限制**
+| 键 | 默认 | 说明 |
+| --- | --- | --- |
+| `speakStyle` | `coach` | 说话风格 |
+| `sampleSeconds` | `2` | 采样间隔 |
+| `judgeMinSeconds` | `60` | 两次自动判断的最小间隔 |
+| `judgeMinFpDelta` | `12` | 画面指纹差异阈值 |
+| `dailySpendCapYuan` | `50` | 每日消费上限；`0` = 不设 |
+| `rhythmEnabled` | `true` | 启用时间段/饭点/节日 |
+| `actionEnabled` | `true` | 启用动作库 |
+| `reminderLeadMinutes` | `5` | 默认提前提醒 |
+| `rhythmGraceMinutes` | `10` | 错过提醒的补发窗口 |
+| `agentEventsEnabled` | `true` | 写脱敏 Agent 事件 |
 
-- 只支持 Windows
-- 多显示器只抓主屏；全屏独占程序（部分游戏）抓不到
-- 语音识别是整句的，不支持边说边出字
-- 判断质量取决于它对"什么算异常"的理解，这是唯一需要持续调校的部分
+## 安装包与发布
 
-## 📜 许可证
+### 目录形态（onedir）
 
-- **许可**：[PolyForm Noncommercial License 1.0.0](LICENSE) —— **非商业使用免费，商业使用需另行授权**。
-  个人研究、实验、学习、娱乐、业余项目可自由使用；慈善 / 教育 / 公共研究 / 公共安全 /
-  政府机构属于允许用途。可以修改和分发，但需随附该许可，且不得用于商业目的。
-- **它不是 OSI 开源许可**：PolyForm Noncommercial 属于源码公开（source-available）、非商业可用，
-  没有"修改后必须开源"的义务。选择它而非 CC 系内容许可，是因为它专为软件撰写，含专利防御条款。
-- **文件头声明**：所有源码文件开头都带 `Copyright (c) 2026 https://github.com/Jasolicon` 与
-  `SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0`；分发时请连同署名与许可一起保留
-  （PolyForm 的 Required Notice 写在 [LICENSE](LICENSE) 开头）。
-- **角色形象不归本项目**：仓库自带的角色图（`desktop-guide/assets/pet.png` 与
-  `desktop-pet/assets/pet.png`）**不在上述许可范围内**，作者不主张任何权利、不署名、不收费；
-  来源不可考，按"网上流传的表情包"处理。权利人提出要求即替换或移除，详见
-  [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) 与
-  [`desktop-guide/assets/PROVENANCE.md`](desktop-guide/assets/PROVENANCE.md)。
-- **第三方组件**：运行时借用的 DSH、sherpa-onnx、SenseVoice 模型、Node.js、Electron、Edge 等，
-  授权与使用方式逐条列在 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)。
+```powershell
+cd desktop-pet
+npm run pack
+```
 
-## ❓ 常见问题
+产物在 `dist/win-unpacked/`：运行时零解压，直接双击 `随时指导桌宠.exe` 即可。这是最适合本地验证和便携分发的形态。
 
-### 🔒 它会记录我的键盘输入或屏幕内容吗？
+### 安装包与便携版
 
-不监听键盘输入、不读剪贴板、不记录窗口内的文字。**截图不落盘** —— 截图只留在内存环形缓冲里，
-落盘的只有窗口标题 / 进程名 / 时间。判断记录与账本都是本机产生的数据，仓库里不含任何真实数据。
+```powershell
+npm run dist
+```
 
-### 💸 它会自己花钱吗？
+产物：
 
-它用的是你 DSH 里已登录的账号，每一轮判断、每一次派活都是一次真实的模型调用。
-账本会记着"上次调用花了多少"，并且可以设每日上限（默认 50 元）—— 到线就自动暂停，不再自己观察。
-手动点它问一句仍然会花钱，那是你主动要的。
+- NSIS 安装包：当前用户安装，不需要管理员权限，可选安装目录。
+- 便携版 exe：单个可执行文件，适合不想安装的场景。
 
-### 🔑 需要自己申请 API key 吗？
+### 发行清单
 
-默认不需要，直接用 DSH 已登录的账号。想换成别的供应商，右键 →「设置 → 填 API key…」。
+```powershell
+npm run release:manifest
+```
 
-### 🤫 为什么它大多数时候都不说话？
+生成 `dist/update.json`，记录版本、下载地址、文件大小和 SHA-256。发布时把安装包、便携版和 `update.json` 一起上传到 GitHub Release。
 
-因为"该不该开口"是由本地判据决定的，而判据的默认口味偏保守：画面没变、刚判过、人不在、
-正在忙、在待机 —— 这些都不打扰。想让它话痨一点：右键 →「设置 → 说话风格 → 损友」。
+`assets/actions` 通过 `asarUnpack` 放在 `app.asar.unpacked/assets/actions`，透明 WebM 用真实文件路径播放，不从归档里流式解码。
 
-### 🖥️ 支持多显示器 / 全屏游戏吗？
+## Agent 事件协议
 
-只抓主屏。全屏独占程序抓不到画面 —— 那种情况下它会明确说"看不到画面"，
-而不是照窗口标题编出一串操作步骤。
+泡泡把 DSH 的生命周期写成脱敏 JSONL，默认路径：
 
-### 🐢 第一次打开为什么要等十几秒？
+```text
+logs/agent-events/dsh.jsonl
+```
 
-要起两个东西：「对话」用的 DSH Web 服务，和常驻大脑。两个都丢在后台预热，界面不会卡；
-第一次点「对话」时如果服务还在起，气泡会告诉你"正在起来（首次要等 DSH 服务，十几秒）"。
+每行只包含元数据：
 
-## 🙏 特别感谢
+```json
+{"ts":1792200000.12,"agent":"dsh","event":"tool/call","state":"working","tool":"read","sessionId":"..."}
+{"ts":1792200001.40,"agent":"dsh","event":"turn/end","state":"idle","sessionId":"..."}
+```
 
-- **DeepSeek Harness** —— 桌宠的大脑：判断、派活、工具调用、Web 对话界面都靠它
-- [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) 与 SenseVoice —— 本机离线的语音识别
-- 微软 Edge 神经音色 —— 默认的朗读声音
+状态只有六种：`thinking`、`working`、`attention`、`error`、`idle`、`sleeping`。
+
+**不会写入**：用户消息正文、模型回复正文、工具参数、工具结果、截图或文件路径。
+
+事件文件超过 1MB 时轮转为 `.1`，读方可以按 byte-offset 增量读取，不需要回放历史。外部 Agent 可以按同一格式追加写；当前桌面端先消费 DSH 会话事件，接入其它 Agent 时需要增加一个 tail 适配层。
+
+## 隐私与安全
+
+- 不监听键盘输入，不读剪贴板，不记录窗口内的文字。
+- 截图只保留在内存环形缓冲里；落盘的只有窗口标题、进程名、时间和判断记录。
+- 截图会随请求交给 DSH 当前配置的模型服务；具体隐私边界取决于所使用的模型供应商。
+- Agent 事件只写元数据，不写正文、命令参数和截图路径。
+- API key 存在本机 `run/deepseek.key` 或环境变量中，不写入日志。
+- 默认每日消费上限 50 元，到线自动暂停自动观察。
+- 安装包当前没有代码签名，Windows SmartScreen 可能提示需要手动放行。
+
+## 开发与测试
+
+```powershell
+cd desktop-pet
+npm test
+```
+
+测试覆盖本地闸门、指纹、DSH 会话、审批桥、账本、记忆、子 agent、语音、动作节奏、提醒和 Agent 事件脱敏。
+
+常用调试环境变量：
+
+| 变量 | 作用 |
+| --- | --- |
+| `PET_NO_AUTO=1` | 只起窗口，不启动屏幕观察 |
+| `PET_NO_LOCK=1` | 跳过单实例锁 |
+| `PET_DEBUG_CAPTURE=<png>` | 渲染一张页面快照后退出 |
+| `PET_DEBUG_SETTINGS=<png>` | 打开设置窗口并截图 |
+| `PET_DEBUG_ACTION=<id>` | 启动后试播一个动作 |
+
+## 项目结构
+
+```text
+desktop-pet/                 Electron 桌面实现（当前主实现）
+  src/
+    main.mjs                 主进程：窗口、托盘、IPC、生命周期
+    dsh-session.mjs          DSH 常驻会话（sdk profile）
+    brain.mjs                DSH 一次性回退（headless profile）
+    webui.mjs                DSH Web 对话窗口
+    monitor.mjs              屏幕采样与本地闸门
+    rhythm.mjs               时间段/饭点/节日/提醒纯逻辑
+    rhythm-runtime.mjs       动作调度、提醒、节奏日志
+    agent-events.mjs         脱敏 Agent 事件协议
+    settings/                设置窗口与 schema
+    renderer/                桌宠窗口与动作播放
+  assets/actions/            分类动作素材
+  test/                      Node 测试
+
+desktop-guide/               行为参考实现与 DSH 应答器插件
+behavior-cases/              行为用例表
+docs/                        截图与说明
+```
+
+## 已知限制
+
+- 当前桌面实现只支持 Windows。
+- 多显示器只抓主屏；全屏独占程序可能抓不到。
+- 语音识别是整句的，不支持边说边出字。
+- DSH 必须安装并登录；没有 DSH 时，任务、对话和判断都不可用。
+- Electron 固定为 28：本机 Electron 33 启动会崩溃，28 已稳定运行。
+- 打包版 exe 在本机启动返回 `0x80000003`，尚在排查；源码运行与 `win-unpacked` 资源已通过验证，发布前必须解决这个问题。
+- 动作素材来自社区角色素材链，仅限个人非商业使用；泡泡自身也是非商业许可项目，商用需要替换素材。
+
+## 许可与致谢
+
+泡泡的代码、提示词、文档和自绘素材以 **PolyForm Noncommercial License 1.0.0** 发布：
+个人研究、学习、娱乐和非商业项目可以自由使用；商业使用需要另行授权。
+
+角色图与动作素材不在上述许可范围内，来源与限制见
+[`desktop-pet/assets/actions/ATTRIBUTION.md`](desktop-pet/assets/actions/ATTRIBUTION.md)
+与 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)。
+
+感谢：
+
+- **DeepSeek Harness**：判断、对话、工具调用、审批与子 agent 的运行时。
+- **sherpa-onnx / SenseVoice**：本机离线语音识别。
+- **Microsoft Edge 神经音色**：默认语音朗读。
+- **PC2005-cloud/dsh-pet** 与社区角色素材作者：透明 WebM 动作素材。
+
+---
 
 <div align="center">
-版权所有 © 2026 - <strong>泡泡 · Bloop</strong><br>
-By <a href="https://github.com/Jasolicon">Jasolicon</a><br>
-Made with 🐳 &amp; ⌨️
+  <sub>Made with 🐳 &amp; ⌨️ · 泡泡 · Bloop</sub>
 </div>

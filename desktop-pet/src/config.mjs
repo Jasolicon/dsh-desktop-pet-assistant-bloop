@@ -14,6 +14,9 @@
 import { ROOT } from './paths.mjs';
 import { configPath } from './dirs.mjs';
 import { readJson, writeJson } from './jsonfile.mjs';
+import {
+  DEFAULT_ACTION_RULES, DEFAULT_HOLIDAYS, DEFAULT_MEALS, DEFAULT_PERIODS,
+} from './rhythm.mjs';
 
 /** 打包后用 userData 目录（源码目录在 asar 里只读），见 dirs.mjs。 */
 export const CONFIG_PATH = configPath();
@@ -58,6 +61,8 @@ export const DEFAULTS = {
   region: null,
   // 采集
   sampleSeconds: 2,
+  /** 用户刚有键鼠输入时的采样间隔；空闲后回到 sampleSeconds。 */
+  fastSampleSeconds: 1,
   /** 学习出来的采样率允许范围（夹住，免得学出 0.05 秒把机器烧了）。 */
   minSampleSeconds: 0.3,
   maxSampleSeconds: 60,
@@ -190,7 +195,43 @@ export const DEFAULTS = {
   routeTyped: false,
   judgeMinSeconds: 60,
   judgeMinFpDelta: 12,
+  /** 窗口切换/明显突变的快速通道：不用等满 judgeMinSeconds。 */
+  fastJudgeSeconds: 5,
+  fastFpDelta: 24,
   silentBackoffMax: 4,
+
+  // ---- 生活节奏与动作（见 rhythm.mjs / rhythm-runtime.mjs）----
+  /**
+   * 这些是"桌宠像不像活物"的那一层，和判断闸门是两回事：
+   * 闸门决定"要不要开口"，节奏决定"现在是什么时辰、该做什么小动作"。
+   * 全部走本地钟表，不叫模型。
+   */
+  rhythmEnabled: true,
+  /** 空 = 跟系统时区；固定成 Asia/Shanghai 时，换机器也不会因为时区不同把节日过错。 */
+  rhythmTimeZone: 'Asia/Shanghai',
+  /** 错过提醒的补发窗口（分钟）：只补最近一次，不会把一整天的提醒倒出来。 */
+  rhythmGraceMinutes: 10,
+  /** 到点前的提前提醒（分钟，0 = 不提前）；单条提醒可用 leadMinutes 覆盖。 */
+  reminderLeadMinutes: 5,
+  /** 桌宠隐藏/最小化时，提醒是否走系统通知（否则只在日志里记一条）。 */
+  reminderSystemNotification: true,
+  rhythmPeriods: DEFAULT_PERIODS,
+  mealTimes: DEFAULT_MEALS,
+  holidays: DEFAULT_HOLIDAYS,
+  /** 用户自己的提醒：{ id,title,time,days,text,action,enabled }。 */
+  reminders: [],
+
+  // 动作库：素材默认在 assets\actions，用户可以把自定义 WebM/GIF/PNG 放进 actionDir。
+  actionEnabled: true,
+  actionDir: '',
+  /** 动作视频相对宠物框的缩放；1 = 按 object-fit: contain 装进 150×146。 */
+  actionScale: 1.6,
+  /** 自动事件动作的间隔（秒）；加 15% 抖动，避免整点闹钟感。 */
+  actionIntervalSeconds: 45,
+  actionRules: DEFAULT_ACTION_RULES,
+
+  /** 把 DSH 的 agent 生命周期写成脱敏 JSONL（只有事件名/状态/工具名/错误码，不含正文）。 */
+  agentEventsEnabled: true,
 };
 
 /**
@@ -204,7 +245,12 @@ export function loadConfig(path = CONFIG_PATH) {
   const raw = readJson(path, { ...DEFAULTS }, { missing: { ...DEFAULTS } });
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { ...DEFAULTS };
   // 缺键补默认值；多的键原样保留（不静默丢用户的设置）
-  return { ...DEFAULTS, ...raw };
+  const merged = { ...DEFAULTS, ...raw };
+  // 这几项是表格编辑器，必须是数组；旧配置或手改坏的标量不能把设置页弄成空表。
+  for (const key of ['rhythmPeriods', 'mealTimes', 'holidays', 'actionRules', 'reminders']) {
+    if (!Array.isArray(merged[key])) merged[key] = DEFAULTS[key];
+  }
+  return merged;
 }
 
 export function saveConfig(cfg, path = CONFIG_PATH) {

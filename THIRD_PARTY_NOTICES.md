@@ -39,6 +39,23 @@
 **想换成自己的图**：覆盖这两个 `assets/pet.png` 即可（两个版本都会优先用它）；
 桌面宠的 `config.json` 里 `petImage` 也可以指到任意一张带透明通道的 PNG。
 
+## 动作素材（`desktop-pet/assets/actions/`）
+
+`desktop-pet/assets/actions/` 里的 22 段透明 WebM 来自桌面宠物社区素材链：
+[PC2005-cloud/dsh-pet](https://github.com/PC2005-cloud/dsh-pet) 与其桌面移植
+[MerZlin/dsh-pet-indesktop](https://github.com/MerZlin/dsh-pet-indesktop)。
+角色 OC「溟月」出自画师 **上善无形**，素材由社区成员整理制作。
+
+**授权口径以更保守的说明为准**：`dsh-pet-indesktop` 的第三方声明写明这类角色素材
+按 **CC BY-NC-SA 类条款**发布，**仅限个人非商业使用**，使用须保留署名与来源，
+不得用于商业/盈利场景。上游仓库的**代码**是 MIT，但“代码 MIT”不等于“角色动画素材
+可以商用”；大肥鱼仓库把它写成 MIT 与本声明冲突，因此这里不采用“MIT 可商用”的口径。
+泡泡自身是 PolyForm Noncommercial 项目，当前使用符合非商业用途；未来商用需替换素材。
+
+原始帧率、颜色与 alpha 未改动；触发规则、权重、时段/饭点/节日选择由本项目自己实现。
+角色形象的原始权利仍以 `PROVENANCE.md` 的说明为准。
+如果换成自己的素材，请同步更新 `desktop-pet/assets/actions/ATTRIBUTION.md` 和本文件。
+
 ## 参考过的项目
 
 设计上参考过 [Coopanion](https://github.com/Pal-AI-Lab/Coopanion)（AGPL-3.0）与

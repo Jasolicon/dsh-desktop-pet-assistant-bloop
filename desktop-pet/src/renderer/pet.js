@@ -37,10 +37,147 @@ const btnChat = document.getElementById('t-chat');
 const btnType = document.getElementById('t-type');
 const btnRegion = document.getElementById('t-region');
 const btnHistory = document.getElementById('t-history');
+const petVideo = document.getElementById('petvideo');
+const petActionImg = document.getElementById('petactionimg');
 
+let lastReportedState = 'idle';
 /** 当前状态 → 光晕颜色由 CSS 管，这里只切 data-state。 */
 function setState(state) {
+  const prev = lastReportedState;
   petEl.dataset.state = state;
+  lastReportedState = state;
+  // 只在"进入"思考/说话时报告一次；主进程那边还有冷却，连续气泡不会每句都放动作。
+  if (state !== prev && (state === 'thinking' || state === 'speaking') && window.pet?.actionEvent) {
+    void window.pet.actionEvent(state).catch(() => {});
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 动作层：主进程挑动作，这里只负责播放 / 播完回到待机
+// ---------------------------------------------------------------------------
+let actionEnabled = true;
+let idleAction = null;
+let activeAction = null;
+let idleFailed = false;
+let actionToken = 0;
+let staticActionTimer = null;
+let windowVisible = true;
+
+function fileUrl(path) {
+  return encodeURI('file:///' + String(path || '').replace(/\\/g, '/'));
+}
+
+function clearActionVisuals() {
+  petEl.classList.remove('has-video', 'has-actionimg');
+  try { petVideo.pause(); } catch { /* 没在播 */ }
+  try { petActionImg.removeAttribute('src'); } catch { /* 没图 */ }
+  if (staticActionTimer) { clearTimeout(staticActionTimer); staticActionTimer = null; }
+}
+
+function playIdle() {
+  if (!actionEnabled || idleFailed || !idleAction?.file) {
+    clearActionVisuals();
+    return;
+  }
+  // 已经在播同一个待机动作就别重设 src：重复 play() 会被浏览器当成"新加载打断旧播放"，
+  // 日志里就是一串 The play() request was interrupted...
+  if (activeAction?.trigger === 'idle' && activeAction.file === idleAction.file && !petVideo.paused) return;
+  playAction({ ...idleAction, loop: true, trigger: 'idle' });
+}
+
+function playAction(action) {
+  if (!actionEnabled || !action || !action.file || !windowVisible) return;
+  const token = ++actionToken;
+  if (staticActionTimer) { clearTimeout(staticActionTimer); staticActionTimer = null; }
+  const ext = String(action.file).toLowerCase().match(/\.[a-z0-9]+$/)?.[0] || '';
+  activeAction = action;
+  petEl.classList.remove('has-video', 'has-actionimg');
+  if (ext === '.webm' || ext === '.mp4') {
+    try { petActionImg.removeAttribute('src'); } catch { /* 没图 */ }
+    petVideo.loop = !!action.loop;
+    petVideo.src = fileUrl(action.file);
+    petEl.classList.add('has-video');
+    const p = petVideo.play();
+    if (p && typeof p.catch === 'function') p.catch((err) => {
+      // 切换动作时旧 video 的 play() 会被新 src 打断，这是正常现象，不是解码失败。
+      if (token !== actionToken) return;
+      if (err && (err.name === 'AbortError' || /interrupted by a (new load|call to pause)/i.test(err.message || ''))) return;
+      console.error('[renderer] 动作视频播放失败：', action.file, err && err.message);
+      if (action.trigger === 'idle') idleFailed = true;
+      activeAction = null;
+      clearActionVisuals();
+    });
+    return;
+  }
+  // GIF/PNG：视频元素收起来，用图片；GIF 自己会循环。
+  try { petVideo.pause(); petVideo.removeAttribute('src'); } catch { /* 没在播 */ }
+  petActionImg.onerror = () => {
+    console.error('[renderer] 动作图片加载失败：', action.file);
+    if (action.trigger === 'idle') idleFailed = true;
+    activeAction = null;
+    clearActionVisuals();
+  };
+  petActionImg.src = fileUrl(action.file);
+  petEl.classList.add('has-actionimg');
+  if (String(ext) !== '.gif') {
+    // 静态图没有 ended；让它停留一个动作周期后回待机，避免永远顶掉角色图。
+    staticActionTimer = setTimeout(() => {
+      if (activeAction === action) { activeAction = null; playIdle(); }
+    }, 2500);
+  }
+}
+
+/** 隐藏/最小化时停掉解码与定时器；显示时回到待机。 */
+function applyVisibility(visible) {
+  windowVisible = !!visible;
+  document.documentElement.dataset.visible = windowVisible ? 'on' : 'off';
+  if (!windowVisible) {
+    activeAction = null;
+    clearActionVisuals();
+    return;
+  }
+  if (actionEnabled) playIdle();
+}
+
+/** 设置/启动时应用动作层配置。 */
+function applyActionConfig(info) {
+  if (!info) return;
+  if (info.actionEnabled !== undefined) actionEnabled = info.actionEnabled !== false;
+  if (info.actionScale !== undefined && Number(info.actionScale) > 0) {
+    petEl.style.setProperty('--action-scale', String(Number(info.actionScale)));
+  }
+  if (info.idleAction !== undefined) {
+    idleAction = info.idleAction || null;
+    idleFailed = false;
+  }
+  if (info.visible !== undefined) applyVisibility(info.visible);
+  if (!actionEnabled) {
+    activeAction = null;
+    clearActionVisuals();
+    return;
+  }
+  if (!activeAction || activeAction.trigger === 'idle') playIdle();
+}
+
+if (petVideo) {
+  petVideo.addEventListener('ended', () => {
+    if (!activeAction?.loop) {
+      activeAction = null;
+      playIdle();
+    }
+  });
+  petVideo.addEventListener('error', () => {
+    console.error('[renderer] 动作视频解码失败；回到静态角色图');
+    if (activeAction?.trigger === 'idle') idleFailed = true;
+    activeAction = null;
+    clearActionVisuals();
+  });
+}
+if (window.pet?.onAction) {
+  window.pet.onAction((action) => playAction(action));
+}
+if (window.pet?.onVisibility) {
+  window.pet.onVisibility((visible) => applyVisibility(visible));
 }
 
 // 渲染进程里出的任何错都留个痕：这一侧崩掉的表现是"窗口透明、看着像桌宠没了"，
@@ -506,6 +643,7 @@ function reportHitRects() {
 // 2) 交互
 // ---------------------------------------------------------------------------
 let dragFrom = null;
+let dragActionSent = false;
 let holdTimer = null;
 let rec = null;                 // 录音中的上下文
 const LONG_PRESS_MS = 400;      // 和 PowerShell 版一致：长按 400ms 判定为"按住说话"
@@ -514,6 +652,7 @@ petEl.addEventListener('mousedown', (e) => {
   if (e.button !== 0) return;
   window.pet.userAction();
   dragFrom = { x: e.screenX, y: e.screenY, moved: false };
+  dragActionSent = false;
   petEl.style.cursor = 'grabbing';
   // 按住期间一直要鼠标：拖动/录音都可能让指针短暂离开宠物的框，
   // 一旦中途切回穿透，mouseup 就收不到 —— 表现是"拖到一半掉了"或"录音结束不了"
@@ -539,6 +678,10 @@ window.addEventListener('mousemove', (e) => {
   // 说话是"按住别动"，你既然动了，那就是想搬家。
   if (rec) abortRecording();
   dragFrom.moved = true;
+  if (!dragActionSent) {
+    dragActionSent = true;
+    void window.pet.actionEvent('drag').catch(() => {});
+  }
   if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }   // 开始拖了就别再录
   dragFrom.x = e.screenX;
   dragFrom.y = e.screenY;
@@ -574,6 +717,8 @@ window.addEventListener('mouseup', () => {
     // 而"摸一下有反应"只有点本体这一条路 —— 后者才像一只宠物，前者像一个大按钮。
     // （PowerShell 版当年也是这么改的："单击本体不再是问一句，而是摸一下"。）
     if (window.speechSynthesis && window.speechSynthesis.speaking) window.speechSynthesis.cancel();
+    // 加上第三件：按动作规则随机回一个点击反应（挥手/害羞/傲娇/跃动）。
+    void window.pet.actionEvent('click').catch(() => {});
   }
   dragFrom = null;
   window.pet.holdMouse(false);   // 松手了：还回"按坐标决定穿透"的常态
@@ -980,6 +1125,7 @@ function applyLook(info) {
   // 状态光晕整圈开关（空闲时本来就不显示，见 pet.css 的 #pet::before）
   petEl.dataset.halo = info.showHalo === false ? 'off' : 'on';
   micDeviceId = String(info.sttDeviceId || '');
+  applyActionConfig(info);
   petFit();
   recheckHover('look');   // 字号/按钮条一变，元素框就变了 → 按当前坐标重判一次
 }

@@ -11,7 +11,7 @@
  *   还没搬的    ：屏幕采样与本地闸门、语音（STT）、朗读（TTS）、选项问答、子 agent 观察
  * 没搬的那些在 desktop-guide/ 里仍然可用；两边的路径解析是**同一套规则**（paths.ps1 / paths.mjs）。
  */
-import { app, BrowserWindow, globalShortcut, ipcMain, Menu, nativeImage, powerMonitor, screen, shell, Tray } from 'electron';
+import { app, BrowserWindow, globalShortcut, ipcMain, Menu, nativeImage, Notification, powerMonitor, screen, shell, Tray } from 'electron';
 import { session as electronSession } from 'electron';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -43,6 +43,10 @@ import { createTaskLog, toRow } from './tasks.mjs';
 import { ensureDshHome } from './dsh-home.mjs';
 import { usableShots } from './shots.mjs';
 import { createTts } from './tts.mjs';
+import { createRhythmRuntime, listActionFiles } from './rhythm-runtime.mjs';
+import { appendAgentEvent, dshEventToAgentEvent } from './agent-events.mjs';
+import { setFastSampler } from './capture.mjs';
+import { startFastCapture } from './capture-worker.mjs';
 import {
   customSection, readPreset, readSystemPrompt, scopeLines, shouldAdoptPreset, systemPromptFile, writeSystemPrompt,
 } from './prompt.mjs';
@@ -90,6 +94,10 @@ const tts = createTts({ live: () => cfg, logger: console });
  */
 let thinking = false;
 let monitor = null;
+/** 生活节奏（时间段 / 饭点 / 节日 / 动作 / 提醒）。见 src/rhythm-runtime.mjs。 */
+let rhythm = null;
+/** 常驻桌面流采样器：主进程抓屏从每次 getSources 降到 drawImage。 */
+let fastCapture = null;
 /**
  * 常驻 DSH 会话：一次 initialize（约 4.5s），之后每轮秒级。见 dsh-session.mjs。
  *
@@ -503,6 +511,13 @@ function createWindow() {
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   win.loadFile(join(ROOT, 'src', 'renderer', 'index.html'));
 
+  // 隐藏/最小化时让渲染进程停掉视频解码与动作定时器；显示/恢复时再继续。
+  // 注意：节奏 runtime 的提醒 tick 不停（隐藏时改走系统通知），只停“动作表现”。
+  const pushVisibility = () => {
+    win?.webContents.send('pet:visibility', !!win && !win.isDestroyed() && win.isVisible() && !win.isMinimized());
+  };
+  for (const eventName of ['show', 'hide', 'minimize', 'restore']) win.on(eventName, pushVisibility);
+
   // 渲染进程出事时别静默：加载失败/脚本报错都打到控制台，
   // 否则表现是"窗口一片透明"，看不出是页面没加载还是画不出来（踩过）。
   win.webContents.on('did-fail-load', (_e, code, desc, url) => {
@@ -546,6 +561,9 @@ function createWindow() {
   // 截屏里却什么都没有）。从渲染进程内部 capturePage 才是最可信的。
   if (process.env.PET_DEBUG_CAPTURE) {
     win.webContents.once('did-finish-load', async () => {
+      if (process.env.PET_DEBUG_ACTION) {
+        setTimeout(() => rhythm?.preview(process.env.PET_DEBUG_ACTION), 350);
+      }
       await new Promise((r) => setTimeout(r, 1500));
       // PET_DEBUG_BUBBLE=<一段文字>：截图前先放一条气泡出来（看气泡排版/那个 × 时用）
       if (process.env.PET_DEBUG_BUBBLE) {
@@ -592,6 +610,7 @@ function createWindow() {
         const prompt = buildLookPrompt({
           current: { process: '自检', title: 'Code', inWindowS: 12 },
           screen: { stillSeconds: 3 }, human: { idleSeconds: 1 }, timeline: [], shots: [],
+          prediction: { mode: 'context_switch', confidence: 0.85, expected: '刚切换窗口', evidence: '自检', fastPath: true },
         });
         log('[debug] 记忆进提示词了吗 =', prompt.includes('记忆自检'), `（提示词 ${prompt.length} 字）`);
       } catch (err) {
@@ -988,11 +1007,13 @@ function createWindow() {
         const prompt = buildLookPrompt({
           current: { process: '自检', title: 'Code', inWindowS: 12 },
           screen: { stillSeconds: 3 }, human: { idleSeconds: 1 }, timeline: [], shots: [],
+          prediction: { mode: 'context_switch', confidence: 0.85, expected: '刚切换窗口', evidence: '自检', fastPath: true },
         });
         const rows = prompt.split('\n');
         log('[debug] 提示词总长', prompt.length, '字符、', rows.length, '行');
         log('[debug] 头 3 行 =', JSON.stringify(rows.slice(0, 3)));
         log('[debug] 尾 6 行 =', JSON.stringify(rows.slice(-6)));
+        log('[debug] 含本地预测吗 =', prompt.includes('本地预测（不是事实）'));
         log('[debug] 含"最高优先级"这一节吗 =', prompt.includes('用户自定义指令（最高优先级'));
       } catch (err) {
         console.error('[pet][debug] prompt 自检失败', err);
@@ -1663,6 +1684,29 @@ function buildLookPrompt(payload) {
   if (prof?.hint) {
     lines.push('', `【这一类任务（${prof.name}）】`, prof.hint);
   }
+  // 本地预测：告诉模型“程序从轨迹里猜到了什么”，但明确它不是事实，
+  // 让模型做“预测 → 用画面验证 → 交流”的判断，而不是每轮从零描述屏幕。
+  const pred = payload.prediction;
+  if (pred) {
+    lines.push(
+      '',
+      '【本地预测（不是事实）】',
+      `模式：${pred.mode || 'unknown'}；置信度：${Math.round((Number(pred.confidence) || 0) * 100)}%`,
+      `程序猜测：${pred.expected || '没有明确猜测'}`,
+      `依据：${pred.evidence || '无'}`,
+      '使用方式：先把它当作一个先验；如果截图/当前状态与它不符，以实际画面为准。',
+    );
+  }
+  // 生活节奏：让模型知道"现在是午饭/中秋/深夜"，而不是只看到一个时钟。
+  // 这层信息来自本地 rhythm 快照，不额外消耗一次判断。
+  const rhythmNow = rhythm?.snapshot();
+  if (rhythmNow) {
+    const bits = [];
+    if (rhythmNow.period?.label) bits.push(`时段：${rhythmNow.period.label}`);
+    if (rhythmNow.meal?.label) bits.push(`饭点：${rhythmNow.meal.label}`);
+    if (rhythmNow.holiday?.label) bits.push(`节日：${rhythmNow.holiday.label}`);
+    if (bits.length) lines.push('', '【此刻的生活节奏】', bits.join('；'));
+  }
   // 截图由调用方以 imageBlocks 内联送进模型（常驻会话支持），所以这里只需要说一声。
   // ⚠️ 太旧的图**不发**、而且必须明说"看不到画面"：模型不知道图有多旧，
   // 它会照着窗口标题脑补出一整套操作步骤（看着专业，其实全是猜的；PS 版为此定了 shotStaleSeconds）。
@@ -1685,6 +1729,8 @@ function buildLookPrompt(payload) {
     '【怎么回答】',
     '如果此刻确实有一件值得现在说、且用户自己很可能没注意到的事，就**只输出那一句话**：',
     '直接说，最多两行；不要复述屏幕上已有的信息，不要客套，不要问"需要我帮忙吗"。',
+    '如果本地预测是窗口切换/画面突变，而且你能从当前截图指出具体原因，可以比平常更主动；',
+    '如果预测只是“长时间静止/可能在阅读”，没有画面证据就不要把它当成卡住。',
     '如果没有值得说的，就**只输出 SILENT 这一个词**，不要输出任何其他内容。',
   );
   // 风格 / 用户自定义指令在整个提示词的**最后**，并且照 PS 的原文标明"最高优先级" ——
@@ -1921,6 +1967,11 @@ function registerIpc() {
     ttsEnabled: cfg.ttsEnabled !== false,
     speakStyle: cfg.speakStyle,
     sttDeviceId: cfg.sttDeviceId || '',
+    // 动作层：渲染进程自己管"播放中/播完回到待机"；主进程只告诉它待机素材和缩放。
+    actionEnabled: cfg.actionEnabled !== false,
+    idleAction: rhythm?.idleAction() || null,
+    actionScale: Number(cfg.actionScale) > 0 ? Number(cfg.actionScale) : 1,
+    visible: !!win && !win.isDestroyed() && win.isVisible() && !win.isMinimized(),
   }));
 
   ipcMain.handle('pet:status', () => monitor?.snapshot() ?? null);
@@ -1937,6 +1988,17 @@ function registerIpc() {
     return pickRegionNow();
   });
   ipcMain.handle('pet:clearRegion', () => clearRegionNow());
+
+  /**
+   * 渲染进程报告一个"用户动作"（点击 / 拖拽 / 思考 / 说话）。
+   * 动作选择在主进程做：规则、冷却、当前时段/饭点/节日只有一份。
+   */
+  ipcMain.handle('pet:actionEvent', (_e, trigger) => {
+    const t = String(trigger || '').trim();
+    if (!t) return { ok: false, why: 'empty trigger' };
+    const action = rhythm?.trigger(t, { reason: 'renderer' }) || null;
+    return { ok: !!action, action };
+  });
 
   /** 用户在气泡上点了一个选项（或自己写了内容）。 */
   ipcMain.handle('pet:answer', (_e, choice) => {
@@ -2177,6 +2239,10 @@ ipcMain.handle('settings:get', () => ({
   path: CONFIG_PATH,
   version: app.getVersion(),
   keyInfo: keyInfo(),
+  // 动作/时段编辑器要的动态候选：素材目录里真实存在的文件、动作规则里的 id。
+  actionFiles: listActionFiles(cfg, ROOT),
+  actionOptions: (Array.isArray(cfg.actionRules) ? cfg.actionRules : []).map((r) => ({ value: r.id, text: r.label || r.id })),
+  rhythmLogPath: rhythm?.logFile || join(dataDir(), 'logs', 'rhythm.jsonl'),
 }));
 
 /**
@@ -2259,12 +2325,47 @@ ipcMain.handle('settings:save', (_e, values) => {
     if (changed) {
       pushToolbar();                                        // 区域/按钮条的灯
       monitor?.reload();                                    // 采样间隔这类"定时器周期"要重建才生效
-      win?.webContents.send('pet:settingsChanged', cfg);    // 渲染进程按需重读（例如字号）
+      rhythm?.refresh();                                    // 时段/饭点/提醒/动作规则改完立刻重算
+      win?.webContents.send('pet:settingsChanged', {
+        ...cfg,
+        maxWindowHeight: windowCapHeight(),
+        idleAction: rhythm?.idleAction() || null,
+      });                                                    // 渲染进程按需重读（例如字号/待机动作）
       void updateLedger({ quiet: true });                   // 上限/轮询间隔改了：页脚立刻跟着变
     }
     return { ok: true, changed };
   } catch (err) {
     return { ok: false, why: String((err && err.message) || err), changed };
+  }
+});
+
+// 设置里试播一个动作：不用改配置，也不等下一次自动动作。
+ipcMain.handle('settings:previewAction', (_e, idOrFile) => {
+  showPet();
+  const action = rhythm?.preview(idOrFile) || null;
+  return { ok: !!action, action, why: action ? '' : '找不到这个动作素材（看看文件在不在 assets\\actions）' };
+});
+
+// 设置里看最近的生活节奏日志（时段/饭点/节日/提醒/动作）。
+ipcMain.handle('settings:rhythmLog', (_e, limit) => ({
+  path: rhythm?.logFile || join(dataDir(), 'logs', 'rhythm.jsonl'),
+  rows: rhythm?.recentLog(limit ?? 50) || [],
+}));
+
+ipcMain.handle('settings:refreshActions', () => ({
+  ok: true,
+  files: listActionFiles(cfg, ROOT),
+}));
+
+ipcMain.handle('settings:openRhythmLog', async () => {
+  const file = rhythm?.logFile || join(dataDir(), 'logs', 'rhythm.jsonl');
+  try {
+    mkdirSync(join(dataDir(), 'logs'), { recursive: true });
+    if (!existsSync(file)) writeFileSync(file, '', 'utf8');
+    const err = await shell.openPath(file);
+    return { ok: !err, why: err || '' };
+  } catch (err) {
+    return { ok: false, why: String((err && err.message) || err) };
   }
 });
 
@@ -2352,6 +2453,8 @@ if (noLock) {
 }
 
 app.whenReady().then(() => {
+    // Windows 通知中心需要一个稳定的 AppUserModelID；和 electron-builder 的 appId 保持一致。
+    try { app.setAppUserModelId('org.palai.desktop-pet'); } catch { /* 非 Windows 忽略 */ }
     log('userData =', app.getPath('userData'));
     log('root =', ROOT);
     /**
@@ -2389,9 +2492,79 @@ app.whenReady().then(() => {
         }
       }
     }
+    /**
+     * 生活节奏运行时：本地钟表 + 动作 + 提醒。
+     * 先建好再 createWindow —— 渲染进程的 pet:info 会立刻问 idleAction，
+     * 晚一步就会出现"启动时先是一张静态图，过一会儿才动"的抽动。
+     */
+    rhythm = createRhythmRuntime({
+      live: () => cfg,
+      root: ROOT,
+      log: (msg) => log(msg),
+      say: (text) => {
+        win?.webContents.send('pet:speak', text);
+        if (cfg.ttsEnabled !== false) void tts.speak(text);
+      },
+      notify: ({ title, body } = {}) => {
+        try {
+          if (!Notification.isSupported()) return false;
+          const icon = petImage(cfg);
+          const n = new Notification({
+            title: title || '泡泡 · Bloop',
+            body: body || '',
+            ...(icon ? { icon: nativeImage.createFromPath(icon) } : {}),
+          });
+          n.on('click', () => showPet());
+          n.show();
+          return true;
+        } catch (err) {
+          log('[rhythm] 系统通知失败：', err && err.message);
+          return false;
+        }
+      },
+      playAction: (action) => win?.webContents.send('pet:action', action),
+      isPaused: () => paused,
+      isVisible: () => !!win && !win.isDestroyed() && win.isVisible() && !win.isMinimized(),
+    });
+
     createWindow();
     registerIpc();
+    fastCapture = startFastCapture({ root: ROOT, logger: console });
+    setFastSampler((opts) => fastCapture?.grab(opts).catch(() => null));
     createTray();
+
+    // 开发用：PET_DEBUG_SETTINGS=<png> 打开设置窗口→截一张→退出。
+    // 设置页最容易出的是"schema 里新类型没接住"这种运行时错误，单测看不到。
+    if (process.env.PET_DEBUG_SETTINGS) {
+      setTimeout(() => {
+        openSettingsWindow();
+        settingsWin?.webContents.once('did-finish-load', async () => {
+          await new Promise((r) => setTimeout(r, 1200));
+          try {
+            if (process.env.PET_DEBUG_SETTINGS_SCROLL) {
+              await settingsWin.webContents.executeJavaScript(
+                `(() => { const h = [...document.querySelectorAll('section.group > h2, .row .label')].find((x) => x.textContent.includes(${JSON.stringify(process.env.PET_DEBUG_SETTINGS_SCROLL)})); h?.scrollIntoView({ block: 'start' }); })()`,
+              );
+              await new Promise((r) => setTimeout(r, 350));
+            }
+            const img = await settingsWin.webContents.capturePage();
+            writeFileSync(process.env.PET_DEBUG_SETTINGS, img.toPNG());
+            log('设置页快照已保存:', process.env.PET_DEBUG_SETTINGS);
+          } catch (err) {
+            console.error('[pet] 设置页截图失败', err.message);
+          }
+          app.quit();
+        });
+      }, 900);
+    }
+
+    // 等页面真的画出来再开节奏：否则第一个动作/开场礼会在 did-finish-load 之前发丢。
+    win.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        rhythm?.start();
+        rhythm?.trigger('greeting', { reason: 'startup' });
+      }, 1200);
+    });
 
     // 全局热键（和 PowerShell 版同一组：Ctrl+Alt+G 说一句 / Ctrl+Alt+T 打字派活）。
     // 注册失败**不算错误** —— 别的软件占着这两个组合键是常事，静默降级即可
@@ -2427,6 +2600,7 @@ app.whenReady().then(() => {
         const list = subagents?.list() ?? [];
         return list.length ? { agents: list } : null;
       },
+      isVisible: () => !!win && !win.isDestroyed() && win.isVisible() && !win.isMinimized(),
       onState: (s) => win?.webContents.send('pet:state', s),
       /**
        * 闸门说"值得看一眼"之后再问一句"现在轮得到吗"：手动「问一句」正在跑同一轮时先跳过这一拍。
@@ -2502,7 +2676,15 @@ app.whenReady().then(() => {
     subagents = createSubagentTracker();
     // 子 agent 的观察挂在**干活那条**会话上：派出去的活跑在它上面，
     // 它内部的 subagent 事件才会出现在它的流里（judge 那条只看得见图，不会开子任务）。
-    const onSessionEvent = (ev) => {
+    const onSessionEvent = (purpose) => (ev) => {
+      // 脱敏事件流：只写事件名/状态/工具名/错误码；正文、命令参数、截图路径一律不落盘。
+      if (cfg.agentEventsEnabled !== false) {
+        const record = dshEventToAgentEvent(ev, {
+          agent: 'dsh',
+          sessionId: sessionOf(purpose)?.sessionId || ev?.data?.sessionId || '',
+        });
+        if (record) appendAgentEvent(record);
+      }
       const before = subagents.count();
       subagents.observe(ev);
       const after = subagents.count();
@@ -2518,8 +2700,8 @@ app.whenReady().then(() => {
     };
     // ⚠️ 参数名是 patchId（不是 id）—— 传错的话两条会话会静默共用同一份 patch，
     // 表现就是"工具精简看着配了、其实没生效"（实测踩过一次：两条请求头一字不差）
-    setSession('judge', new DshSession({ config: cfg, patchId: 'judge' }));
-    setSession('work', new DshSession({ config: cfg, patchId: 'work', onEvent: onSessionEvent }));
+    setSession('judge', new DshSession({ config: cfg, patchId: 'judge', onEvent: onSessionEvent('judge') }));
+    setSession('work', new DshSession({ config: cfg, patchId: 'work', onEvent: onSessionEvent('work') }));
     const warm = (purpose) => {
       const s = sessionOf(purpose);
       if (!s) return;
@@ -2557,6 +2739,9 @@ app.whenReady().then(() => {
     try { globalShortcut.unregisterAll(); } catch { /* 已经退了 */ }
     if (cursorTimer) clearInterval(cursorTimer);
     if (ledgerTimer) clearInterval(ledgerTimer);
+    rhythm?.stop();
+    fastCapture?.stop();
+    setFastSampler(null);
     // 存不上要说：这里落的是"到过上限于 / 暂停着关的"这类状态，
     // 丢了它下一次启动就会**自己恢复观察**（等于没拦住的那部分钱又花出去）
     try {

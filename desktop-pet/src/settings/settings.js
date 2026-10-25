@@ -15,8 +15,196 @@ function el(tag, className, text) {
   return node;
 }
 
-function buildInput(item, value) {
+function optionList(source) {
+  if (!Array.isArray(source)) return [];
+  return source.map((x) => (typeof x === 'string' ? { value: x, text: x } : x)).filter(Boolean);
+}
+
+function optionsFor(column, item, view) {
+  // 列自己的 options 优先（比如 trigger 的固定选项）；没有就退回整张表的 optionsFrom
+  // （动作表的素材列、时段/饭点/节日的动作列都是这种）。
+  const source = column.options
+    || (column.optionsFrom ? view[column.optionsFrom] : (item.optionsFrom ? view[item.optionsFrom] : null));
+  const list = optionList(source);
+  return list;
+}
+
+/**
+ * 通用表格编辑器：动作规则 / 时段 / 饭点 / 节日 / 提醒共用一套。
+ * 每格直接改行对象；保存时整组读回去。没有 JSON 文本框那么"程序员向"，
+ * 也不会因为一处 JSON 逗号写错就把整份配置丢掉。
+ */
+function buildTableEditor(item, value, view) {
+  const box = el('div', 'tableEditor');
+  const wrap = el('div', 'tableWrap');
+  const table = document.createElement('table');
+  const thead = document.createElement('thead');
+  const headRow = document.createElement('tr');
+  for (const col of item.columns || []) headRow.append(el('th', null, col.label || col.key));
+  headRow.append(el('th', null, ''));
+  thead.append(headRow);
+  const tbody = document.createElement('tbody');
+  table.append(thead, tbody);
+  wrap.append(table);
+
+  const rows = Array.isArray(value) ? value.map((r) => ({ ...r })) : [];
+
+  const makeCell = (col, row) => {
+    const td = document.createElement('td');
+    if (col.type === 'bool') {
+      const input = document.createElement('input');
+      input.type = 'checkbox';
+      input.checked = row[col.key] !== false;
+      input.addEventListener('change', () => { row[col.key] = input.checked; });
+      td.append(input);
+    } else if (col.type === 'select') {
+      const select = document.createElement('select');
+      select.dataset.col = col.key;
+      const list = optionsFor(col, item, view);
+      if (col.key === 'action' || col.key === 'file') {
+        const empty = document.createElement('option');
+        empty.value = '';
+        empty.textContent = '（不指定）';
+        select.append(empty);
+      }
+      for (const opt of list) {
+        const o = document.createElement('option');
+        o.value = opt.value;
+        o.textContent = opt.text;
+        select.append(o);
+      }
+      select.value = row[col.key] === undefined || row[col.key] === null ? '' : String(row[col.key]);
+      select.addEventListener('change', () => { row[col.key] = select.value; });
+      td.append(select);
+    } else {
+      const input = document.createElement('input');
+      input.dataset.col = col.key;
+      input.type = col.type === 'time' ? 'time' : col.type === 'number' ? 'number' : 'text';
+      if (col.type === 'number') {
+        if (col.min !== undefined) input.min = col.min;
+        if (col.max !== undefined) input.max = col.max;
+        input.step = 'any';
+      }
+      input.value = row[col.key] === undefined || row[col.key] === null ? '' : String(row[col.key]);
+      input.addEventListener('input', () => {
+        row[col.key] = col.type === 'number'
+          ? (input.value === '' ? '' : Number(input.value))
+          : input.value;
+      });
+      if (col.type === 'text' && (col.key === 'text' || col.key === 'label' || col.key === 'title')) {
+        input.style.minWidth = '110px';
+      }
+      td.append(input);
+    }
+    return td;
+  };
+
+  const render = () => {
+    tbody.replaceChildren();
+    rows.forEach((row, idx) => {
+      const tr = document.createElement('tr');
+      for (const col of item.columns || []) tr.append(makeCell(col, row));
+      const actions = document.createElement('td');
+      actions.className = 'rowActions';
+      if (item.optionsFrom === 'actionFiles') {
+        const preview = el('button', null, '试播');
+        preview.type = 'button';
+        preview.addEventListener('click', async () => {
+          const r = await window.settings.previewAction(row.file);
+          say(r.ok ? `正在试播：${row.label || row.file}` : (r.why || '试播失败'), r.ok ? 'ok' : 'bad');
+        });
+        actions.append(preview);
+      }
+      const del = el('button', 'danger', '删除');
+      del.type = 'button';
+      del.addEventListener('click', () => { rows.splice(idx, 1); render(); });
+      actions.append(del);
+      tr.append(actions);
+      tbody.append(tr);
+    });
+  };
+
+  const add = el('button', null, '添加一行');
+  add.type = 'button';
+  add.addEventListener('click', () => {
+    const base = { ...(item.newRow || {}) };
+    const id = String(base.id || 'custom');
+    let n = 1;
+    while (rows.some((r) => r.id === `${id}-${n}`)) n += 1;
+    base.id = `${id}-${n}`;
+    rows.push(base);
+    render();
+  });
+
+  readers.set(item.key, () => rows.map((r) => ({ ...r })));
+  render();
+  box.append(wrap, add);
+  if (item.key === 'actionRules') {
+    const refresh = el('button', null, '刷新素材');
+    refresh.type = 'button';
+    refresh.addEventListener('click', async () => {
+      const r = await window.settings.refreshActions();
+      const files = Array.isArray(r.files) ? r.files : [];
+      view.actionFiles = files;
+      view.__actionFiles = files;
+      render();
+      say(`素材已刷新：共 ${files.length} 个文件（新增的会出现在下拉里）`, 'ok');
+    });
+    box.append(refresh);
+  }
+  return box;
+}
+
+/** 最近的生活节奏日志：只读展示 + 打开完整 JSONL。 */
+function buildRhythmLog() {
+  const box = el('div', 'rhythmLog');
+  const out = el('pre', 'rhythmLogText', '正在读…');
+  const buttons = el('div', 'rhythmLogButtons');
+  const refresh = el('button', null, '刷新');
+  const open = el('button', null, '打开日志文件');
+  refresh.type = 'button';
+  open.type = 'button';
+  const labels = {
+    startup: '启动', period_enter: '进入时段', meal_enter: '进入饭点',
+    holiday_enter: '进入节日', action: '动作', reminder: '提醒', reminder_missed: '错过提醒',
+  };
+  const load = async () => {
+    try {
+      const r = await window.settings.rhythmLog(60);
+      const text = (r.rows || []).map((row) => {
+        const when = row.at ? new Date(row.at).toLocaleString() : '';
+        const what = row.label || row.title || row.periodLabel || row.mealLabel || row.holidayLabel
+          || row.id || row.period || row.meal || row.holiday || '';
+        return `${when}  ${labels[row.kind] || row.kind || ''}  ${what}${row.text ? `：${row.text}` : ''}`;
+      }).join('\n');
+      out.textContent = text || '还没有节奏日志。等一个时段/饭点/动作或提醒到点，这里就会出现。';
+    } catch (e) {
+      out.textContent = `读日志失败：${e.message || e}`;
+    }
+  };
+  refresh.addEventListener('click', () => { void load(); });
+  open.addEventListener('click', async () => {
+    const r = await window.settings.openRhythmLog();
+    if (!r.ok) say(`打不开日志：${r.why}`, 'bad');
+  });
+  buttons.append(refresh, open);
+  box.append(out, buttons);
+  void load();
+  return box;
+}
+
+function buildInput(item, value, view = {}) {
   const wrap = el('div');
+
+  if (item.type === 'rhythmLog') {
+    wrap.append(buildRhythmLog());
+    return wrap;
+  }
+
+  if (item.type === 'table') {
+    wrap.append(buildTableEditor(item, value, view));
+    return wrap;
+  }
 
   // 监控区域：不是输入框，是"框选 / 取消"两个动作（值由主进程框选后写回）。
   // 故意**不注册 reader** —— 这一项的值不该被"保存"那条路覆盖（它是对象，不是文本）。
@@ -200,14 +388,14 @@ function buildGroup(group, config) {
   const section = el('section', 'group');
   section.append(el('h2', null, group.title));
   for (const item of group.items || []) {
-    const row = el('div', 'row');
+    const row = el('div', item.type === 'table' || item.type === 'rhythmLog' ? 'row wide' : 'row');
     const left = el('div');
     const label = el('div', 'label', item.label);
     if (item.live) label.append(el('span', 'live', '立即生效'));
     left.append(label, el('div', 'key', item.key));
     if (item.help) left.append(el('div', 'help', item.help));
     // secret 那类的"当前值"是 {has, from}，在主进程给出的 keyInfo 里，不在 config 里
-    row.append(left, buildInput(item, item.type === 'secret' ? config.__keyInfo : config[item.key]));
+    row.append(left, buildInput(item, item.type === 'secret' ? config.__keyInfo : config[item.key], config));
     section.append(row);
   }
   return section;
@@ -224,7 +412,20 @@ async function load() {
   versionEl.textContent = 'v' + info.version;
   groupsEl.textContent = '';
   readers.clear();
-  const view = { ...(info.config || {}), __keyInfo: info.keyInfo || { has: false, from: '' } };
+  const view = {
+    ...(info.config || {}),
+    __keyInfo: info.keyInfo || { has: false, from: '' },
+    __actionFiles: Array.isArray(info.actionFiles) ? info.actionFiles : [],
+    actionFiles: Array.isArray(info.actionFiles) ? info.actionFiles : [],
+    __actionOptions: [
+      { value: '', text: '（不指定）' },
+      ...(Array.isArray(info.actionOptions) ? info.actionOptions : []),
+    ],
+    actionOptions: [
+      { value: '', text: '（不指定）' },
+      ...(Array.isArray(info.actionOptions) ? info.actionOptions : []),
+    ],
+  };
   for (const group of info.schema || []) groupsEl.append(buildGroup(group, view));
   say('改完点「保存」；标了「立即生效」的当场生效，其余要重开桌宠。');
 }

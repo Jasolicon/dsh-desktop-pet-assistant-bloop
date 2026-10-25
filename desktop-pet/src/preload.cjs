@@ -61,4 +61,8 @@ contextBridge.exposeInMainWorld('pet', {
   onSubagents: (cb) => ipcRenderer.on('pet:subagents', (_e, line) => cb(line)),
   // 暂停状态（托盘或右键菜单里切的）
   onPaused: (cb) => ipcRenderer.on('pet:paused', (_e, paused) => cb(!!paused)),
+  // 生活节奏：主进程挑好动作后推过来；渲染进程把点击/拖拽/思考/说话报告回去
+  onAction: (cb) => ipcRenderer.on('pet:action', (_e, action) => cb(action)),
+  actionEvent: (trigger) => ipcRenderer.invoke('pet:actionEvent', trigger),
+  onVisibility: (cb) => ipcRenderer.on('pet:visibility', (_e, visible) => cb(!!visible)),
 });
